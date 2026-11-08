@@ -77,13 +77,13 @@ class HardwareSafetyGuardTest extends TestCase
             $this->assertStringContainsString("role 'kasir' tidak berwenang", $e->getMessage());
         }
 
-        // Owner
-        try {
-            HardwareSafetyGuard::assertRealExecutionAllowed($this->device, 'MUTE', $this->owner);
-            $this->fail('Owner should be rejected');
-        } catch (HardwareSafetyException $e) {
-            $this->assertStringContainsString("role 'owner' tidak berwenang", $e->getMessage());
-        }
+        // Owner is permitted per approved RBAC policy
+        Config::set('hardware.real_allowed_device_ids', [$this->device->id]);
+        $this->device->verified_capabilities = ['MUTE'];
+        $this->device->save();
+
+        HardwareSafetyGuard::assertRealExecutionAllowed($this->device, 'MUTE', $this->owner);
+        $this->assertTrue(true);
     }
 
     /** @test */

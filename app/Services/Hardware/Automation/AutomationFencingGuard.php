@@ -62,6 +62,26 @@ class AutomationFencingGuard
             }
         }
 
+        // 3B. Manual Override Precedence Check:
+        // Prevent older automated intents from overwriting a newer manual power override.
+        if ($station->last_manual_power_at && $intent->scheduled_at) {
+            $manualAt = Carbon::parse($station->last_manual_power_at);
+            if ($intent->scheduled_at->lt($manualAt)) {
+                $isTerminalSafety = in_array($intent->event_type, [
+                    AutomationIntent::EVENT_BILLING_STOPPED,
+                    AutomationIntent::EVENT_BILLING_EXPIRED
+                ], true);
+
+                if (!$isTerminalSafety) {
+                    return [
+                        'valid' => false,
+                        'reason' => "Intent superseded by newer manual power override executed at {$manualAt->toDateTimeString()}.",
+                        'terminal_status' => AutomationIntent::STATUS_STALE,
+                    ];
+                }
+            }
+        }
+
         // 4. Session & Transaction State Checks
         if ($intent->transaction_id) {
             $transaction = Transaction::find($intent->transaction_id);

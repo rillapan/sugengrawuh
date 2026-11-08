@@ -38,9 +38,9 @@ class HardwareSafetyGuard
             throw HardwareSafetyException::realExecutionDisabled();
         }
 
-        // 3. User authorization check (ADMIN only)
+        // 3. User authorization check (ADMIN and OWNER only)
         if ($user !== null) {
-            if (!$user->isAdmin()) {
+            if (!$user->isAdmin() && !$user->isOwner()) {
                 throw HardwareSafetyException::unauthorizedRole($user->role ?? 'unknown');
             }
         }

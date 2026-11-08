@@ -121,6 +121,10 @@ Route::middleware(['auth', 'check_role:admin,owner'])->group(function () {
     // Hardware IoT Blade Views (Admin + Owner)
     Route::get('/admin/hardware/registry', [App\Http\Controllers\Admin\PhysicalDeviceController::class, 'registryView'])->name('admin.hardware.registry');
     Route::get('/admin/hardware/mappings', [App\Http\Controllers\Admin\StationHardwareMappingController::class, 'mappingsView'])->name('admin.hardware.mappings');
+
+    // Station Hardware Manual Power Control (Admin + Owner)
+    Route::post('/admin/stations/{station}/hardware/power', [App\Http\Controllers\Admin\StationPowerController::class, 'controlPower'])->name('admin.stations.hardware.power');
+    Route::get('/admin/stations/{station}/hardware/status', [App\Http\Controllers\Admin\StationPowerController::class, 'status'])->name('admin.stations.hardware.status');
 });
 
 // Admin Only Routes

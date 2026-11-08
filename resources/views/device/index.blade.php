@@ -1,6 +1,396 @@
 @extends('layouts.app')
 
 @section('content')
+<style>
+/* ==========================================================================
+   SR-DEVICE-UI-003: Google Stitch Layout Refinement (Scoped to #device-cards-container & Station Cards)
+   ========================================================================== */
+
+/* Station Card Container */
+.stitch-station-card {
+    background-color: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 0.75rem !important; /* 12px */
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+    padding: 1.25rem !important; /* 20px */
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    transition: transform 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+.stitch-station-card:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -1px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Card Header */
+.stitch-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 0.875rem;
+    border-bottom: 1px solid #f1f5f9;
+}
+.stitch-station-title {
+    font-size: 1.125rem !important; /* 18px */
+    font-weight: 700 !important;
+    color: #2563EB !important;
+    margin: 0 !important;
+    line-height: 1.4;
+}
+.stitch-badge-tx {
+    font-size: 0.6875rem !important; /* 11px */
+    font-weight: 700 !important;
+    padding: 0.25rem 0.75rem !important;
+    border-radius: 9999px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.stitch-badge-tx-prepaid {
+    background-color: #2563EB !important;
+    color: #ffffff !important;
+}
+.stitch-badge-tx-custom {
+    background-color: #F59E0B !important;
+    color: #ffffff !important;
+}
+.stitch-badge-tx-postpaid {
+    background-color: #64748B !important;
+    color: #ffffff !important;
+}
+.stitch-badge-tx-available {
+    background-color: #f1f5f9 !important;
+    color: #64748b !important;
+    font-weight: 500 !important;
+    text-transform: capitalize !important;
+    letter-spacing: normal !important;
+}
+
+/* Sub-Header Row */
+.stitch-sub-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.875rem 0;
+    border-bottom: 1px solid #f1f5f9;
+}
+@media (min-width: 576px) {
+    .stitch-sub-header {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+}
+.stitch-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 0.25rem 0.625rem;
+    border-radius: 0.375rem; /* 6px */
+}
+.stitch-status-dot {
+    width: 0.625rem; /* 10px */
+    height: 0.625rem;
+    border-radius: 50%;
+    display: inline-block;
+}
+.stitch-dot-available {
+    background-color: #10B981 !important;
+}
+.stitch-dot-used {
+    background-color: #EF4444 !important;
+}
+.stitch-service-badge {
+    background-color: #00BCD4 !important;
+    color: #ffffff !important;
+    font-size: 0.6875rem !important; /* 11px */
+    font-weight: 700 !important;
+    padding: 0.2rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+}
+
+/* Hardware Panel */
+.stitch-hardware-panel {
+    background-color: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 0.75rem !important; /* 12px */
+    padding: 0.875rem !important;
+    margin: 0.875rem 0 !important;
+}
+.stitch-hardware-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 0.625rem;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+}
+.stitch-btn-kelola {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem !important; /* 12px */
+    font-weight: 600 !important;
+    color: #2563EB !important;
+    background-color: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    padding: 0.15rem 0.625rem !important;
+    border-radius: 0.25rem !important;
+    text-decoration: none !important;
+    transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+.stitch-btn-kelola:hover {
+    color: #1D4ED8 !important;
+    background-color: #f8fafc !important;
+}
+
+/* Hardware Body: 2 Columns */
+.stitch-hardware-body {
+    padding-top: 0.625rem;
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.stitch-hw-left-col {
+    flex: 1 1 0%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.stitch-hw-name {
+    font-size: 0.8125rem !important; /* 13px */
+    font-weight: 600 !important;
+    color: #1e293b !important;
+    line-height: 1.35;
+    word-break: break-word;
+}
+.stitch-hw-sub {
+    font-size: 0.6875rem !important; /* 11px */
+    color: #64748b !important;
+    font-weight: 400 !important;
+}
+.stitch-badge-online {
+    background-color: #10B981 !important;
+    color: #ffffff !important;
+    font-size: 0.625rem !important; /* 10px */
+    font-weight: 700 !important;
+    padding: 0.15rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+}
+.stitch-badge-offline {
+    background-color: #EF4444 !important;
+    color: #ffffff !important;
+    font-size: 0.625rem !important;
+    font-weight: 700 !important;
+    padding: 0.15rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+}
+.stitch-badge-role {
+    background-color: #64748b !important;
+    color: #ffffff !important;
+    font-size: 0.625rem !important;
+    font-weight: 700 !important;
+    padding: 0.15rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+    text-transform: uppercase;
+}
+.stitch-badge-relay {
+    background-color: #10B981 !important;
+    color: #ffffff !important;
+    font-size: 0.6875rem !important; /* 11px */
+    font-weight: 700 !important;
+    padding: 0.2rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+}
+
+/* Right Column: Compact Power Controller (Stitch Dimensions & Invariant Colors) */
+.stitch-power-box {
+    width: 96px !important; /* w-24 */
+    background-color: #2B3035 !important;
+    border-radius: 0.75rem !important; /* 12px */
+    padding: 0.625rem 0.5rem !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.2) !important;
+}
+.btn-hardware-power.stitch-power-btn {
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 50% !important;
+    border: 3px solid #00BCD4 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 2px !important;
+    background-color: #2B3035 !important;
+    box-shadow: 0 0 12px rgba(0, 188, 212, 0.45) !important;
+    cursor: pointer !important;
+    outline: none !important;
+    transition: transform 0.15s ease-in-out, filter 0.15s ease-in-out !important;
+}
+.btn-hardware-power.stitch-power-btn:hover:not(:disabled) {
+    transform: scale(1.05) !important;
+    filter: brightness(1.1) !important;
+}
+.btn-hardware-power.stitch-power-btn:active:not(:disabled) {
+    transform: scale(0.95) !important;
+}
+.btn-hardware-power.stitch-power-btn:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.65 !important;
+}
+.stitch-power-inner {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 50% !important;
+    background-color: #FFFFFF !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+}
+.stitch-power-inner i.fa-power-off {
+    font-size: 15px !important;
+    color: #00BCD4 !important;
+}
+.stitch-power-box .power-status-text {
+    font-weight: 700 !important;
+    font-size: 0.6875rem !important; /* 11px */
+    color: #FFFFFF !important;
+    letter-spacing: 0.15em !important;
+    margin-top: 0.375rem !important;
+    text-transform: uppercase !important;
+    text-align: center !important;
+}
+
+/* Empty Hardware State */
+.stitch-empty-hw {
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding-top: 0.5rem;
+}
+
+/* Card Footer: Timer & Action Buttons */
+.stitch-card-footer {
+    padding-top: 0.75rem !important;
+    margin-top: auto !important;
+    border-top: 1px solid #f1f5f9 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+}
+@media (min-width: 576px) {
+    .stitch-card-footer {
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+    }
+}
+.stitch-timer-label {
+    font-size: 0.8125rem !important; /* 13px */
+    color: #475569 !important;
+    font-weight: 500 !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+.stitch-timer-badge {
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    font-weight: 700 !important;
+    font-size: 0.875rem !important; /* 14px */
+    color: #1e293b !important;
+    background-color: #f1f5f9 !important;
+    padding: 0.15rem 0.5rem !important;
+    border-radius: 0.25rem !important;
+}
+.stitch-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+.btn-stitch-action {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.375rem !important;
+    height: 34px !important;
+    padding: 0.375rem 0.75rem !important;
+    font-size: 0.75rem !important; /* 12px */
+    font-weight: 600 !important;
+    border-radius: 0.5rem !important; /* 8px */
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+    transition: background-color 0.15s ease-in-out, transform 0.1s ease-in-out !important;
+}
+.btn-stitch-action:hover {
+    color: #ffffff !important;
+    filter: brightness(0.95);
+}
+.btn-stitch-action:active {
+    transform: scale(0.97);
+}
+.btn-stitch-icon {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 34px !important;
+    height: 34px !important;
+    padding: 0 !important;
+    border-radius: 0.5rem !important; /* 8px */
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+    flex-shrink: 0 !important;
+    transition: background-color 0.15s ease-in-out, transform 0.1s ease-in-out !important;
+}
+.btn-stitch-icon:hover {
+    color: #ffffff !important;
+    filter: brightness(0.95);
+}
+.btn-stitch-icon:active {
+    transform: scale(0.95);
+}
+.btn-stitch-customer {
+    background-color: #00BCD4 !important;
+}
+.btn-stitch-customer:hover {
+    background-color: #00acc1 !important;
+}
+.btn-stitch-stop {
+    background-color: #F59E0B !important;
+}
+.btn-stitch-stop:hover {
+    background-color: #D97706 !important;
+}
+.btn-stitch-finish {
+    background-color: #10B981 !important;
+}
+.btn-stitch-finish:hover {
+    background-color: #059669 !important;
+}
+.btn-stitch-edit {
+    background-color: #2563EB !important;
+}
+.btn-stitch-edit:hover {
+    background-color: #1D4ED8 !important;
+}
+.btn-stitch-delete {
+    background-color: #EF4444 !important;
+}
+.btn-stitch-delete:hover {
+    background-color: #DC2626 !important;
+}
+</style>
     <!-- Content Row -->
     @if (session()->has('success'))
         <div class="alert alert-success col-lg-8" role="alert">
@@ -78,17 +468,18 @@
         </div>
         <!-- Card Body -->
         <div class="card-body">
-            <div class="row">
+            <div class="row" id="device-cards-container">
                 @foreach ($devices as $device)
-                    <div class="col-lg-4 col-md-6 mb-4">
-                        <div class="card shadow h-100">
-                            <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                                <h6 class="m-0 font-weight-bold text-primary">{{ $device->nama }}</h6>
+                    <div class="col-lg-6 col-md-12 mb-4 d-flex align-items-stretch">
+                        <article class="stitch-station-card w-100">
+                            <!-- Card Header: Title & Transaction Type Badge -->
+                            <div class="stitch-card-header">
+                                <h2 class="stitch-station-title">{{ $device->nama }}</h2>
                                 @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
-                                    <span class="badge 
-                                        @if($customers[$device->id]['tipe_transaksi'] === 'prepaid') badge-primary
-                                        @elseif($customers[$device->id]['tipe_transaksi'] === 'custom_package') badge-warning
-                                        @else badge-secondary
+                                    <span class="stitch-badge-tx 
+                                        @if($customers[$device->id]['tipe_transaksi'] === 'prepaid') stitch-badge-tx-prepaid
+                                        @elseif($customers[$device->id]['tipe_transaksi'] === 'custom_package') stitch-badge-tx-custom
+                                        @else stitch-badge-tx-postpaid
                                         @endif">
                                         @if($customers[$device->id]['tipe_transaksi'] === 'prepaid')
                                             Paket
@@ -98,241 +489,317 @@
                                             Lost Time
                                         @endif
                                     </span>
+                                @else
+                                    <span class="stitch-badge-tx stitch-badge-tx-available">Reguler</span>
                                 @endif
                             </div>
-                            <div class="card-body">
-                                <div id="automation-alert-banner-{{ $device->id }}" class="alert alert-danger p-2 small mb-2 d-none" role="alert">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <i class="fas fa-exclamation-triangle mr-1"></i>
-                                            <span class="alert-message"></span>
-                                        </div>
-                                        <button type="button" class="btn btn-sm btn-outline-danger ml-2 btn-manual-retry" data-device-id="{{ $device->id }}">
-                                            <i class="fas fa-redo"></i> Coba Ulang
-                                        </button>
+
+                            <!-- Automation Alert Banner -->
+                            <div id="automation-alert-banner-{{ $device->id }}" class="alert alert-danger p-2 small mt-2 mb-0 d-none" role="alert">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <i class="fas fa-exclamation-triangle mr-1"></i>
+                                        <span class="alert-message"></span>
                                     </div>
+                                    <button type="button" class="btn btn-sm btn-outline-danger ml-2 btn-manual-retry" data-device-id="{{ $device->id }}">
+                                        <i class="fas fa-redo"></i> Coba Ulang
+                                    </button>
                                 </div>
-                                <div class="mb-2">
-                                    <strong>Jenis Playstation:</strong> 
-                                    @if($device->playstations->count() > 0)
-                                        @foreach($device->playstations as $playstation)
-                                            <span class="badge badge-info">{{ $playstation->nama }}</span>
-                                        @endforeach
-                                    @else
-                                        {{ $device->playstation->nama ?? 'Tidak Diketahui' }}
-                                    @endif
-                                </div>
-                                <div class="mb-2" id="status-{{ $device->id }}">
-                                    <strong>Status:</strong>
-                                    @if ($device->status === 'Tersedia')
-                                        <i class="fa fa-circle text-success" aria-hidden="true"></i>
-                                        {{ ucfirst($device->status) }}
-                                    @else
-                                        <i class="fa fa-circle text-danger" aria-hidden="true"></i>
-                                        {{ ucfirst($device->status) }}
-                                    @endif
-                                </div>
-                                <div class="mb-2 p-2 bg-light rounded border">
-                                    <div class="d-flex justify-content-between align-items-center mb-1">
-                                        <small class="font-weight-bold text-gray-700">
-                                            <i class="fas fa-microchip mr-1"></i>Hardware:
-                                        </small>
-                                        @if((auth()->user()->isAdmin() || auth()->user()->isOwner()) && \Illuminate\Support\Facades\Route::has('admin.hardware.mappings'))
-                                            <a href="{{ route('admin.hardware.mappings', ['station_id' => $device->id]) }}" class="badge badge-light border text-primary" title="Kelola Mapping Hardware">
-                                                <i class="fas fa-cog"></i> Kelola
-                                            </a>
+                            </div>
+
+                            <!-- Sub-Header: Playstation Types & Status Indicator -->
+                            <div class="stitch-sub-header">
+                                <div class="d-flex align-items-center flex-wrap" style="gap: 0.5rem;">
+                                    <span class="text-muted small font-weight-medium">Jenis Playstation:</span>
+                                    <div class="d-flex align-items-center flex-wrap" style="gap: 0.375rem;">
+                                        @if($device->playstations->count() > 0)
+                                            @foreach($device->playstations as $playstation)
+                                                <span class="stitch-service-badge">{{ $playstation->nama }}</span>
+                                            @endforeach
+                                        @else
+                                            <span class="stitch-service-badge">{{ $device->playstation->nama ?? 'Tidak Diketahui' }}</span>
                                         @endif
                                     </div>
-                                    @php
-                                        $activeMapping = $device->relationLoaded('activeHardwareMappings') 
-                                            ? $device->activeHardwareMappings->first() 
-                                            : null;
-                                    @endphp
-                                    @if($activeMapping && $activeMapping->physicalDevice)
-                                        <div class="small">
-                                            <div class="font-weight-bold text-dark">
-                                                {{ $activeMapping->physicalDevice->name }}
-                                                <span class="text-muted font-weight-normal">({{ $activeMapping->physicalDevice->brand }} {{ $activeMapping->physicalDevice->model }})</span>
-                                            </div>
-                                            <div class="d-flex align-items-center mt-1">
-                                                <span class="text-muted mr-1">Status:</span>
+                                </div>
+                                <div class="stitch-status-pill" id="status-{{ $device->id }}">
+                                    <span class="text-muted small font-weight-medium">Status:</span>
+                                    @if ($device->status === 'Tersedia')
+                                        <span class="stitch-status-dot stitch-dot-available"></span>
+                                        <span class="font-weight-bold text-dark small">{{ ucfirst($device->status) }}</span>
+                                    @else
+                                        <span class="stitch-status-dot stitch-dot-used"></span>
+                                        <span class="font-weight-bold text-dark small">{{ ucfirst($device->status) }}</span>
+                                    @endif
+                                </div>
+                            </div>
+
+                            <!-- Hardware Panel -->
+                            <div class="stitch-hardware-panel">
+                                <div class="stitch-hardware-header">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-microchip mr-1.5 text-muted"></i>
+                                        <span class="font-weight-bold text-dark small">Hardware:</span>
+                                    </div>
+                                    @if((auth()->user()->isAdmin() || auth()->user()->isOwner()) && \Illuminate\Support\Facades\Route::has('admin.hardware.mappings'))
+                                        <a href="{{ route('admin.hardware.mappings', ['station_id' => $device->id]) }}" class="stitch-btn-kelola" title="Kelola Mapping Hardware">
+                                            <i class="fas fa-cog mr-1"></i>Kelola
+                                        </a>
+                                    @endif
+                                </div>
+                                @php
+                                    $activeMappings = $device->relationLoaded('activeHardwareMappings') 
+                                        ? $device->activeHardwareMappings 
+                                        : $device->activeHardwareMappings()->with('physicalDevice')->get();
+                                @endphp
+                                @if($activeMappings->isNotEmpty())
+                                    @foreach($activeMappings as $activeMapping)
+                                        @if($activeMapping && $activeMapping->physicalDevice)
+                                            <div class="stitch-hardware-body @if(!$loop->first) mt-3 pt-2 border-top @endif">
+                                                <!-- Left Column: Hardware Info & Status -->
+                                                <div class="stitch-hw-left-col">
+                                                    <div>
+                                                        <div class="stitch-hw-name">
+                                                            {{ $activeMapping->physicalDevice->name }}
+                                                        </div>
+                                                        <div class="stitch-hw-sub">
+                                                            ({{ $activeMapping->physicalDevice->brand }} {{ $activeMapping->physicalDevice->model }})
+                                                        </div>
+                                                    </div>
+                                                    <div class="d-flex align-items-center flex-wrap pt-1" style="gap: 0.375rem;">
+                                                        <span class="text-muted small">Status:</span>
+                                                        @php
+                                                            $connStatus = $activeMapping->physicalDevice->connection_status ?? 'UNVERIFIED';
+                                                        @endphp
+                                                        @if($connStatus === 'ONLINE')
+                                                            <span class="stitch-badge-online"><i class="fa fa-circle text-white mr-1 small"></i>ONLINE</span>
+                                                        @elseif($connStatus === 'OFFLINE')
+                                                            <span class="stitch-badge-offline"><i class="fa fa-circle text-white mr-1 small"></i>OFFLINE</span>
+                                                        @else
+                                                            <span class="badge badge-warning text-dark px-2 py-0.5"><i class="fa fa-question-circle mr-1"></i>UNVERIFIED</span>
+                                                        @endif
+                                                        <span class="stitch-badge-role">{{ $activeMapping->mapping_role }}</span>
+                                                    </div>
+
+                                                    @if($activeMapping->mapping_role === 'LIGHT_RELAY' || $loop->first)
+                                                        <div class="d-flex align-items-center pt-1 automation-pollable" data-device-id="{{ $device->id }}" style="gap: 0.375rem;">
+                                                            <span class="text-muted small">Otomasi Relay:</span>
+                                                            <span id="automation-badge-{{ $device->id }}" class="stitch-badge-relay">
+                                                                <i class="fas fa-bolt mr-1"></i>{{ $device->last_hardware_state ?? 'STATE_UNKNOWN' }}
+                                                            </span>
+                                                        </div>
+                                                    @endif
+                                                </div>
+
+                                                <!-- Right Column: Compact Power Controller Widget (Stitch Invariant Specs) -->
                                                 @php
-                                                    $connStatus = $activeMapping->physicalDevice->connection_status ?? 'UNVERIFIED';
+                                                    $initialPowerState = 'UNKNOWN';
+                                                    if ($activeMapping->physicalDevice->connection_status === 'OFFLINE') {
+                                                        $initialPowerState = 'OFFLINE';
+                                                    } elseif (str_contains((string) $device->last_hardware_state, 'STATE_ON') || str_contains((string) $device->last_hardware_state, 'SIMULATED_ON')) {
+                                                        $initialPowerState = 'ON';
+                                                    } elseif (str_contains((string) $device->last_hardware_state, 'STATE_OFF') || str_contains((string) $device->last_hardware_state, 'SIMULATED_OFF')) {
+                                                        $initialPowerState = 'OFF';
+                                                    }
                                                 @endphp
-                                                @if($connStatus === 'ONLINE')
-                                                    <span class="badge badge-success"><i class="fa fa-circle text-white mr-1 small"></i>ONLINE</span>
-                                                @elseif($connStatus === 'OFFLINE')
-                                                    <span class="badge badge-danger"><i class="fa fa-circle text-white mr-1 small"></i>OFFLINE</span>
-                                                @else
-                                                    <span class="badge badge-warning text-dark"><i class="fa fa-question-circle mr-1"></i>UNVERIFIED</span>
-                                                @endif
-                                                <span class="badge badge-secondary ml-1">{{ $activeMapping->mapping_role }}</span>
+                                                <div class="manual-power-widget-container stitch-power-box" 
+                                                     id="power-widget-{{ $device->id }}-{{ $activeMapping->physicalDevice->id }}">
+                                                    <button type="button" 
+                                                            class="btn-hardware-power stitch-power-btn"
+                                                            data-station-id="{{ $device->id }}"
+                                                            data-station-name="{{ $device->nama }}"
+                                                            data-station-status="{{ $device->status }}"
+                                                            data-physical-device-id="{{ $activeMapping->physicalDevice->id }}"
+                                                            data-device-name="{{ $activeMapping->physicalDevice->name }}"
+                                                            data-current-state="{{ $initialPowerState }}"
+                                                            title="Kontrol Power {{ $activeMapping->physicalDevice->name }}"
+                                                            @if(!auth()->user()->isAdmin() && !auth()->user()->isOwner()) disabled @endif>
+                                                        <div class="power-outer-ring">
+                                                            <div class="power-inner-circle stitch-power-inner">
+                                                                <i class="fas fa-power-off"></i>
+                                                            </div>
+                                                        </div>
+                                                    </button>
+                                                    <div class="power-status-box w-100 text-center">
+                                                        <span class="power-status-text" 
+                                                              id="power-status-text-{{ $device->id }}-{{ $activeMapping->physicalDevice->id }}">
+                                                            {{ $initialPowerState }}
+                                                        </span>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div class="mt-2 d-flex align-items-center justify-content-between automation-pollable" data-device-id="{{ $device->id }}">
-                                                <span class="text-muted mr-1">Otomasi Relay:</span>
-                                                <span id="automation-badge-{{ $device->id }}" class="badge badge-info">
-                                                    <i class="fas fa-bolt mr-1"></i>{{ $device->last_hardware_state ?? 'STATE_UNKNOWN' }}
+                                        @endif
+                                    @endforeach
+                                @else
+                                    <div class="stitch-empty-hw">
+                                        <div>
+                                            <div class="font-italic text-muted small">
+                                                Belum ada hardware terdaftar
+                                            </div>
+                                            <div class="text-success small font-weight-bold pt-1">
+                                                <i class="fas fa-check-circle mr-1"></i>Billing tetap dapat digunakan
+                                            </div>
+                                        </div>
+                                        <div class="text-muted small border-top pt-1 mt-2" style="font-size: 0.6875rem !important;">
+                                            Klik tombol kelola untuk menghubungkan saklar relay atau IoT.
+                                        </div>
+                                    </div>
+                                @endif
+                            </div>
+
+                            {{-- SR-TV-INTEGRATION-001: Kontrol Samsung TV Panel (PlayStation Stations Only) --}}
+                            @php
+                                $stationCategory = $device->getStationCategory();
+                                $tvMapping = $device->relationLoaded('activeDisplayTv')
+                                    ? $device->activeDisplayTv
+                                    : $device->activeDisplayTv()->with('physicalDevice')->first();
+                                $tvPhysical = $tvMapping ? $tvMapping->physicalDevice : null;
+                                $initTvCtrl = $tvControlData[$device->id] ?? null;
+                                $initVol = $initTvCtrl['tv_state']['volume'] ?? 30;
+                                $initMute = !empty($initTvCtrl['tv_state']['mute']);
+                                $initLatestEvent = $initTvCtrl['latest_event'] ?? null;
+                                $initSimOnline = !empty($initTvCtrl['simulator_online']);
+                            @endphp
+                            @if ($stationCategory === 'PLAYSTATION')
+                                @if ($device->status === 'Tersedia')
+                                    <div class="mt-2 mb-2 p-2 bg-light border rounded small text-muted" id="tv-control-inactive-{{ $device->id }}">
+                                        <i class="fas fa-tv mr-1"></i><strong>Kontrol Samsung TV:</strong> Nonaktif (Station belum sedang digunakan pelanggan).
+                                    </div>
+                                @elseif ($device->status === 'Digunakan' && auth()->user()->isAdmin())
+                                    <div class="mt-2 mb-3 p-2 bg-white border border-warning rounded shadow-sm tv-control-panel"
+                                         id="tv-control-panel-{{ $device->id }}"
+                                         data-station-id="{{ $device->id }}"
+                                         data-station-name="{{ $device->nama }}"
+                                         data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
+                                         data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
+                                         data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
+                                         data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <small class="font-weight-bold text-dark text-uppercase">
+                                                <i class="fas fa-tv text-primary mr-1"></i>KONTROL SAMSUNG TV
+                                            </small>
+                                            <a href="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}" target="_blank" class="badge badge-dark text-warning" title="Buka Simulator TV 16:9 untuk station ini">
+                                                <i class="fas fa-external-link-alt mr-1"></i>TV Lab
+                                            </a>
+                                        </div>
+                                        <span class="badge badge-warning text-dark d-block mb-2 py-1 text-wrap">
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGONTROL TV FISIK
+                                        </span>
+
+                                        <div class="small mb-2">
+                                            <div class="d-flex justify-content-between">
+                                                <span class="text-muted">Station & Kategori:</span>
+                                                <strong class="text-dark">{{ $device->nama }} ({{ $device->playstation_names ?: 'PlayStation' }})</strong>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Samsung TV:</span>
+                                                @if ($tvPhysical && $tvPhysical->brand === 'SAMSUNG' && $tvPhysical->category === 'SMART_TV')
+                                                    <strong class="text-dark" id="tv-name-{{ $device->id }}">{{ $tvPhysical->name }} ({{ $tvPhysical->model }})</strong>
+                                                @else
+                                                    <span class="badge badge-danger" id="tv-name-{{ $device->id }}">Belum Dipetakan</span>
+                                                @endif
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Koneksi & Pairing:</span>
+                                                <span>
+                                                    <span class="badge badge-secondary" id="tv-conn-status-{{ $device->id }}">{{ $tvPhysical->connection_status ?? 'UNVERIFIED' }}</span>
+                                                    <span class="badge badge-light border text-dark" id="tv-pair-status-{{ $device->id }}">{{ $tvPhysical->pairing_status ?? 'UNVERIFIED' }}</span>
+                                                </span>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Mode Kontrol & Consumer:</span>
+                                                <span>
+                                                    <span class="badge badge-info" id="tv-mode-{{ $device->id }}">MOCK</span>
+                                                    <span class="badge {{ $initSimOnline ? 'badge-success' : 'badge-secondary' }}" id="tv-sim-conn-{{ $device->id }}">
+                                                        {{ $initSimOnline ? 'CONNECTED' : 'WAITING_CONSUMER' }}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Volume & Audio (Simulasi):</span>
+                                                <span>
+                                                    <span class="badge badge-primary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $initVol }}/100</span>
+                                                    <span class="badge {{ $initMute ? 'badge-danger' : 'badge-success' }}" id="tv-mute-badge-{{ $device->id }}">
+                                                        {{ $initMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)' }}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Status Event Terakhir:</span>
+                                                <span class="badge badge-secondary" id="tv-last-event-badge-{{ $device->id }}">
+                                                    {{ $initLatestEvent ? $initLatestEvent->status : 'BELUM ADA EVENT' }}
                                                 </span>
                                             </div>
                                         </div>
-                                    @else
-                                        <div class="small text-muted">
-                                            <em>Belum ada hardware terdaftar</em>
-                                            <div class="text-success small"><i class="fas fa-check-circle mr-1"></i>Billing tetap dapat digunakan</div>
+
+                                        <div class="d-flex flex-wrap">
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-primary mr-1 mb-1 btn-open-tv-alert-modal"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-station-name="{{ $device->nama }}"
+                                                    data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
+                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled title=Belum_ada_Samsung_TV_aktif' : '' }}>
+                                                <i class="fas fa-bullhorn mr-1"></i> Kirim Peringatan
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-command="VOLUME_DOWN"
+                                                    data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
+                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <i class="fas fa-volume-down"></i> Vol Turun
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-command="VOLUME_UP"
+                                                    data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
+                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <i class="fas fa-volume-up"></i> Vol Naik
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-outline-warning text-dark mr-1 mb-1 btn-tv-volume-cmd"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-command="MUTE_TOGGLE"
+                                                    data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
+                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <i class="fas fa-volume-mute"></i> Mute/Unmute (Sim)
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-outline-info mb-1 btn-open-tv-history-modal"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-station-name="{{ $device->nama }}"
+                                                    data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
+                                                    data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
+                                                <i class="fas fa-history mr-1"></i> Lihat Riwayat Kontrol
+                                            </button>
                                         </div>
-                                    @endif
-                                </div>
-                                <div class="mb-2">
-                                    <strong>Timer:</strong>
+                                    </div>
+                                @endif
+                            @endif
+
+                            <!-- Card Footer: Timer & Action Buttons -->
+                            <div class="stitch-card-footer mt-auto">
+                                <div class="stitch-timer-label">
+                                    <span>Timer:</span>
                                     @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
                                         @if (($customers[$device->id]['tipe_transaksi'] === 'prepaid' || $customers[$device->id]['tipe_transaksi'] === 'custom_package') && isset($timers[$device->id]))
-                                            <span id="timer-{{ $device->id }}" data-type="{{ $customers[$device->id]['tipe_transaksi'] }}">Memuat...</span>
+                                            <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="{{ $customers[$device->id]['tipe_transaksi'] }}">Memuat...</span>
                                         @elseif($customers[$device->id]['tipe_transaksi'] === 'postpaid' && $customers[$device->id]['status_transaksi'] === 'berjalan')
-                                            <span id="timer-{{ $device->id }}" data-type="postpaid"
+                                            <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="postpaid"
                                                 data-lost-time-start="{{ isset($postpaidTransactions[$device->id]) ? $postpaidTransactions[$device->id]['lost_time_start'] : '' }}">
                                                 <span id="elapsed-time-{{ $device->id }}">00:00:00</span>
                                             </span>
                                         @else
-                                            -
+                                            <span class="stitch-timer-badge">-</span>
                                         @endif
                                     @else
-                                        -
+                                        <span class="stitch-timer-badge">-</span>
                                     @endif
                                 </div>
 
-                                {{-- SR-TV-INTEGRATION-001: Kontrol Samsung TV Panel (PlayStation Stations Only) --}}
-                                @php
-                                    $stationCategory = $device->getStationCategory();
-                                    $tvMapping = $device->relationLoaded('activeDisplayTv')
-                                        ? $device->activeDisplayTv
-                                        : $device->activeDisplayTv()->with('physicalDevice')->first();
-                                    $tvPhysical = $tvMapping ? $tvMapping->physicalDevice : null;
-                                    $initTvCtrl = $tvControlData[$device->id] ?? null;
-                                    $initVol = $initTvCtrl['tv_state']['volume'] ?? 30;
-                                    $initMute = !empty($initTvCtrl['tv_state']['mute']);
-                                    $initLatestEvent = $initTvCtrl['latest_event'] ?? null;
-                                    $initSimOnline = !empty($initTvCtrl['simulator_online']);
-                                @endphp
-                                @if ($stationCategory === 'PLAYSTATION')
-                                    @if ($device->status === 'Tersedia')
-                                        <div class="mt-2 mb-2 p-2 bg-light border rounded small text-muted" id="tv-control-inactive-{{ $device->id }}">
-                                            <i class="fas fa-tv mr-1"></i><strong>Kontrol Samsung TV:</strong> Nonaktif (Station belum sedang digunakan pelanggan).
-                                        </div>
-                                    @elseif ($device->status === 'Digunakan' && auth()->user()->isAdmin())
-                                        <div class="mt-2 mb-3 p-2 bg-white border border-warning rounded shadow-sm tv-control-panel"
-                                             id="tv-control-panel-{{ $device->id }}"
-                                             data-station-id="{{ $device->id }}"
-                                             data-station-name="{{ $device->nama }}"
-                                             data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
-                                             data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                             data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
-                                             data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
-                                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                                <small class="font-weight-bold text-dark text-uppercase">
-                                                    <i class="fas fa-tv text-primary mr-1"></i>KONTROL SAMSUNG TV
-                                                </small>
-                                                <a href="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}" target="_blank" class="badge badge-dark text-warning" title="Buka Simulator TV 16:9 untuk station ini">
-                                                    <i class="fas fa-external-link-alt mr-1"></i>TV Lab
-                                                </a>
-                                            </div>
-                                            <span class="badge badge-warning text-dark d-block mb-2 py-1 text-wrap">
-                                                <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGONTROL TV FISIK
-                                            </span>
-
-                                            <div class="small mb-2">
-                                                <div class="d-flex justify-content-between">
-                                                    <span class="text-muted">Station & Kategori:</span>
-                                                    <strong class="text-dark">{{ $device->nama }} ({{ $device->playstation_names ?: 'PlayStation' }})</strong>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mt-1">
-                                                    <span class="text-muted">Samsung TV:</span>
-                                                    @if ($tvPhysical && $tvPhysical->brand === 'SAMSUNG' && $tvPhysical->category === 'SMART_TV')
-                                                        <strong class="text-dark" id="tv-name-{{ $device->id }}">{{ $tvPhysical->name }} ({{ $tvPhysical->model }})</strong>
-                                                    @else
-                                                        <span class="badge badge-danger" id="tv-name-{{ $device->id }}">Belum Dipetakan</span>
-                                                    @endif
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mt-1">
-                                                    <span class="text-muted">Koneksi & Pairing:</span>
-                                                    <span>
-                                                        <span class="badge badge-secondary" id="tv-conn-status-{{ $device->id }}">{{ $tvPhysical->connection_status ?? 'UNVERIFIED' }}</span>
-                                                        <span class="badge badge-light border text-dark" id="tv-pair-status-{{ $device->id }}">{{ $tvPhysical->pairing_status ?? 'UNVERIFIED' }}</span>
-                                                    </span>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mt-1">
-                                                    <span class="text-muted">Mode Kontrol & Consumer:</span>
-                                                    <span>
-                                                        <span class="badge badge-info" id="tv-mode-{{ $device->id }}">MOCK</span>
-                                                        <span class="badge {{ $initSimOnline ? 'badge-success' : 'badge-secondary' }}" id="tv-sim-conn-{{ $device->id }}">
-                                                            {{ $initSimOnline ? 'CONNECTED' : 'WAITING_CONSUMER' }}
-                                                        </span>
-                                                    </span>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mt-1">
-                                                    <span class="text-muted">Volume & Audio (Simulasi):</span>
-                                                    <span>
-                                                        <span class="badge badge-primary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $initVol }}/100</span>
-                                                        <span class="badge {{ $initMute ? 'badge-danger' : 'badge-success' }}" id="tv-mute-badge-{{ $device->id }}">
-                                                            {{ $initMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)' }}
-                                                        </span>
-                                                    </span>
-                                                </div>
-                                                <div class="d-flex justify-content-between align-items-center mt-1">
-                                                    <span class="text-muted">Status Event Terakhir:</span>
-                                                    <span class="badge badge-secondary" id="tv-last-event-badge-{{ $device->id }}">
-                                                        {{ $initLatestEvent ? $initLatestEvent->status : 'BELUM ADA EVENT' }}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div class="d-flex flex-wrap">
-                                                <button type="button"
-                                                        class="btn btn-xs btn-sm btn-primary mr-1 mb-1 btn-open-tv-alert-modal"
-                                                        data-station-id="{{ $device->id }}"
-                                                        data-station-name="{{ $device->nama }}"
-                                                        data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
-                                                        {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled title=Belum_ada_Samsung_TV_aktif' : '' }}>
-                                                    <i class="fas fa-bullhorn mr-1"></i> Kirim Peringatan
-                                                </button>
-                                                <button type="button"
-                                                        class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
-                                                        data-station-id="{{ $device->id }}"
-                                                        data-command="VOLUME_DOWN"
-                                                        data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                                        {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                    <i class="fas fa-volume-down"></i> Vol Turun
-                                                </button>
-                                                <button type="button"
-                                                        class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
-                                                        data-station-id="{{ $device->id }}"
-                                                        data-command="VOLUME_UP"
-                                                        data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                                        {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                    <i class="fas fa-volume-up"></i> Vol Naik
-                                                </button>
-                                                <button type="button"
-                                                        class="btn btn-xs btn-sm btn-outline-warning text-dark mr-1 mb-1 btn-tv-volume-cmd"
-                                                        data-station-id="{{ $device->id }}"
-                                                        data-command="MUTE_TOGGLE"
-                                                        data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                                        {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                    <i class="fas fa-volume-mute"></i> Mute/Unmute (Sim)
-                                                </button>
-                                                <button type="button"
-                                                        class="btn btn-xs btn-sm btn-outline-info mb-1 btn-open-tv-history-modal"
-                                                        data-station-id="{{ $device->id }}"
-                                                        data-station-name="{{ $device->nama }}"
-                                                        data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
-                                                        data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
-                                                    <i class="fas fa-history mr-1"></i> Lihat Riwayat Kontrol
-                                                </button>
-                                            </div>
-                                        </div>
-                                    @endif
-                                @endif
-                                <div class="d-flex flex-wrap gap-1">
+                                <div class="stitch-actions-group">
                                     @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
-                                        <button type="button" class="btn btn-sm btn-info" data-toggle="modal" data-target="#customerModal" data-bs-toggle="modal" data-bs-target="#customerModal"
+                                        <button type="button" class="btn-stitch-action btn-stitch-customer" data-toggle="modal" data-target="#customerModal" data-bs-toggle="modal" data-bs-target="#customerModal"
                                             data-id-transaksi="{{ $customers[$device->id]['id_transaksi'] }}"
                                             data-nama="{{ $customers[$device->id]['nama'] }}"
                                             data-nama-perangkat="{{ $customers[$device->id]['nama_perangkat'] }}"
@@ -341,45 +808,47 @@
                                             data-waktu-mulai="{{ $customers[$device->id]['waktu_mulai'] }}"
                                             data-waktu-selesai="{{ $customers[$device->id]['waktu_selesai'] }}"
                                             data-total="{{ $customers[$device->id]['total'] }}"
-                                            data-tanggal="{{ $customers[$device->id]['tanggal'] }}">
-                                            <i class="fas fa-eye"></i> Lihat Pelanggan
+                                            data-tanggal="{{ $customers[$device->id]['tanggal'] }}"
+                                            title="Lihat Pelanggan">
+                                            <i class="fas fa-eye mr-1"></i> Lihat Pelanggan
                                         </button>
                                     @endif
 
                                     @if (auth()->user()->role === 'admin' || auth()->user()->role === 'kasir')
                                         @if ($device->status === 'Digunakan')
-                                            <button type="button" class="btn btn-sm btn-warning" 
+                                            <button type="button" class="btn-stitch-action btn-stitch-stop" 
                                                 onclick="confirmStopDevice({{ $device->id }}, '{{ $device->nama }}')"
                                                 title="Hentikan timer dan ubah status menjadi tersedia">
-                                                <i class="fas fa-stop"></i> Berhenti
+                                                <i class="fas fa-stop mr-1"></i> Berhenti
                                             </button>
                                         @endif
                                         @if (isset($customers[$device->id]) && $customers[$device->id]['tipe_transaksi'] === 'postpaid' && $customers[$device->id]['status_transaksi'] === 'berjalan')
-                                            <button type="button" class="btn btn-sm btn-success" 
+                                            <button type="button" class="btn-stitch-action btn-stitch-finish" 
                                                 data-toggle="modal" 
                                                 data-target="#finishTransactionModal"
                                                 data-bs-toggle="modal" 
                                                 data-bs-target="#finishTransactionModal"
                                                 data-action="{{ route('transaction.end', $customers[$device->id]['id_transaksi']) }}"
                                                 data-device-id="{{ $device->id }}"
-                                                data-device-info="{{ $device->playstation->nama ?? 'Unknown' }} | {{ $device->nama }}">
-                                                <i class="fas fa-check"></i> Selesai
+                                                data-device-info="{{ $device->playstation->nama ?? 'Unknown' }} | {{ $device->nama }}"
+                                                title="Selesaikan Transaksi">
+                                                <i class="fas fa-check mr-1"></i> Selesai
                                             </button>
                                         @endif
-                                        <a href="/device/{{ $device->id }}/edit" class="btn btn-sm btn-primary"><i class="fas fa-edit"></i></a>
-                                        <form action="/device/{{ $device->id }}" method="post" class="d-inline">
+                                        <a href="/device/{{ $device->id }}/edit" class="btn-stitch-icon btn-stitch-edit" title="Edit Stasiun"><i class="fas fa-edit"></i></a>
+                                        <form action="/device/{{ $device->id }}" method="post" class="d-inline m-0 p-0">
                                             @method('delete')
                                             @csrf
-                                            <button class="btn btn-sm btn-danger" onclick="return confirm('Apakah Anda yakin ingin menghapus perangkat ini?')">
+                                            <button class="btn-stitch-icon btn-stitch-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus perangkat ini?')" title="Hapus Stasiun">
                                                 <i class="fas fa-trash-alt"></i>
                                             </button>
                                         </form>
                                     @else
-                                        <a href="/booking/{{ $device->id }}" class="btn btn-sm btn-primary">Lihat Jadwal</a>
+                                        <a href="/booking/{{ $device->id }}" class="btn-stitch-action btn-stitch-edit">Lihat Jadwal</a>
                                     @endif
                                 </div>
                             </div>
-                        </div>
+                        </article>
                     </div>
                 @endforeach
             </div>
@@ -462,6 +931,41 @@
                         @csrf
                         <button type="submit" class="btn btn-success"><i class="fas fa-check"></i> Ya, Selesai</button>
                     </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SR-HARDWARE-POWER-001: Confirm Hardware Power OFF Modal -->
+    <div class="modal fade" id="confirmPowerOffModal" tabindex="-1" role="dialog" aria-labelledby="confirmPowerOffModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content border-warning">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title font-weight-bold" id="confirmPowerOffModalLabel">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>Konfirmasi Matikan Power
+                    </h5>
+                    <button type="button" class="close btn-close text-dark" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <div class="mb-3">
+                        <i class="fas fa-power-off text-warning fa-3x"></i>
+                    </div>
+                    <h5 class="font-weight-bold text-dark mb-2" id="power-off-station-title">Station</h5>
+                    <p class="text-danger font-weight-bold mb-2">
+                        Perhatian: Station sedang Digunakan oleh pelanggan.
+                    </p>
+                    <p class="text-muted small mb-0">
+                        Apakah Anda yakin ingin mematikan power hardware sekarang?<br>
+                        <strong>(Billing dan timer sesi akan tetap berjalan)</strong>
+                    </p>
+                </div>
+                <div class="modal-footer justify-content-center bg-light">
+                    <button type="button" class="btn btn-secondary px-4" data-dismiss="modal" data-bs-dismiss="modal">Batal</button>
+                    <button type="button" class="btn btn-danger px-4" id="btn-execute-power-off">
+                        <i class="fas fa-power-off mr-1"></i> Ya, Matikan Power
+                    </button>
                 </div>
             </div>
         </div>
@@ -601,6 +1105,9 @@
         </div>
     @endif
     </div>
+@endsection
+
+@section('scripts')
     <script>
         // Server time synchronization: calculate offset between client browser clock and server clock
         const initialServerTimestamp = {{ $serverTimestamp ?? (now()->timestamp * 1000) }};
@@ -1045,6 +1552,24 @@
                             } else {
                                 alertEl.addClass('d-none');
                             }
+
+                            // Sync power button status text if not currently processing
+                            var hwState = res.data.hardware_state;
+                            if (hwState) {
+                                $('[id^="power-status-text-' + deviceId + '-"]').each(function() {
+                                    var $st = $(this);
+                                    var cur = $st.text().trim();
+                                    if (cur !== 'PROCESSING' && cur !== 'UNSUPPORTED' && cur !== 'OFFLINE') {
+                                        if (hwState.indexOf('_ON') !== -1 || hwState === 'STATE_ON') {
+                                            $st.text('ON');
+                                            $st.closest('.manual-power-widget-container').find('.btn-hardware-power').attr('data-current-state', 'ON');
+                                        } else if (hwState.indexOf('_OFF') !== -1 || hwState === 'STATE_OFF') {
+                                            $st.text('OFF');
+                                            $st.closest('.manual-power-widget-container').find('.btn-hardware-power').attr('data-current-state', 'OFF');
+                                        }
+                                    }
+                                });
+                            }
                         }
                     }
                 });
@@ -1075,6 +1600,128 @@
                 });
             });
         });
+
+        // SR-HARDWARE-POWER-001: Manual Station Power ON/OFF Control (Admin & Owner)
+        @if(auth()->user()->isAdmin() || auth()->user()->isOwner())
+        (function() {
+            var pendingPowerAction = null;
+
+            $(document).on('click', '.btn-hardware-power', function(e) {
+                e.preventDefault();
+                var $btn = $(this);
+                if ($btn.data('loading') || $btn.prop('disabled')) return;
+
+                var stationId = $btn.data('station-id');
+                var stationName = $btn.data('station-name');
+                var stationStatus = $btn.data('station-status');
+                var physicalDeviceId = $btn.data('physical-device-id');
+                var deviceName = $btn.data('device-name');
+                var currentState = ($btn.attr('data-current-state') || 'UNKNOWN').toUpperCase();
+
+                // Toggle logic: If ON -> target OFF; otherwise -> target ON
+                var targetState = (currentState === 'ON') ? 'OFF' : 'ON';
+
+                // Confirmation requirement: If station is Digunakan and target is OFF
+                if (stationStatus === 'Digunakan' && targetState === 'OFF') {
+                    pendingPowerAction = {
+                        btn: $btn,
+                        stationId: stationId,
+                        stationName: stationName,
+                        physicalDeviceId: physicalDeviceId,
+                        deviceName: deviceName,
+                        targetState: targetState
+                    };
+                    $('#power-off-station-title').text(stationName + ' — ' + deviceName);
+                    safeShowModal('confirmPowerOffModal');
+                    return;
+                }
+
+                executeHardwarePowerCommand($btn, stationId, physicalDeviceId, targetState);
+            });
+
+            $(document).on('click', '#btn-execute-power-off', function() {
+                safeHideModal('confirmPowerOffModal');
+                if (pendingPowerAction) {
+                    executeHardwarePowerCommand(
+                        pendingPowerAction.btn,
+                        pendingPowerAction.stationId,
+                        pendingPowerAction.physicalDeviceId,
+                        pendingPowerAction.targetState
+                    );
+                    pendingPowerAction = null;
+                }
+            });
+
+            function executeHardwarePowerCommand($btn, stationId, physicalDeviceId, targetState) {
+                $btn.data('loading', true);
+                var $statusText = $('#power-status-text-' + stationId + '-' + physicalDeviceId);
+                var previousText = $statusText.text().trim();
+
+                // Change status text to PROCESSING with spinner. BUTTON COLORS REMAIN 100% IDENTICAL.
+                $statusText.html('<i class="fas fa-spinner fa-spin mr-1"></i>PROCESSING');
+
+                var idempotencyKey = 'pwr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+                $.ajax({
+                    url: '/admin/stations/' + stationId + '/hardware/power',
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'),
+                        'Accept': 'application/json'
+                    },
+                    data: {
+                        physical_device_id: physicalDeviceId,
+                        desired_state: targetState,
+                        idempotency_key: idempotencyKey
+                    },
+                    success: function(res) {
+                        $btn.data('loading', false);
+                        var reported = res.reported_state || targetState;
+                        $statusText.text(reported);
+                        $btn.attr('data-current-state', reported);
+
+                        var stationName = $btn.data('station-name') || ('Station #' + stationId);
+                        showFeedbackAlert('success', 'Power ' + stationName + ' berhasil diubah ke ' + reported + ' (' + (res.driver_type || 'Driver') + ')');
+
+                        // Sync automation badge if available
+                        var $relayBadge = $('#automation-badge-' + stationId);
+                        if ($relayBadge.length) {
+                            if (reported === 'ON') {
+                                $relayBadge.attr('class', 'badge badge-success').html('<i class="fas fa-bolt mr-1"></i>STATE_ON');
+                            } else if (reported === 'OFF') {
+                                $relayBadge.attr('class', 'badge badge-secondary').html('<i class="fas fa-power-off mr-1"></i>STATE_OFF');
+                            }
+                        }
+                    },
+                    error: function(xhr) {
+                        $btn.data('loading', false);
+                        var res = xhr.responseJSON || {};
+                        var reported = res.reported_state;
+
+                        if (res.result_code === 'UNSUPPORTED_CAPABILITY') {
+                            $statusText.text('UNSUPPORTED');
+                            $btn.attr('data-current-state', 'UNSUPPORTED');
+                            showFeedbackAlert('warning', 'Perhatian: ' + (res.message || 'Perangkat tidak mendukung perintah ini.'));
+                        } else if (reported === 'OFFLINE' || res.result_code === 'DEVICE_INACTIVE') {
+                            $statusText.text('OFFLINE');
+                            $btn.attr('data-current-state', 'OFFLINE');
+                            showFeedbackAlert('danger', res.message || 'Perangkat sedang offline atau tidak aktif.');
+                        } else if (xhr.status === 403) {
+                            $statusText.text(previousText);
+                            showFeedbackAlert('danger', 'Akses Ditolak: Hanya Admin dan Owner yang memiliki izin kontrol hardware.');
+                        } else if (xhr.status === 423) {
+                            $statusText.text(previousText);
+                            showFeedbackAlert('warning', 'Perangkat sedang sibuk memproses perintah lain. Silakan coba kembali beberapa detik lagi.');
+                        } else {
+                            $statusText.text('UNKNOWN');
+                            $btn.attr('data-current-state', 'UNKNOWN');
+                            showFeedbackAlert('danger', 'Gagal: ' + (res.message || 'Terjadi kesalahan sistem saat menghubungi perangkat.'));
+                        }
+                    }
+                });
+            }
+        })();
+        @endif
 
         // SR-TV-INTEGRATION-001: Admin Samsung TV Control Panel, Modals & Live Status Poller
         @if(auth()->user()->isAdmin())

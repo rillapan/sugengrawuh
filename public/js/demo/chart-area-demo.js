@@ -30,8 +30,11 @@ function number_format(number, decimals, dec_point, thousands_sep) {
 // Area Chart Example - Wrapped in DOMContentLoaded to ensure DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
   var ctx = document.getElementById("myAreaChart");
-  if (ctx) {
-    var myLineChart = new Chart(ctx, {
+  if (!ctx) {
+    return;
+  }
+
+  var myLineChart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: [], // Will be populated with hourly labels
@@ -125,7 +128,4 @@ document.addEventListener('DOMContentLoaded', function() {
       console.log('XHR status:', xhr.status);
       console.log('Response text:', xhr.responseText);
     });
-  } else {
-    console.log('Chart element with id "myAreaChart" not found - this is normal if not on the dashboard page');
-  }
 });
