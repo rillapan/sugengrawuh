@@ -29,6 +29,7 @@ class Transaction extends Model
         'user_id',
         'harga',
         'jam_main',
+        'duration_seconds',
         'waktu_mulai',
         'waktu_Selesai',
         'total',
@@ -54,7 +55,38 @@ class Transaction extends Model
         'ended_at' => 'datetime',
         'lost_time_start' => 'datetime',
         'session_generation' => 'integer',
+        'duration_seconds' => 'integer',
     ];
+
+    /**
+     * Get human-readable duration description across prepaid, postpaid, and custom package.
+     */
+    public function getDisplayDurationAttribute(): string
+    {
+        if ($this->tipe_transaksi === 'postpaid') {
+            return (string) ($this->jam_main ?: '-');
+        }
+
+        if ($this->tipe_transaksi === 'custom_package') {
+            return is_numeric($this->jam_main) ? "{$this->jam_main} Menit" : (string) ($this->jam_main ?: '-');
+        }
+
+        // Prepaid
+        if ($this->duration_seconds !== null && $this->duration_seconds > 0) {
+            $formatted = HourlyPrice::formatSeconds($this->duration_seconds);
+            $human = HourlyPrice::humanizeSeconds($this->duration_seconds);
+            return "{$formatted} ({$human})";
+        }
+
+        if (!empty($this->jam_main)) {
+            if (preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $this->jam_main)) {
+                return $this->jam_main;
+            }
+            return is_numeric($this->jam_main) ? "{$this->jam_main} Jam" : $this->jam_main;
+        }
+
+        return '-';
+    }
 
     public function scopeActiveBilling($query)
     {

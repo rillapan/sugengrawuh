@@ -156,6 +156,10 @@
                     {{ $transaction->jam_main }}
                 @elseif($transaction->tipe_transaksi === 'custom_package')
                    {{ $transaction->jam_main }} Menit
+                @elseif($transaction->duration_seconds)
+                   {{ $transaction->display_duration }}
+                @elseif(preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $transaction->jam_main ?? ''))
+                   {{ $transaction->jam_main }}
                 @else
                    {{ $transaction->jam_main }} Jam
                 @endif

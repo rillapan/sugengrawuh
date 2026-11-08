@@ -14,9 +14,9 @@
         <div class="col-12">
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="card-title mb-0">Daftar Harga per Jam</h5>
+                    <h5 class="card-title mb-0">Daftar Tarif Paket Durasi</h5>
                     <a href="{{ route('hourly-prices.hourly-prices.create', $playstation->id) }}" class="btn btn-primary">
-                        <i class="fas fa-plus"></i> Tambah Harga
+                        <i class="fas fa-plus"></i> Tambah Tarif
                     </a>
                 </div>
                 <div class="card-body">
@@ -24,16 +24,21 @@
                         <table class="table table-centered table-nowrap mb-0">
                             <thead class="table-light">
                                 <tr>
-                                    <th>Durasi (Jam)</th>
-                                    <th>Harga</th>
+                                    <th>Durasi (Jam:Menit:Detik)</th>
+                                    <th>Harga Paket</th>
                                     <th>Aksi</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @forelse ($hourlyPrices as $price)
                                 <tr>
-                                    <td>{{ $price->hour }} jam</td>
-                                    <td>Rp {{ number_format($price->price, 0, ',', '.') }}</td>
+                                    <td>
+                                        <code class="fw-bold fs-6 text-dark">{{ $price->formatted_duration }}</code>
+                                        <span class="text-muted ms-2 small">({{ $price->human_duration }})</span>
+                                    </td>
+                                    <td>
+                                        <strong class="text-success">Rp {{ number_format($price->price, 0, ',', '.') }}</strong>
+                                    </td>
                                     <td>
                                         <a href="{{ route('hourly-prices.hourly-prices.edit', [$playstation->id, $price->id]) }}" 
                                            class="btn btn-sm btn-warning">
@@ -42,7 +47,7 @@
                                         <form action="{{ route('hourly-prices.hourly-prices.destroy', [$playstation->id, $price->id]) }}" 
                                               method="POST" 
                                               class="d-inline" 
-                                              onsubmit="return confirm('Yakin ingin menghapus harga ini?')">
+                                              onsubmit="return confirm('Yakin ingin menghapus tarif ini?')">
                                             @csrf
                                             @method('DELETE')
                                             <button type="submit" class="btn btn-sm btn-danger">
@@ -53,7 +58,7 @@
                                 </tr>
                                 @empty
                                 <tr>
-                                    <td colspan="3" class="text-center">Belum ada harga per jam yang ditentukan</td>
+                                    <td colspan="3" class="text-center text-muted py-4">Belum ada tarif paket durasi yang ditentukan untuk kategori ini.</td>
                                 </tr>
                                 @endforelse
                             </tbody>

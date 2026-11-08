@@ -172,15 +172,7 @@
                                 @endif
                             </td>
                             <td>
-                                @if($transaksi->jam_main)
-                                    @if($transaksi->tipe_transaksi === 'custom_package')
-                                        {{ $transaksi->jam_main }} Menit
-                                    @else
-                                        {{ $transaksi->jam_main }} Jam
-                                    @endif
-                                @else
-                                    -
-                                @endif
+                                {{ $transaksi->display_duration }}
                             </td>
                             <td>{{ $transaksi->waktu_mulai }}</td>
                             <td>{{ $transaksi->waktu_Selesai ?: '-' }}</td>

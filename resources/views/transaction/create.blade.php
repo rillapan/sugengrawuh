@@ -169,7 +169,7 @@
                             @enderror
                         </div>
                         <div class="col-md-6">
-                            <label for="jam_main" class="form-label small">Jam Main</label>
+                            <label for="jam_main_select" class="form-label small">Durasi Bermain</label>
                             <div class="row g-2">
                                 <div class="col-12">
                                     <select class="form-control @error('jam_main') is-invalid @enderror" id="jam_main_select" name="jam_main_select" onchange="handleJamMainChange()">
@@ -178,9 +178,34 @@
                                     </select>
                                 </div>
                                 <div class="col-12" id="custom_jam_main_container" style="display: none;">
-                                    <input type="number" class="form-control @error('jam_main') is-invalid @enderror" id="jam_main"
-                                        name="jam_main" value="{{ old('jam_main') }}" oninput="showTotal()" onchange="handleJamMainChange()" min="1" max="24" placeholder="Masukkan jumlah jam">
-                                    <small class="text-muted">Harga mengikuti harga dasar PlayStation</small>
+                                    <div class="p-2 border rounded bg-light">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <span class="small fw-bold text-dark"><i class="fas fa-clock mr-1"></i>Masukkan Durasi:</span>
+                                            <span class="badge bg-primary text-white" id="custom_duration_preview">00:00:00</span>
+                                        </div>
+                                        <div class="row g-1">
+                                            <div class="col-4">
+                                                <label for="custom_hours" class="form-label small text-muted mb-0">Jam</label>
+                                                <input type="number" class="form-control form-control-sm" id="custom_hours"
+                                                    name="custom_hours" value="0" min="0" max="24" oninput="handleCustomDurationInput()" placeholder="0">
+                                            </div>
+                                            <div class="col-4">
+                                                <label for="custom_minutes" class="form-label small text-muted mb-0">Menit</label>
+                                                <input type="number" class="form-control form-control-sm" id="custom_minutes"
+                                                    name="custom_minutes" value="0" min="0" max="59" oninput="handleCustomDurationInput()" placeholder="0">
+                                            </div>
+                                            <div class="col-4">
+                                                <label for="custom_seconds" class="form-label small text-muted mb-0">Detik</label>
+                                                <input type="number" class="form-control form-control-sm" id="custom_seconds"
+                                                    name="custom_seconds" value="0" min="0" max="59" oninput="handleCustomDurationInput()" placeholder="0">
+                                            </div>
+                                        </div>
+                                        <input type="hidden" id="jam_main" name="jam_main" value="{{ old('jam_main') }}">
+                                        <input type="hidden" id="duration_seconds" name="duration_seconds" value="">
+                                        <div class="mt-1">
+                                            <small class="text-muted" id="custom_price_hint"><i class="fas fa-info-circle mr-1"></i>Prorata detik & pembulatan ke atas kelipatan Rp500</small>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             @error('jam_main')
@@ -462,6 +487,81 @@
             }
         }
 
+        let currentDurations = [];
+        let currentHourlyPrices = {};
+
+        function formatSecondsToHHMMSS(totalSec) {
+            const h = Math.floor(totalSec / 3600).toString().padStart(2, '0');
+            const m = Math.floor((totalSec % 3600) / 60).toString().padStart(2, '0');
+            const s = (totalSec % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function humanizeSecondsJs(totalSec) {
+            if (totalSec <= 0) return '0 detik';
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            const parts = [];
+            if (h > 0) parts.push(`${h} jam`);
+            if (m > 0) parts.push(`${m} menit`);
+            if (s > 0) parts.push(`${s} detik`);
+            return parts.length > 0 ? parts.join(' ') : '0 detik';
+        }
+
+        function parseDurationStringToSeconds(val) {
+            if (!val) return 0;
+            if (typeof val === 'number') return val > 24 ? val : val * 3600;
+            val = String(val).trim();
+            if (val.includes(':')) {
+                const parts = val.split(':');
+                const h = parseInt(parts[0], 10) || 0;
+                const m = parseInt(parts[1], 10) || 0;
+                const s = parseInt(parts[2], 10) || 0;
+                return (h * 3600) + (m * 60) + s;
+            }
+            const num = parseFloat(val);
+            if (isNaN(num) || num <= 0) return 0;
+            return num > 24 ? Math.round(num) : Math.round(num * 3600);
+        }
+
+        function populateDurationOptions(durations, prices) {
+            const jamMainSelect = document.getElementById('jam_main_select');
+            jamMainSelect.innerHTML = '<option value="">Pilih durasi paket yang tersedia</option>';
+
+            if (durations && durations.length > 0) {
+                durations.forEach(d => {
+                    const option = document.createElement('option');
+                    option.value = d.duration_seconds;
+                    option.setAttribute('data-seconds', d.duration_seconds);
+                    option.setAttribute('data-price', d.price);
+                    option.setAttribute('data-formatted', d.formatted);
+                    // BUG-05: Clean humanized format e.g. "5 menit — Rp 2.000"
+                    const label = d.human || humanizeSecondsJs(d.duration_seconds);
+                    option.textContent = `${label} — Rp ${new Intl.NumberFormat('id-ID').format(d.price)}`;
+                    jamMainSelect.appendChild(option);
+                });
+            } else if (prices && Object.keys(prices).length > 0) {
+                Object.keys(prices).sort((a, b) => {
+                    return parseDurationStringToSeconds(a) - parseDurationStringToSeconds(b);
+                }).forEach(key => {
+                    const price = prices[key];
+                    const totalSec = parseDurationStringToSeconds(key);
+                    const formatted = formatSecondsToHHMMSS(totalSec);
+                    const label = humanizeSecondsJs(totalSec);
+                    const option = document.createElement('option');
+                    option.value = totalSec;
+                    option.setAttribute('data-seconds', totalSec);
+                    option.setAttribute('data-price', price);
+                    option.setAttribute('data-formatted', formatted);
+                    option.textContent = `${label} — Rp ${new Intl.NumberFormat('id-ID').format(price)}`;
+                    jamMainSelect.appendChild(option);
+                });
+            }
+
+            jamMainSelect.innerHTML += '<option value="custom">Custom (input manual)</option>';
+        }
+
         function showPrice() {
             const isCustomPackage = document.getElementById('custom_package').checked;
             if (isCustomPackage) return; // In custom package mode, price is fixed by package
@@ -472,7 +572,6 @@
             const totalField = document.getElementById('total_ps');
             const jamMainSelect = document.getElementById('jam_main_select');
             const jamMainInput = document.getElementById('jam_main');
-            const jamMain = parseFloat(jamMainInput.value);
 
             if (!device || device === "dummy") {
                 harga.value = '';
@@ -483,118 +582,120 @@
 
             console.log('Device:', device);
             
-            // Check if a specific playstation type is selected
-            const selectedPlaystationId = playstationSelect.value;
-            
+            // Build request parameters (handles single or multi PlayStation device)
+            const params = { device: device };
+            const selectedPlaystationId = playstationSelect ? playstationSelect.value : null;
             if (selectedPlaystationId) {
-                // Use specific playstation pricing
-                console.log('Using specific playstation ID:', selectedPlaystationId);
-                
-                // Get price for specific playstation
-                axios.get('/api/get-harga', {
-                    params: {
-                        device: device,
-                        playstation_id: selectedPlaystationId
-                    }
-                })
-                .then(function(response) {
-                    console.log('Playstation price response:', response.data);
-                    harga.value = response.data.harga;
-                    
-                    // Load hourly prices for this specific playstation
-                    return axios.get('/api/get-hourly-prices', {
-                        params: {
-                            device: device,
-                            playstation_id: selectedPlaystationId
-                        }
-                    });
-                })
-                .then(function(hourlyResponse) {
-                    console.log('Hourly prices for playstation:', hourlyResponse.data);
-                    const prices = hourlyResponse.data.prices || {};
-
-                    // Update jam main select with hourly prices
-                    jamMainSelect.innerHTML = '<option value="">Pilih jam yang tersedia</option>';
-
-                    Object.keys(prices).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
-                        const option = document.createElement('option');
-                        option.value = hour;
-                        option.textContent = `${hour} jam - Rp ${new Intl.NumberFormat('id-ID').format(prices[hour])}`;
-                        jamMainSelect.appendChild(option);
-                    });
-
-                    jamMainSelect.innerHTML += '<option value="custom">Custom (input manual)</option>';
-
-                    // Calculate total if jam main is selected
-                    if (!isNaN(jamMain) && jamMain > 0) {
-                        showTotal();
-                    } else {
-                        totalField.value = '';
-                    }
-                })
-                .catch(function(error) {
-                    console.log('Error getting playstation pricing:', error);
-                    harga.value = '';
-                    totalField.value = '';
-                    jamMainSelect.innerHTML = '<option value="">Pilih jam yang tersedia</option><option value="custom">Custom (input manual)</option>';
-                });
-            } else {
-                // Use default device pricing (backward compatibility)
-                console.log('Using default device pricing');
-
-                // Get base price first - also check if specific playstation selected
-                const params = {
-                    device: device
-                };
-
-                // If a specific playstation type is selected, use that for pricing
-                const specificPlaystationId = playstationSelect.value;
-                if (specificPlaystationId) {
-                    params.playstation_id = specificPlaystationId;
-                }
-
-                axios.get('/api/get-harga', {
-                        params: params
-                    })
-                    .then(function(response) {
-                        console.log(response.data);
-                        harga.value = response.data.harga;
-
-                        // Load hourly prices using the same parameters
-                        return axios.get('/api/get-hourly-prices', {
-                            params: params
-                        });
-                    })
-                    .then(function(hourlyResponse) {
-                        console.log('Hourly prices:', hourlyResponse.data);
-                        const prices = hourlyResponse.data.prices || {};
-                        
-                        // Update jam main select with hourly prices
-                        jamMainSelect.innerHTML = '<option value="">Pilih jam yang tersedia</option>';
-                        
-                        Object.keys(prices).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
-                            const option = document.createElement('option');
-                            option.value = hour;
-                            option.textContent = `${hour} jam - Rp ${new Intl.NumberFormat('id-ID').format(prices[hour])}`;
-                            jamMainSelect.appendChild(option);
-                        });
-                        
-                        jamMainSelect.innerHTML += '<option value="custom">Custom (input manual)</option>';
-                        
-                        // Calculate total if jam main is selected
-                        if (!isNaN(jamMain) && jamMain > 0) {
-                            showTotal(); // Use showTotal() to get correct pricing
-                        } else {
-                            totalField.value = '';
-                        }
-                    })
-                    .catch(function(error) {
-                        console.log(error);
-                        harga.value = '';
-                        totalField.value = '';
-                        jamMainSelect.innerHTML = '<option value="">Pilih jam yang tersedia</option><option value="custom">Custom (input manual)</option>';
-                    });
+                params.playstation_id = selectedPlaystationId;
             }
+
+            // Get base price first
+            axios.get('/api/get-harga', {
+                params: params
+            })
+            .then(function(response) {
+                harga.value = response.data.harga;
+
+                // Load hourly prices and duration presets
+                return axios.get('/api/get-hourly-prices', {
+                    params: params
+                });
+            })
+            .then(function(hourlyResponse) {
+                console.log('Hourly prices response:', hourlyResponse.data);
+                currentHourlyPrices = hourlyResponse.data.prices || {};
+                currentDurations = hourlyResponse.data.durations || [];
+
+                populateDurationOptions(currentDurations, currentHourlyPrices);
+
+                // Re-evaluate duration / price
+                handleJamMainChange();
+            })
+            .catch(function(error) {
+                console.error('Error getting playstation pricing:', error);
+                harga.value = '';
+                totalField.value = '';
+                jamMainSelect.innerHTML = '<option value="">Pilih jam yang tersedia</option><option value="custom">Custom (input manual)</option>';
+            });
+        }
+
+        // SR-BILLING-DURATION-001: Integer-safe rounding up to nearest Rp 500
+        function calculateCustomPaketPrice(baseHourlyRate, totalSeconds) {
+            if (totalSeconds <= 0 || baseHourlyRate <= 0) return 0;
+            
+            // 1. Check exact preset match in currentDurations first
+            if (Array.isArray(currentDurations)) {
+                for (let i = 0; i < currentDurations.length; i++) {
+                    if (currentDurations[i].duration_seconds === totalSeconds) {
+                        return currentDurations[i].price;
+                    }
+                }
+            }
+            
+            // 2. Custom manual without preset: prorata per second + always round UP to nearest Rp 500
+            // Formula approved: intdiv($numerator + $denominator - 1, $denominator) * 500
+            const numerator = baseHourlyRate * totalSeconds;
+            const denominator = 3600 * 500;
+            return Math.floor((numerator + denominator - 1) / denominator) * 500;
+        }
+
+        function handleCustomDurationInput() {
+            const isCustomPackage = document.getElementById('custom_package').checked;
+            if (isCustomPackage) return;
+
+            const hInput = document.getElementById('custom_hours');
+            const mInput = document.getElementById('custom_minutes');
+            const sInput = document.getElementById('custom_seconds');
+            const previewEl = document.getElementById('custom_duration_preview');
+            const hintEl = document.getElementById('custom_price_hint');
+            const jamMainInput = document.getElementById('jam_main');
+            const durationSecondsInput = document.getElementById('duration_seconds');
+            const totalField = document.getElementById('total_ps');
+            const harga = parseFloat(document.getElementById('harga').value) || 0;
+
+            let h = parseInt(hInput.value) || 0;
+            let m = parseInt(mInput.value) || 0;
+            let s = parseInt(sInput.value) || 0;
+
+            if (h < 0) { h = 0; hInput.value = 0; }
+            if (h > 24) { h = 24; hInput.value = 24; }
+            if (m < 0) { m = 0; mInput.value = 0; }
+            if (m > 59) { m = 59; mInput.value = 59; }
+            if (s < 0) { s = 0; sInput.value = 0; }
+            if (s > 59) { s = 59; sInput.value = 59; }
+
+            const totalSec = (h * 3600) + (m * 60) + s;
+            const pad = (n) => n.toString().padStart(2, '0');
+            const formatted = `${pad(h)}:${pad(m)}:${pad(s)}`;
+
+            if (previewEl) previewEl.textContent = formatted;
+            if (jamMainInput) jamMainInput.value = formatted;
+            if (durationSecondsInput) durationSecondsInput.value = totalSec;
+
+            // Check if matches an admin preset
+            let isPresetMatch = false;
+            if (Array.isArray(currentDurations)) {
+                for (let i = 0; i < currentDurations.length; i++) {
+                    if (currentDurations[i].duration_seconds === totalSec) {
+                        isPresetMatch = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hintEl) {
+                if (isPresetMatch) {
+                    hintEl.innerHTML = '<span class="text-success"><i class="fas fa-check-circle mr-1"></i>Sesuai tarif preset admin</span>';
+                } else {
+                    hintEl.innerHTML = '<span class="text-primary"><i class="fas fa-calculator mr-1"></i>Prorata detik & pembulatan ke atas kelipatan Rp500</span>';
+                }
+            }
+
+            const calculatedPrice = calculateCustomPaketPrice(harga, totalSec);
+            totalField.value = calculatedPrice > 0 ? calculatedPrice : '';
+            updateGrandTotal();
+            showTime();
+            showChangeMaster();
         }
 
         function handleJamMainChange() {
@@ -603,69 +704,56 @@
 
             const jamMainSelect = document.getElementById('jam_main_select');
             const jamMainInput = document.getElementById('jam_main');
+            const durationSecondsInput = document.getElementById('duration_seconds');
             const customContainer = document.getElementById('custom_jam_main_container');
-            const harga = document.getElementById('harga');
             const totalField = document.getElementById('total_ps');
             
             if (jamMainSelect.value === 'custom') {
                 // Show custom input
                 customContainer.style.display = 'block';
-                jamMainInput.setAttribute('required', 'required');
-                
-                // Use base price for custom - call showTotal() to handle calculation
-                showTotal();
+                handleCustomDurationInput();
             } else if (jamMainSelect.value) {
-                // Hide custom input and use selected hourly price
+                // Hide custom input and use selected duration preset
                 customContainer.style.display = 'none';
-                jamMainInput.removeAttribute('required');
-                jamMainInput.value = jamMainSelect.value;
                 
-                // Get hourly price for selected hour
-                const device = document.getElementById('device_id').value;
-                const playstationSelect = document.getElementById('playstation_id'); // Get the PlayStation selection
-                if (device && device !== "dummy") {
-                    const params = {
-                        device: device
-                    };
+                // Reset custom duration inputs cleanly
+                document.getElementById('custom_hours').value = 0;
+                document.getElementById('custom_minutes').value = 0;
+                document.getElementById('custom_seconds').value = 0;
 
-                    // If a specific playstation type is selected, include it in the request
-                    if (playstationSelect && playstationSelect.value) {
-                        params.playstation_id = playstationSelect.value;
-                    }
+                const selectedOption = jamMainSelect.options[jamMainSelect.selectedIndex];
+                const presetSeconds = selectedOption ? selectedOption.getAttribute('data-seconds') : null;
+                const presetPrice = selectedOption ? selectedOption.getAttribute('data-price') : null;
+                const presetFormatted = selectedOption ? selectedOption.getAttribute('data-formatted') : null;
 
-                    axios.get('/api/get-hourly-prices', {
-                        params: params
-                    })
-                    .then(function(response) {
-                        const prices = response.data.prices || {};
-                        const selectedHour = jamMainSelect.value;
-                        
-                        if (prices[selectedHour]) {
-                            // Use hourly price - this is the TOTAL price for the selected duration
-                            totalField.value = parseFloat(prices[selectedHour]);
-                            updateGrandTotal();
-                        } else {
-                            // Fallback to base price calculation
-                            const total = parseFloat(harga.value) * parseFloat(selectedHour);
-                            totalField.value = total;
-                            updateGrandTotal();
-                        }
-                    })
-                    .catch(function(error) {
-                        console.log(error);
-                        // Fallback to base price
-                        const total = parseFloat(harga.value) * parseFloat(jamMainSelect.value);
-                        totalField.value = total;
-                        updateGrandTotal();
-                    });
+                const finalSeconds = presetSeconds ? parseInt(presetSeconds, 10) : parseDurationStringToSeconds(jamMainSelect.value);
+                const formatted = presetFormatted || formatSecondsToHHMMSS(finalSeconds);
+                
+                if (durationSecondsInput) durationSecondsInput.value = finalSeconds;
+                if (jamMainInput) jamMainInput.value = formatted;
+                
+                if (presetPrice !== null && presetPrice !== undefined && presetPrice !== '') {
+                    totalField.value = parseFloat(presetPrice);
+                } else if (currentHourlyPrices && (currentHourlyPrices[jamMainSelect.value] !== undefined || currentHourlyPrices[formatted] !== undefined)) {
+                    totalField.value = parseFloat(currentHourlyPrices[jamMainSelect.value] ?? currentHourlyPrices[formatted]);
+                } else {
+                    const harga = parseFloat(document.getElementById('harga').value) || 0;
+                    totalField.value = calculateCustomPaketPrice(harga, finalSeconds);
                 }
+
+                updateGrandTotal();
+                showTime();
             } else {
                 // Reset
                 customContainer.style.display = 'none';
-                jamMainInput.removeAttribute('required');
-                jamMainInput.value = '';
+                if (jamMainInput) jamMainInput.value = '';
+                if (durationSecondsInput) durationSecondsInput.value = '';
+                document.getElementById('custom_hours').value = 0;
+                document.getElementById('custom_minutes').value = 0;
+                document.getElementById('custom_seconds').value = 0;
                 totalField.value = '';
                 updateGrandTotal();
+                document.getElementById('waktu_Selesai').value = '';
             }
             
             showChangeMaster();
@@ -675,63 +763,11 @@
             const isCustomPackage = document.getElementById('custom_package').checked;
             if (isCustomPackage) return; // In custom package mode, price is fixed by package
 
-            const harga = parseFloat(document.getElementById('harga').value);
             const jamMainSelect = document.getElementById('jam_main_select');
-            const jamMainInput = document.getElementById('jam_main');
-            const totalField = document.getElementById('total_ps');
-            let jamMain = 0;
-            
-            if (jamMainSelect.value && jamMainSelect.value !== 'custom') {
-                jamMain = parseFloat(jamMainSelect.value);
-            } else if (jamMainInput.value) {
-                jamMain = parseFloat(jamMainInput.value);
-            }
-            
-            // If hourly price is selected, get the specific hourly price
-            if (jamMainSelect.value && jamMainSelect.value !== 'custom') {
-                const device = document.getElementById('device_id').value;
-                const playstationSelect = document.getElementById('playstation_id'); // Get the PlayStation selection
-                if (device && device !== "dummy") {
-                    const params = {
-                        device: device
-                    };
-
-                    // If a specific playstation type is selected, include it in the request
-                    if (playstationSelect && playstationSelect.value) {
-                        params.playstation_id = playstationSelect.value;
-                    }
-
-                    axios.get('/api/get-hourly-prices', {
-                        params: params
-                    })
-                    .then(function(response) {
-                        const prices = response.data.prices || {};
-                        const selectedHour = jamMainSelect.value;
-                        
-                        if (prices[selectedHour]) {
-                            // Use hourly price - this is the TOTAL price for the selected duration
-                            totalField.value = parseFloat(prices[selectedHour]);
-                            updateGrandTotal();
-                        } else {
-                            // Fallback to base price calculation
-                            const total = harga * jamMain;
-                            totalField.value = total;
-                            updateGrandTotal();
-                        }
-                    })
-                    .catch(function(error) {
-                        console.log(error);
-                        // Fallback to base price calculation
-                        const total = harga * jamMain;
-                        totalField.value = total;
-                        updateGrandTotal();
-                    });
-                }
+            if (jamMainSelect.value === 'custom') {
+                handleCustomDurationInput();
             } else {
-                // Use base price for custom or no selection
-                const total = harga * jamMain;
-                totalField.value = total;
-                updateGrandTotal();
+                handleJamMainChange();
             }
         }
 
@@ -1297,29 +1333,48 @@
             const waktu_mulai = document.getElementById('waktu_mulai').value;
             const waktu_selesai = document.getElementById('waktu_Selesai');
             const jamMainSelect = document.getElementById('jam_main_select');
-            const jamMainInput = document.getElementById('jam_main');
-            let jam_main = 0;
-            
-            if (jamMainSelect.value && jamMainSelect.value !== 'custom') {
-                jam_main = jamMainSelect.value;
-            } else if (jamMainInput.value) {
-                jam_main = jamMainInput.value;
+            const durationSecondsInput = document.getElementById('duration_seconds');
+            const isCustomPackage = document.getElementById('custom_package')?.checked;
+
+            if (isCustomPackage) {
+                return;
             }
-            
-            console.log(jam_main)
-            const tanggal = new Date().toISOString().slice(0, 10);
-            const date = new Date();
+
+            if (!waktu_mulai) return;
+
+            let totalSeconds = 0;
+            if (jamMainSelect && jamMainSelect.value === 'custom') {
+                const cH = parseInt(document.getElementById('custom_hours')?.value) || 0;
+                const cM = parseInt(document.getElementById('custom_minutes')?.value) || 0;
+                const cS = parseInt(document.getElementById('custom_seconds')?.value) || 0;
+                totalSeconds = (cH * 3600) + (cM * 60) + cS;
+            } else if (durationSecondsInput && durationSecondsInput.value) {
+                totalSeconds = parseInt(durationSecondsInput.value, 10) || 0;
+            } else if (jamMainSelect && jamMainSelect.value && jamMainSelect.value !== 'custom') {
+                const opt = jamMainSelect.options[jamMainSelect.selectedIndex];
+                const sec = opt ? opt.getAttribute('data-seconds') : null;
+                totalSeconds = sec ? parseInt(sec, 10) : parseDurationStringToSeconds(jamMainSelect.value);
+            }
+
+            if (totalSeconds <= 0) {
+                waktu_selesai.value = '';
+                return;
+            }
 
             const waktu_mulai_split = waktu_mulai.split(':');
-            date.setHours(waktu_mulai_split[0]);
-            date.setMinutes(waktu_mulai_split[1]);
-            console.log(date)
-            date.setHours(date.getHours() + parseInt(jam_main));
+            const startH = parseInt(waktu_mulai_split[0], 10) || 0;
+            const startM = parseInt(waktu_mulai_split[1], 10) || 0;
+            const startS = parseInt(waktu_mulai_split[2], 10) || 0;
 
-            waktu_selesai.value =
-                `${date.getHours()}:${date.getMinutes() < 10 ? '0' + date.getMinutes() : date.getMinutes()}`;
+            const date = new Date();
+            date.setHours(startH, startM, startS, 0);
+            date.setTime(date.getTime() + (totalSeconds * 1000));
 
-            console.log(`${date.getHours()}:${date.getMinutes()}`)
+            const pad = (n) => n.toString().padStart(2, '0');
+            const hasSeconds = (date.getSeconds() > 0) || (startS > 0) || (totalSeconds % 60 !== 0);
+            waktu_selesai.value = hasSeconds
+                ? `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+                : `${pad(date.getHours())}:${pad(date.getMinutes())}`;
         }
 
         function validateTransactionForm() {
@@ -1329,7 +1384,7 @@
             const playstationId = document.getElementById('playstation_id').value;
             const customPackageId = document.getElementById('custom_package_id').value;
             const jamMainSelect = document.getElementById('jam_main_select').value;
-            const jamMainInput = document.getElementById('jam_main').value.trim();
+            const durationSecondsInput = document.getElementById('duration_seconds').value;
             const harga = document.getElementById('harga').value.trim();
             const total = document.getElementById('total').value.trim();
 
@@ -1356,13 +1411,16 @@
                     errors.push('Silakan pilih custom package terlebih dahulu');
                 }
             } else if (tipeTransaksi && tipeTransaksi.value === 'prepaid') {
-                // Check jam main for prepaid
-                if (!jamMainSelect && !jamMainInput) {
-                    errors.push('Silakan pilih jam main atau masukkan jam main secara manual');
-                } else if (jamMainSelect === 'custom' && !jamMainInput) {
-                    errors.push('Silakan masukkan jumlah jam main untuk custom input');
-                } else if (jamMainInput && (isNaN(jamMainInput) || parseFloat(jamMainInput) <= 0)) {
-                    errors.push('Jam main harus berupa angka positif');
+                if (!jamMainSelect) {
+                    errors.push('Silakan pilih durasi paket atau masukkan durasi secara manual');
+                } else if (jamMainSelect === 'custom') {
+                    const cH = parseInt(document.getElementById('custom_hours')?.value) || 0;
+                    const cM = parseInt(document.getElementById('custom_minutes')?.value) || 0;
+                    const cS = parseInt(document.getElementById('custom_seconds')?.value) || 0;
+                    const totalSec = (cH * 3600) + (cM * 60) + cS;
+                    if (totalSec <= 0) {
+                        errors.push('Silakan masukkan durasi bermain (Jam, Menit, atau Detik) lebih dari 0');
+                    }
                 }
 
                 // Check harga

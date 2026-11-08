@@ -8,6 +8,7 @@ use App\Models\Transaction;
 use App\Models\CustomPackage;
 use App\Models\Fnb;
 use App\Models\TransactionFnb;
+use App\Models\StockMutation;
 use App\Models\AutomationIntent;
 use App\Models\TvAlertEvent;
 use App\Services\Hardware\Automation\AutomationIntentService;
@@ -102,25 +103,38 @@ class BillingService
             $fnbTotal = 0;
 
             if ($tipeTransaksi === 'prepaid') {
-                $jamMain = (int) ($data['jam_main'] ?? 1);
-                if ($jamMain <= 0) {
-                    $jamMain = 1;
+                $totalSeconds = null;
+                if (!empty($data['duration_seconds']) && (int)$data['duration_seconds'] > 0) {
+                    $totalSeconds = (int) $data['duration_seconds'];
+                } elseif (isset($data['jam_main']) && is_string($data['jam_main']) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $data['jam_main'], $m)) {
+                    $totalSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int)$m[3] : 0);
+                } elseif (isset($data['jam_main']) && is_numeric($data['jam_main'])) {
+                    $totalSeconds = (int) round((float) $data['jam_main'] * 3600);
+                } else {
+                    $totalSeconds = 3600;
                 }
 
-                $expiresAt = $startedAt->copy()->addHours($jamMain);
-                $transactionData['jam_main'] = $jamMain;
+                if ($totalSeconds <= 0) {
+                    $totalSeconds = 3600;
+                }
+
+                $expiresAt = $startedAt->copy()->addSeconds($totalSeconds);
+
+                // Preserve integer legacy jam_main if provided as plain integer
+                if (isset($data['jam_main']) && is_numeric($data['jam_main']) && (int)$data['jam_main'] == $data['jam_main'] && empty($data['duration_seconds'])) {
+                    $transactionData['jam_main'] = (int) $data['jam_main'];
+                } else {
+                    $transactionData['jam_main'] = \App\Models\HourlyPrice::formatSeconds($totalSeconds);
+                }
+
+                $transactionData['duration_seconds'] = $totalSeconds;
                 $transactionData['waktu_Selesai'] = $expiresAt->format('H:i');
                 $transactionData['expires_at'] = $expiresAt;
                 $transactionData['status_transaksi'] = 'sukses';
 
-                // Hourly pricing logic
+                // Hourly / Custom duration pricing logic (SR-BILLING-DURATION-001)
                 if ($playstation) {
-                    $hourlyPrice = $playstation->getPriceForHour($jamMain);
-                    if ($hourlyPrice !== null) {
-                        $totalPs = (float) $hourlyPrice;
-                    } else {
-                        $totalPs = (float) (($playstation->harga ?? 0) * $jamMain);
-                    }
+                    $totalPs = (float) $playstation->calculateCustomPrice($totalSeconds);
                     $transactionData['harga'] = $playstation->harga ?? 0;
                 }
 
@@ -314,27 +328,32 @@ class BillingService
             $playstation = $transaction->playstation ?: ($device ? $device->playstation : null);
 
             $newJamMain = $transaction->jam_main;
+            $newDurationSeconds = $transaction->duration_seconds;
             $additionalPsPrice = 0;
 
             if ($transaction->tipe_transaksi === 'prepaid') {
                 $addedHours = $isMinutes ? ($additionalUnits / 60) : $additionalUnits;
-                $currentHours = is_numeric($transaction->jam_main) ? (int)$transaction->jam_main : 1;
-                $totalHours = $currentHours + (int)$addedHours;
-                $newJamMain = $totalHours;
+                $currentSeconds = $transaction->duration_seconds;
+                if ($currentSeconds === null || $currentSeconds <= 0) {
+                    $currentSeconds = (is_numeric($transaction->jam_main) ? (int)$transaction->jam_main : 1) * 3600;
+                }
+                $newDurationSeconds = $currentSeconds + ($additionalMinutes * 60);
+
+                if (is_numeric($transaction->jam_main) && !str_contains((string)$transaction->jam_main, ':')) {
+                    $newJamMain = (int)$transaction->jam_main + (int)$addedHours;
+                } else {
+                    $newJamMain = \App\Models\HourlyPrice::formatSeconds($newDurationSeconds);
+                }
 
                 if ($playstation) {
-                    $hourlyPrice = $playstation->getPriceForHour($totalHours);
-                    if ($hourlyPrice !== null) {
-                        $newTotalPs = (float) $hourlyPrice;
-                    } else {
-                        $newTotalPs = (float) (($playstation->harga ?? 0) * $totalHours);
-                    }
+                    $newTotalPs = (float) $playstation->calculateCustomPrice($newDurationSeconds);
                 } else {
-                    $newTotalPs = (float) (($transaction->harga ?? 0) * $totalHours);
+                    $newTotalPs = (float) (($transaction->harga ?? 0) * ($newDurationSeconds / 3600));
                 }
             } else {
                 // Custom package extension: treat additional time on base hourly rate
                 $newJamMain = (is_numeric($transaction->jam_main) ? (int)$transaction->jam_main : 0) + $additionalMinutes;
+                $newDurationSeconds = ($newJamMain * 60);
                 $hourlyRate = $playstation ? ($playstation->harga ?? 0) : ($transaction->harga ?? 0);
                 $addedCost = ($hourlyRate / 60) * $additionalMinutes;
                 $newTotalPs = (float)$transaction->total + $addedCost;
@@ -343,12 +362,17 @@ class BillingService
             $fnbTotal = $transaction->fnb_total;
             $finalTotal = $newTotalPs + $fnbTotal;
 
-            $transaction->update([
+            $updateFields = [
                 'expires_at' => $newExpiresAt,
                 'waktu_Selesai' => $newExpiresAt->format('H:i'),
                 'jam_main' => $newJamMain,
                 'total' => $finalTotal,
-            ]);
+            ];
+            if ($newDurationSeconds !== null) {
+                $updateFields['duration_seconds'] = $newDurationSeconds;
+            }
+
+            $transaction->update($updateFields);
 
             // Bump station generation on extension
             if ($device && $this->isAutomationActive()) {

@@ -145,10 +145,19 @@ class DeviceController extends Controller
         
         foreach ($devices as $dev) {
             if ($dev->status === 'Digunakan') {
-                $transaction = Transaction::where('device_id', $dev->id)
-                    ->whereDate('created_at', $today)
-                    ->latest()
-                    ->first();
+                $transaction = null;
+                if (Transaction::hasG2Schema()) {
+                    $transaction = Transaction::where('device_id', $dev->id)
+                        ->where('billing_status', Transaction::BILLING_RUNNING)
+                        ->latest()
+                        ->first();
+                }
+                if (!$transaction) {
+                    $transaction = Transaction::where('device_id', $dev->id)
+                        ->whereDate('created_at', $today)
+                        ->latest()
+                        ->first();
+                }
                     
                 if ($transaction) {
                     // For prepaid transactions
@@ -166,11 +175,12 @@ class DeviceController extends Controller
                             $endDateTime->addDay();
                         }
                         
-                        // Only set timer if the transaction is still active
-                        if ($endDateTime > $now) {
+                        $targetExpiresAt = $transaction->expires_at ?: $endDateTime;
+                        if ($targetExpiresAt > $now) {
                             $timers[$dev->id] = [
-                                'end_time' => $transaction->waktu_Selesai,
-                                'end_date' => $endDateTime->format('Y-m-d'),
+                                'expires_at' => $transaction->expires_at ? $transaction->expires_at->toIso8601String() : $endDateTime->toIso8601String(),
+                                'end_time' => $transaction->expires_at ? $transaction->expires_at->format('H:i:s') : $transaction->waktu_Selesai,
+                                'end_date' => $targetExpiresAt->format('Y-m-d'),
                                 'start_date' => $transactionDate,
                                 'start_time' => $startTime
                             ];
@@ -191,11 +201,12 @@ class DeviceController extends Controller
                             $endDateTime->addDay();
                         }
                         
-                        // Only set timer if the transaction is still active
-                        if ($endDateTime > $now) {
+                        $targetExpiresAt = $transaction->expires_at ?: $endDateTime;
+                        if ($targetExpiresAt > $now) {
                             $timers[$dev->id] = [
-                                'end_time' => $transaction->waktu_Selesai,
-                                'end_date' => $endDateTime->format('Y-m-d'),
+                                'expires_at' => $transaction->expires_at ? $transaction->expires_at->toIso8601String() : $endDateTime->toIso8601String(),
+                                'end_time' => $transaction->expires_at ? $transaction->expires_at->format('H:i:s') : $transaction->waktu_Selesai,
+                                'end_date' => $targetExpiresAt->format('Y-m-d'),
                                 'start_date' => $transactionDate,
                                 'start_time' => $startTime
                             ];

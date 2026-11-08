@@ -612,7 +612,7 @@
 
         // Function to update prepaid & custom package countdown timer
         function updatePrepaidTimer(deviceId, timerData) {
-            let endTime = new Date(`${timerData.end_date} ${timerData.end_time}`);
+            let endTime = timerData.expires_at ? new Date(timerData.expires_at) : new Date(`${timerData.end_date} ${timerData.end_time}`);
             let timerTd = document.getElementById('timer-' + deviceId);
             
             function tick() {

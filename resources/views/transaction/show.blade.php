@@ -118,7 +118,7 @@
                                 @if($transaction->jam_main)
                                     <tr>
                                         <td><strong>Lama Main:</strong></td>
-                                        <td>{{ $transaction->jam_main }}</td>
+                                        <td>{{ $transaction->display_duration }}</td>
                                     </tr>
                                 @endif
                                 <tr>

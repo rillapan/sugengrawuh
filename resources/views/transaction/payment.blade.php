@@ -153,11 +153,7 @@
                             <tr>
                                 <td><strong>Lama Main:</strong></td>
                                 <td>
-                                    @if($transaction->tipe_transaksi === 'custom_package')
-                                        {{ $transaction->jam_main }} menit
-                                    @else
-                                        {{ $transaction->jam_main }} jam
-                                    @endif
+                                    {{ $transaction->display_duration }}
                                 </td>
                             </tr>
                         @endif

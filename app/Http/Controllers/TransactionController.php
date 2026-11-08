@@ -282,28 +282,57 @@ class TransactionController extends Controller
     {
         $tanggal = Carbon::now()->format('Y-m-d');
         $start_time = Carbon::now()->format('H:i');
+        $durationSeconds = null;
         
-        // Correctly identify jam_main early for calculations
+        // Correctly identify duration early for calculations
         if ($request->tipe_transaksi === 'custom_package') {
             $customPackage = CustomPackage::with('playstations')->findOrFail($request->custom_package_id);
             // We'll calculate specific duration later based on device, 
             // but for initial end_time estimate we can use the sum
             $jam_main_calc = $customPackage->playstations->sum('pivot.lama_main');
-            // Calculate end time properly (will be stored as H:i but detection happens elsewhere)
+            $durationSeconds = (int) ($jam_main_calc * 60);
             $start_datetime = Carbon::now();
-            $end_datetime = $start_datetime->copy()->addMinutes($jam_main_calc);
+            $end_datetime = $start_datetime->copy()->addSeconds($durationSeconds);
             $end_time = $end_datetime->format('H:i');
         } elseif ($request->tipe_transaksi === 'prepaid') {
-            $jam_main_calc = ($request->jam_main_select && $request->jam_main_select !== 'custom') 
-                ? $request->jam_main_select 
-                : $request->jam_main;
-            // Calculate end time properly
-            if (is_numeric($jam_main_calc)) {
+            // Determine duration in seconds from preset or custom inputs
+            if ($request->filled('duration_seconds') && (int) $request->duration_seconds > 0) {
+                $durationSeconds = (int) $request->duration_seconds;
+            } elseif ($request->filled('jam_main_select') && $request->jam_main_select !== 'custom') {
+                $val = $request->jam_main_select;
+                if (preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $val, $m)) {
+                    $durationSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int)$m[3] : 0);
+                } elseif (is_numeric($val)) {
+                    $num = (int) $val;
+                    // If <= 24, legacy hours; if > 24, seconds
+                    $durationSeconds = ($num <= 24) ? ($num * 3600) : $num;
+                }
+            } else {
+                // Custom manual inputs
+                if ($request->filled('custom_hours') || $request->filled('custom_minutes') || $request->filled('custom_seconds')) {
+                    $cH = (int) ($request->custom_hours ?? 0);
+                    $cM = (int) ($request->custom_minutes ?? 0);
+                    $cS = (int) ($request->custom_seconds ?? 0);
+                    $durationSeconds = ($cH * 3600) + ($cM * 60) + $cS;
+                } elseif ($request->filled('duration_seconds')) {
+                    $durationSeconds = (int) $request->duration_seconds;
+                } elseif ($request->filled('jam_main')) {
+                    if (is_string($request->jam_main) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $request->jam_main, $m)) {
+                        $durationSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int)$m[3] : 0);
+                    } elseif (is_numeric($request->jam_main)) {
+                        $durationSeconds = (int) round((float) $request->jam_main * 3600);
+                    }
+                }
+            }
+
+            if ($durationSeconds !== null && $durationSeconds > 0) {
                 $start_datetime = Carbon::now();
-                $end_datetime = $start_datetime->copy()->addHours((int)$jam_main_calc);
-                $end_time = $end_datetime->format('H:i');
+                $end_datetime = $start_datetime->copy()->addSeconds($durationSeconds);
+                $end_time = ($durationSeconds % 60 === 0) ? $end_datetime->format('H:i') : $end_datetime->format('H:i:s');
+                $jam_main_calc = \App\Models\HourlyPrice::formatSeconds($durationSeconds);
             } else {
                 $end_time = null;
+                $jam_main_calc = null;
             }
         } else {
             // Postpaid
@@ -439,15 +468,14 @@ class TransactionController extends Controller
                 $playstation = $device->playstation;
             }
             
-            $hourlyPrice = $playstation->getPriceForHour($jam_main);
-
-            if ($hourlyPrice !== null) {
-                // Use custom hourly pricing
-                $totalPs = $hourlyPrice;
-            } else {
-                // Fallback to standard pricing
-                $totalPs = ($playstation->harga ?? 0) * $jam_main;
+            if ($durationSeconds === null || $durationSeconds <= 0) {
+                return redirect()->back()->with('gagal', 'Durasi bermain harus lebih dari 0 detik.');
             }
+            if ($durationSeconds > 86400) {
+                return redirect()->back()->with('gagal', 'Durasi bermain maksimal 24 jam.');
+            }
+
+            $totalPs = $playstation->calculateCustomPrice($durationSeconds);
 
             $fnbTotal = 0;
             if ($request->has('fnb_ids')) {
@@ -460,12 +488,13 @@ class TransactionController extends Controller
                 }
             }
 
-            // Calculate proper end time with midnight detection
-            $start_datetime = Carbon::parse($tanggal . ' ' . $start_time);
-            $end_datetime = $start_datetime->copy()->addHours($jam_main);
+            // Calculate proper end time based on exact seconds
+            $start_datetime = Carbon::now();
+            $end_datetime = $start_datetime->copy()->addSeconds($durationSeconds);
             
-            $validatedData['waktu_Selesai'] = $end_datetime->format('H:i');
-            $validatedData['jam_main'] = $jam_main;
+            $validatedData['waktu_Selesai'] = ($durationSeconds % 60 === 0) ? $end_datetime->format('H:i') : $end_datetime->format('H:i:s');
+            $validatedData['duration_seconds'] = $durationSeconds;
+            $validatedData['jam_main'] = \App\Models\HourlyPrice::formatSeconds($durationSeconds);
             $validatedData['harga'] = $playstation->harga ?? 0; // Store base hourly rate for reference
             $validatedData['total'] = $totalPs + $fnbTotal;
             $validatedData['status_transaksi'] = 'sukses';
@@ -774,41 +803,35 @@ class TransactionController extends Controller
 
         } elseif ($newTipeTransaksi === 'prepaid') {
             // Changed to Paket OR updating existing Paket
-            $jamMain = $validatedData['jam_main'] ?? 1;
-
-            // Check if there are custom hourly prices for this PlayStation
             $playstation = $newDevice->playstation;
-            $hourlyPrice = $playstation->getPriceForHour($jamMain);
+            $rawJamMain = $validatedData['jam_main'] ?? 1;
 
-            if ($hourlyPrice !== null) {
-                // Use custom hourly pricing
-                $totalPs = $hourlyPrice;
+            if (is_numeric($rawJamMain)) {
+                $durationSeconds = (int) round((float) $rawJamMain * 3600);
+            } elseif (is_string($rawJamMain) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $rawJamMain, $m)) {
+                $durationSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int)$m[3] : 0);
             } else {
-                // Fallback to standard pricing
-                $hargaPerJam = $playstation->harga ?? 0;
-                $totalPs = $hargaPerJam * $jamMain;
+                $durationSeconds = 3600;
             }
 
+            $totalPs = $playstation ? $playstation->calculateCustomPrice($durationSeconds) : 0;
             $fnbTotal = $transaction->getFnbTotalAttribute();
 
-            $updateData['jam_main'] = $jamMain;
+            $updateData['duration_seconds'] = $durationSeconds;
+            $updateData['jam_main'] = is_numeric($rawJamMain) ? $rawJamMain : \App\Models\HourlyPrice::formatSeconds($durationSeconds);
             $updateData['harga'] = $playstation->harga ?? 0; // Store base hourly rate for reference
             $updateData['total'] = $totalPs + $fnbTotal;
             $updateData['status_transaksi'] = 'sukses';
 
-            // Calculate elapsed time from waktu_mulai
-            $waktuMulaiCarbon = Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
+            // Calculate elapsed time from started_at / waktu_mulai
+            $waktuMulaiCarbon = $transaction->started_at ?? Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
             $now = Carbon::now();
-            $elapsedMinutes = $waktuMulaiCarbon->diffInMinutes($now);
+            $elapsedSeconds = max(0, $waktuMulaiCarbon->diffInSeconds($now));
+            $remainingSeconds = $durationSeconds - $elapsedSeconds;
 
-            // Calculate new end time: now + (jam_main in minutes - elapsed minutes)
-            // This makes the timer show remaining time (countdown)
-            $jamMainMinutes = $jamMain * 60;
-            $remainingMinutes = $jamMainMinutes - $elapsedMinutes;
-
-            if ($remainingMinutes > 0) {
+            if ($remainingSeconds > 0) {
                 // There's still time remaining
-                $newExpiresAt = $now->copy()->addMinutes($remainingMinutes);
+                $newExpiresAt = $now->copy()->addSeconds($remainingSeconds);
                 $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
                 if (Transaction::hasG2Schema()) {
                     $updateData['expires_at'] = $newExpiresAt;
@@ -1008,27 +1031,78 @@ class TransactionController extends Controller
         $deviceId = $request->query('device');
         $playstationId = $request->query('playstation_id');
 
+        $playstation = null;
         if ($playstationId) {
             $playstation = Playstation::find($playstationId);
-            if (!$playstation) {
-                return response()->json(['prices' => []]);
+        } elseif ($deviceId) {
+            $device = Device::find($deviceId);
+            if ($device) {
+                $playstation = $device->playstations()->first() ?: Playstation::find($device->playstation_id);
             }
-            return response()->json(['prices' => $playstation->getAvailableHoursWithPrices()]);
         }
 
-        $device = Device::find($deviceId);
-        if (!$device) {
-            return response()->json(['prices' => []]);
-        }
-
-        $playstation = Playstation::find($device->playstation_id);
         if (!$playstation) {
-            return response()->json(['prices' => []]);
+            return response()->json([
+                'prices' => [],
+                'durations' => [],
+                'base_price' => 0,
+            ]);
         }
 
-        $hourlyPrices = $playstation->getAvailableHoursWithPrices();
+        return response()->json([
+            'prices' => $playstation->getAvailableHoursWithPrices(),
+            'durations' => $playstation->getAvailableDurationsWithPrices(),
+            'base_price' => (int) ($playstation->harga ?? 0),
+        ]);
+    }
 
-        return response()->json(['prices' => $hourlyPrices]);
+    /**
+     * API to calculate exact duration price based on business rules.
+     */
+    public function calculateDurationPrice(Request $request)
+    {
+        $deviceId = $request->input('device') ?? $request->query('device');
+        $playstationId = $request->input('playstation_id') ?? $request->query('playstation_id');
+
+        $playstation = null;
+        if ($playstationId) {
+            $playstation = Playstation::find($playstationId);
+        } elseif ($deviceId) {
+            $device = Device::find($deviceId);
+            if ($device) {
+                $playstation = $device->playstations()->first() ?: Playstation::find($device->playstation_id);
+            }
+        }
+
+        if (!$playstation) {
+            return response()->json(['error' => 'PlayStation tidak ditemukan'], 404);
+        }
+
+        $hours = (int) ($request->input('hours') ?? 0);
+        $minutes = (int) ($request->input('minutes') ?? 0);
+        $seconds = (int) ($request->input('seconds') ?? 0);
+        $totalSeconds = (int) ($request->input('duration_seconds') ?? \App\Models\HourlyPrice::toTotalSeconds($hours, $minutes, $seconds));
+
+        if ($totalSeconds <= 0) {
+            return response()->json([
+                'price' => 0,
+                'duration_seconds' => 0,
+                'formatted' => '00:00:00',
+                'human' => '0 detik',
+                'is_preset' => false,
+            ]);
+        }
+
+        $presetPrice = $playstation->getPriceForDuration($totalSeconds);
+        $finalPrice = $playstation->calculateCustomPrice($totalSeconds);
+
+        return response()->json([
+            'price' => $finalPrice,
+            'duration_seconds' => $totalSeconds,
+            'formatted' => \App\Models\HourlyPrice::formatSeconds($totalSeconds),
+            'human' => \App\Models\HourlyPrice::humanizeSeconds($totalSeconds),
+            'is_preset' => $presetPrice !== null,
+        ]);
     }
 
     public function getFnbsByPriceGroup(Request $request)

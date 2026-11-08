@@ -20,6 +20,7 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 Route::get('/get-harga', 'App\Http\Controllers\TransactionController@getHarga');
 Route::get('/get-hourly-prices', 'App\Http\Controllers\TransactionController@getHourlyPrices');
+Route::match(['get', 'post'], '/calculate-duration-price', 'App\Http\Controllers\TransactionController@calculateDurationPrice');
 Route::get('/get-fnbs-by-price-group', 'App\Http\Controllers\TransactionController@getFnbsByPriceGroup');
 Route::get('/get-fnbs-by-price-groups', 'App\Http\Controllers\TransactionController@getFnbsByPriceGroups');
 Route::get('/get-price-groups', 'App\Http\Controllers\TransactionController@getPriceGroups');
