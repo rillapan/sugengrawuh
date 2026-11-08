@@ -45,4 +45,97 @@ class Device extends Model
         
         return $names->implode(', ');
     }
+
+    /**
+     * Historical & active hardware mappings for this station.
+     */
+    public function hardwareMappings()
+    {
+        return $this->hasMany(StationDeviceMapping::class, 'station_id');
+    }
+
+    /**
+     * Active hardware mappings for this station.
+     */
+    public function activeHardwareMappings()
+    {
+        return $this->hasMany(StationDeviceMapping::class, 'station_id')
+            ->where('mapping_status', StationDeviceMapping::STATUS_ACTIVE);
+    }
+
+    /**
+     * Active Smart TV display mapping.
+     */
+    public function activeDisplayTv()
+    {
+        return $this->hasOne(StationDeviceMapping::class, 'station_id')
+            ->where('mapping_status', StationDeviceMapping::STATUS_ACTIVE)
+            ->where('mapping_role', StationDeviceMapping::ROLE_DISPLAY_TV);
+    }
+
+    /**
+     * Active Shelly Light Relay mapping.
+     */
+    public function activeLightRelay()
+    {
+        return $this->hasOne(StationDeviceMapping::class, 'station_id')
+            ->where('mapping_status', StationDeviceMapping::STATUS_ACTIVE)
+            ->where('mapping_role', StationDeviceMapping::ROLE_LIGHT_RELAY);
+    }
+
+    /**
+     * Get verified station category (PLAYSTATION vs BILLIARD).
+     * Returns null if ambiguous, empty, or unrecognized.
+     *
+     * @return string|null
+     */
+    public function getStationCategory(): ?string
+    {
+        $playstations = $this->playstations;
+        if ($playstations->isEmpty() && $this->playstation) {
+            $playstations = collect([$this->playstation]);
+        }
+
+        if ($playstations->isEmpty()) {
+            return null;
+        }
+
+        $categories = $playstations->map(function ($ps) {
+            return $ps->getCategory();
+        })->unique()->values();
+
+        if ($categories->contains(null) || $categories->count() !== 1) {
+            return null;
+        }
+
+        return $categories->first();
+    }
+
+    protected $casts = [
+        'session_generation' => 'integer',
+        'last_hardware_verified_at' => 'datetime',
+    ];
+
+    public function automationIntents()
+    {
+        return $this->hasMany(AutomationIntent::class, 'station_id');
+    }
+
+    public function automationExecutionLogs()
+    {
+        return $this->hasMany(AutomationExecutionLog::class, 'station_id');
+    }
+
+    public function tvAlertEvents()
+    {
+        return $this->hasMany(TvAlertEvent::class, 'station_id');
+    }
+
+    public function activeTransaction()
+    {
+        return $this->transaction()
+            ->where('billing_status', Transaction::BILLING_RUNNING)
+            ->latest('id_transaksi')
+            ->first();
+    }
 }

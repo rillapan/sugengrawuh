@@ -15,7 +15,14 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // $schedule->command('inspire')->hourly();
+        // Periodic heartbeat for expiration check in case standalone daemon is briefly restarted
+        $schedule->command('billing:worker --once')->everyMinute()->withoutOverlapping();
+        // Periodic evaluation for Samsung TV 10-minute remaining alerts
+        $schedule->command('billing:tv-alert-worker --once')->everyMinute()->withoutOverlapping();
+        // Periodic reconciliation audit
+        $schedule->command('billing:reconcile')->everyTenMinutes()->withoutOverlapping();
+        // Daily automation pruning of expired intents and audit logs
+        $schedule->command('billing:automation-prune')->dailyAt('04:00')->withoutOverlapping();
     }
 
     /**

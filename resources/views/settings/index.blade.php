@@ -43,32 +43,20 @@
         </div>
 
         <div class="col-md-6">
-            <div class="card shadow mb-4 border-danger">
+            <div class="card shadow mb-4 border-left-info">
                 <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-                    <h6 class="m-0 font-weight-bold text-danger">
-                        Reset Transaksi
+                    <h6 class="m-0 font-weight-bold text-info">
+                        Keamanan & Integritas Transaksi
                     </h6>
                 </div>
                 <div class="card-body">
-                    <div class="alert alert-warning">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <span>
-                            bersifat permanen , jika mau mengahpus pastika sudah mendownload file laporan
-                        </span>
+                    <div class="alert alert-info mb-0">
+                        <i class="fas fa-shield-alt"></i>
+                        <strong>Perlindungan Data Operasional:</strong>
+                        <p class="mt-2 mb-0">
+                            Fitur reset massal transaksi telah dinonaktifkan demi menjaga integritas pembukuan keuangan, histori transaksi rental, dan kepatuhan audit sistem Sugeng Rawuh.
+                        </p>
                     </div>
-                    <form method="POST" action="{{ route('settings.reset-transactions') }}">
-                        @csrf
-                        <div class="form-check mb-3">
-                            <input class="form-check-input" type="checkbox" id="confirm_delete" name="confirm_delete" required>
-                            <label class="form-check-label" for="confirm_delete">
-                                Saya mengerti dan setuju untuk menghapus seluruh data daftar transaksi yang tersedia
-                            </label>
-                        </div>
-                        <button type="submit" class="btn btn-danger"
-                            onclick="return confirm('Tindakan ini bersifat permanen. Lanjutkan?')">
-                            Reset semua transaksi
-                        </button>
-                    </form>
                 </div>
             </div>
         </div>

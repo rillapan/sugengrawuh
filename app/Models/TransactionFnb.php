@@ -18,7 +18,7 @@ class TransactionFnb extends Model
 
     public function transaction()
     {
-        return $this->belongsTo(Transaction::class, 'transaction_id', 'id');
+        return $this->belongsTo(Transaction::class, 'transaction_id', 'id_transaksi');
     }
 
     public function fnb()

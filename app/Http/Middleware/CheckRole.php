@@ -27,11 +27,14 @@ class CheckRole
         // If we want to strictly enforce roles for specific routes (e.g., owner only), we might not want admin to automatically pass,
         // but typically Admin is a superuser.
         // Let's assume Admin has access to everything.
-        if ($user->isAdmin()) {
+        $userRole = strtolower($user->role ?? '');
+        $allowedRoles = array_map('strtolower', $roles);
+
+        if ($user->isAdmin() || (in_array('admin', $allowedRoles) && $userRole === 'admin')) {
             return $next($request);
         }
 
-        if (in_array($user->role, $roles)) {
+        if (in_array($userRole, $allowedRoles)) {
             return $next($request);
         }
 

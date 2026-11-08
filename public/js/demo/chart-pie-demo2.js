@@ -31,12 +31,10 @@ if (ctx) {
   });
 
   $.get('/chart-pie-data', function(data) {
-    console.log(data.labels);
-    console.log(data.datasets)
-    myPieChart2.data.labels = data.labels;
-    myPieChart2.data.datasets = data.datasets;
-    myPieChart2.update();
+    if (data && data.labels && data.datasets) {
+      myPieChart2.data.labels = data.labels;
+      myPieChart2.data.datasets = data.datasets;
+      myPieChart2.update();
+    }
   });
-} else {
-  console.log("Canvas element with ID 'myPieChart2' not found. Chart not initialized.");
 }

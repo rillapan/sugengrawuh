@@ -11,7 +11,7 @@ class WorkShiftController extends Controller
     public function __construct()
     {
         $this->middleware('auth');
-        $this->middleware('check_role:admin,owner');
+        $this->middleware('check_role:admin');
     }
 
     public function index()

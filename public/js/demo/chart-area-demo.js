@@ -30,8 +30,6 @@ function number_format(number, decimals, dec_point, thousands_sep) {
 // Area Chart Example - Wrapped in DOMContentLoaded to ensure DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
   var ctx = document.getElementById("myAreaChart");
-  console.log('Chart element found:', ctx);
-
   if (ctx) {
     var myLineChart = new Chart(ctx, {
       type: 'line',

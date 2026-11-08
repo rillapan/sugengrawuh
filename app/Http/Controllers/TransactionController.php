@@ -9,6 +9,8 @@ use App\Models\Fnb;
 use App\Models\TransactionFnb;
 use App\Models\StockMutation;
 use App\Models\CustomPackage;
+use App\Models\TvAlertEvent;
+use App\Services\Hardware\TvAlertService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +26,11 @@ class TransactionController extends Controller
     public function showPayment($id)
     {
         $transaction = Transaction::with(['device.playstation', 'transactionFnbs.fnb', 'user', 'custom_package.playstations', 'custom_package.fnbs'])->findOrFail($id);
+
+        if ($transaction->payment_status === 'paid') {
+            return redirect()->route('transaction.print', $transaction->id_transaksi)
+                ->with('gagal', 'Transaksi ini sudah lunas.');
+        }
 
         return view('transaction.payment', [
             'title' => 'Pembayaran Transaksi',
@@ -60,49 +67,79 @@ class TransactionController extends Controller
 
     public function processPayment(Request $request, $id)
     {
-        $transaction = Transaction::findOrFail($id);
-
-        // Calculate final total after discount
-        $discount = $request->input('discount', 0);
-        
-        // Only save discount if it's greater than 0
-        $discountToSave = $discount > 0 ? $discount : null;
-        $finalTotal = $transaction->total - ($transaction->total * $discount / 100);
-        
-        $request->validate([
-            'payment_method' => 'required|in:tunai,e-wallet,transfer_bank',
-            'amount_paid' => 'required|numeric|min:' . $finalTotal,
-            'discount' => 'nullable|numeric|min:0|max:100',
-        ]);
-
-        $amountPaid = $request->input('amount_paid');
-        $change = $amountPaid - $finalTotal;
+        $discount = (float) $request->input('discount', 0);
+        $amountPaid = (float) $request->input('amount_paid');
         $paymentMethod = $request->input('payment_method');
 
-        $updateData = [
-            'payment_status' => 'paid',
-            'payment_method' => $paymentMethod,
-            'status_transaksi' => 'selesai',
-            'paid_at' => now(),
-        ];
+        $result = DB::transaction(function () use ($id, $discount, $amountPaid, $paymentMethod, $request) {
+            // Pessimistic write lock (SELECT ... FOR UPDATE) to prevent race conditions on concurrent payment requests
+            $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
 
-        // Only add diskon to update data if discount > 0
-        if ($discount > 0) {
-            $updateData['diskon'] = $discount;
+            if ($transaction->payment_status === 'paid') {
+                return [
+                    'already_paid' => true,
+                    'transaction' => $transaction
+                ];
+            }
+
+            $finalTotal = $transaction->total - ($transaction->total * $discount / 100);
+
+            $request->validate([
+                'payment_method' => 'required|in:tunai,e-wallet,transfer_bank',
+                'amount_paid' => 'required|numeric|min:' . $finalTotal,
+                'discount' => 'nullable|numeric|min:0|max:100',
+            ]);
+
+            $change = $amountPaid - $finalTotal;
+
+            $updateData = [
+                'payment_status' => 'paid',
+                'payment_method' => $paymentMethod,
+                'status_transaksi' => 'selesai',
+                'paid_at' => now(),
+            ];
+
+            if ($discount > 0) {
+                $updateData['diskon'] = $discount;
+            }
+
+            $transaction->update($updateData);
+
+            // Update device status to available ONLY IF the billing session has ended
+            if ($transaction->device) {
+                if (Transaction::hasG2Schema()) {
+                    $isSessionStillRunning = ($transaction->billing_status === Transaction::BILLING_RUNNING)
+                        && ($transaction->expires_at && $transaction->expires_at->isFuture());
+
+                    if (!$isSessionStillRunning) {
+                        $transaction->device->update(['status' => 'Tersedia']);
+                        if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
+                            $transaction->update(['billing_status' => Transaction::BILLING_COMPLETED]);
+                        }
+                    }
+                } else {
+                    $transaction->device->update(['status' => 'Tersedia']);
+                }
+            }
+
+            return [
+                'already_paid' => false,
+                'transaction' => $transaction,
+                'change' => $change,
+                'amount_paid' => $amountPaid
+            ];
+        });
+
+        if ($result['already_paid']) {
+            return redirect()->route('transaction.print', $result['transaction']->id_transaksi)
+                ->with('gagal', 'Transaksi ini sudah lunas.');
         }
 
-        $transaction->update($updateData);
-
-        // Update device status to available
-        if ($transaction->device) {
-            $transaction->device->update(['status' => 'Tersedia']);
-        }
-
-        return redirect()->route('transaction.print', ['id' => $transaction->id_transaksi, 'action' => 'payment'])
+        return redirect()->route('transaction.print', ['id' => $result['transaction']->id_transaksi, 'action' => 'payment'])
             ->with([
-                'success' => 'Pembayaran berhasil. Kembalian: Rp ' . number_format($change, 0, ',', '.'),
-                'amount_paid' => $amountPaid,
-                'change' => $change
+                'success' => 'Pembayaran berhasil. Kembalian: Rp ' . number_format($result['change'], 0, ',', '.'),
+                'amount_paid' => $result['amount_paid'],
+                'change' => $result['change']
             ]);
     }
 
@@ -119,7 +156,8 @@ class TransactionController extends Controller
 
         $query = Transaction::with('transactionFnbs');
 
-        if (!in_array(auth()->user()->role, ['admin', 'kasir'])) {
+        $userRole = strtolower(auth()->user()->role ?? '');
+        if (!in_array($userRole, ['admin', 'kasir', 'owner'])) {
             $query->where('user_id', auth()->user()->id);
         }
 
@@ -486,6 +524,31 @@ class TransactionController extends Controller
         try {
             \DB::beginTransaction();
 
+            // Lock device row and verify station availability to prevent concurrent double-booking
+            $targetDevice = Device::where('id', $validatedData['device_id'])->lockForUpdate()->firstOrFail();
+            if ($targetDevice->status !== 'Tersedia') {
+                \DB::rollBack();
+                return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').');
+            }
+
+            if (Transaction::hasG2Schema()) {
+                $activeExisting = Transaction::where('device_id', $targetDevice->id)
+                    ->where('billing_status', Transaction::BILLING_RUNNING)
+                    ->exists();
+                if ($activeExisting) {
+                    \DB::rollBack();
+                    return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.');
+                }
+
+                $validatedData['started_at'] = Carbon::now();
+                $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
+                if ($request->tipe_transaksi === 'custom_package' || $request->tipe_transaksi === 'prepaid') {
+                    $validatedData['expires_at'] = $end_datetime;
+                } else {
+                    $validatedData['expires_at'] = null;
+                }
+            }
+
             $transaction = Transaction::create($validatedData);
             
             // Handle FnB items
@@ -535,6 +598,38 @@ class TransactionController extends Controller
             $device = Device::find($validatedData['device_id']);
             if ($device) {
                 $device->update(['status' => 'Digunakan']);
+
+                /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+                $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+                if ($intentService->isAutomationEnabled()) {
+                    $intentService->assertAutomationReady();
+                    $device->increment('session_generation');
+                    $device->refresh();
+                    $generation = (int) $device->session_generation;
+                    $transaction->update(['session_generation' => $generation]);
+
+                    $intentService->recordIntent(
+                        $device,
+                        $transaction,
+                        \App\Models\AutomationIntent::EVENT_BILLING_STARTED,
+                        \App\Models\AutomationIntent::STATE_ON,
+                        $transaction->started_at ?? Carbon::now()
+                    );
+
+                    if ($transaction->expires_at) {
+                        $intentService->recordIntent(
+                            $device,
+                            $transaction,
+                            \App\Models\AutomationIntent::EVENT_BILLING_EXPIRED,
+                            \App\Models\AutomationIntent::STATE_OFF,
+                            $transaction->expires_at
+                        );
+                    }
+                }
+
+                if (TvAlertService::hasTvControlSchema()) {
+                    app(TvAlertService::class)->markStalePendingAlertsForStation($device, 'New session started on station');
+                }
             }
 
             \DB::commit();
@@ -713,10 +808,19 @@ class TransactionController extends Controller
 
             if ($remainingMinutes > 0) {
                 // There's still time remaining
-                $updateData['waktu_Selesai'] = $now->copy()->addMinutes($remainingMinutes)->format('H:i');
+                $newExpiresAt = $now->copy()->addMinutes($remainingMinutes);
+                $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $newExpiresAt;
+                    $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                }
             } else {
                 // Time already exceeded, set end time to now (will be marked as overtime)
                 $updateData['waktu_Selesai'] = $now->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $now;
+                    $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                }
             }
             
         } elseif ($newTipeTransaksi === 'custom_package') {
@@ -752,9 +856,18 @@ class TransactionController extends Controller
             $remainingMinutes = $totalJamMain - $elapsedMinutes;
             
             if ($remainingMinutes > 0) {
-                $updateData['waktu_Selesai'] = $now->copy()->addMinutes($remainingMinutes)->format('H:i');
+                $newExpiresAt = $now->copy()->addMinutes($remainingMinutes);
+                $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $newExpiresAt;
+                    $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                }
             } else {
                 $updateData['waktu_Selesai'] = $now->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $now;
+                    $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                }
             }
         }
 
@@ -773,6 +886,33 @@ class TransactionController extends Controller
             // Mark new device as in use
             $newDevice->update(['status' => 'Digunakan']);
         }
+
+        /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+        $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+        if ($intentService->isAutomationEnabled() && isset($newExpiresAt) && $newDevice) {
+            $intentService->assertAutomationReady();
+            $newDevice->increment('session_generation');
+            $newDevice->refresh();
+            $newGen = (int) $newDevice->session_generation;
+            $transaction->update(['session_generation' => $newGen]);
+
+            $intentService->cancelPendingOffIntents($transaction);
+            $intentService->recordIntent(
+                $newDevice,
+                $transaction,
+                \App\Models\AutomationIntent::EVENT_BILLING_EXPIRED,
+                \App\Models\AutomationIntent::STATE_OFF,
+                $newExpiresAt
+            );
+        }
+
+        if (TvAlertService::hasTvControlSchema()) {
+            app(TvAlertService::class)->cancelPendingAlertsForTransaction(
+                $transaction,
+                TvAlertEvent::STATUS_CANCELLED,
+                'Session updated/extended'
+            );
+        }
         
         return redirect()->route('transaction.index')->with('success', 'Transaksi berhasil diupdate. Timer tetap berjalan.');
     }
@@ -785,7 +925,57 @@ class TransactionController extends Controller
      */
     public function destroy($id)
     {
-        Transaction::findOrFail($id)->delete();
+        $transaction = Transaction::with(['transactionFnbs.fnb', 'device'])->findOrFail($id);
+
+        // Transaksi yang sudah lunas dilarang keras dihapus demi integritas data dan audit keuangan
+        if ($transaction->payment_status === 'paid') {
+            return redirect('transaction')->with('gagal', 'Transaksi yang sudah lunas tidak dapat dihapus demi integritas audit keuangan.');
+        }
+
+        DB::transaction(function () use ($transaction) {
+            // 1. Kembalikan stok FnB dan catat mutasi stok masuk untuk transaksi unpaid yang dihapus
+            if ($transaction->transactionFnbs) {
+                foreach ($transaction->transactionFnbs as $tFnb) {
+                    $fnb = $tFnb->fnb;
+                    if ($fnb) {
+                        if ($fnb->stok != -1) {
+                            $fnb->increment('stok', $tFnb->qty);
+                        }
+
+                        StockMutation::create([
+                            'fnb_id' => $fnb->id,
+                            'type' => 'in',
+                            'qty' => $tFnb->qty,
+                            'date' => now()->toDateString(),
+                            'note' => 'Penghapusan Transaksi Unpaid #' . $transaction->id_transaksi
+                        ]);
+                    }
+                }
+            }
+
+            // 2. Kembalikan status perangkat ke 'Tersedia' jika masih terikat transaksi ini
+            if ($transaction->device && $transaction->device->status === 'Digunakan') {
+                $transaction->device->update(['status' => 'Tersedia']);
+            }
+
+            if (TvAlertService::hasTvControlSchema()) {
+                app(TvAlertService::class)->cancelPendingAlertsForTransaction(
+                    $transaction,
+                    TvAlertEvent::STATUS_CANCELLED,
+                    'Transaction deleted'
+                );
+            }
+
+            \Illuminate\Support\Facades\Log::warning('Transaksi dibatalkan/dihapus oleh Admin.', [
+                'id_transaksi' => $transaction->id_transaksi,
+                'user_id' => auth()->id(),
+                'total' => $transaction->total,
+                'fnb_count' => $transaction->transactionFnbs ? $transaction->transactionFnbs->count() : 0
+            ]);
+
+            // 3. Eksekusi penghapusan transaksi
+            $transaction->delete();
+        });
 
         return redirect('transaction')->with('success', 'Data transaksi berhasil dihapus.');
     }
@@ -951,15 +1141,30 @@ class TransactionController extends Controller
         }
 
         // Common updates for both transaction types
-        $updateData = array_merge($updateData, [
+        $commonUpdates = [
             'status_transaksi' => 'selesai',
             'payment_status' => 'unpaid'
-        ]);
+        ];
+        if (Transaction::hasG2Schema()) {
+            $commonUpdates['ended_at'] = $waktuSelesai;
+            $commonUpdates['billing_status'] = Transaction::BILLING_COMPLETED;
+        }
+        $updateData = array_merge($updateData, $commonUpdates);
 
         $transaction->update($updateData);
 
         // Update device status to available
-        $transaction->device->update(['status' => 'Tersedia']);
+        if ($transaction->device) {
+            $transaction->device->update(['status' => 'Tersedia']);
+        }
+
+        if (TvAlertService::hasTvControlSchema()) {
+            app(TvAlertService::class)->cancelPendingAlertsForTransaction(
+                $transaction,
+                TvAlertEvent::STATUS_CANCELLED,
+                'Session stopped'
+            );
+        }
 
         // Redirect to payment page
         return redirect()->route('transaction.showPayment', $transaction->id_transaksi)

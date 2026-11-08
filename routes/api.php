@@ -23,3 +23,7 @@ Route::get('/get-hourly-prices', 'App\Http\Controllers\TransactionController@get
 Route::get('/get-fnbs-by-price-group', 'App\Http\Controllers\TransactionController@getFnbsByPriceGroup');
 Route::get('/get-fnbs-by-price-groups', 'App\Http\Controllers\TransactionController@getFnbsByPriceGroups');
 Route::get('/get-price-groups', 'App\Http\Controllers\TransactionController@getPriceGroups');
+
+// SR-TV-INTEGRATION-001: Consumer TV Agent Polling & ACK API (Samsung Tizen Web App & TV Lab Simulator)
+Route::get('/tv-agent/events', [App\Http\Controllers\TvAgentController::class, 'pollEvents'])->name('api.tv-agent.events.index');
+Route::post('/tv-agent/events/{event}/ack', [App\Http\Controllers\TvAgentController::class, 'acknowledge'])->name('api.tv-agent.events.ack')->whereNumber('event');

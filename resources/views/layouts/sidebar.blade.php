@@ -39,10 +39,10 @@
                 <span>Manajemen Jam Kerja</span></a>
         </li>
 
-        <li class="nav-item {{ isset($active) && $active === 'play' ? 'active' : '' }}">
-            <a class="nav-link" href="{{ route('playstation.index') }}">
+        <li class="nav-item {{ isset($active) && in_array($active, ['kategori-permainan', 'play']) ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('kategori-permainan.index') }}">
                 <i class="fas fa-gamepad"></i>
-                <span>Jenis Playstation</span></a>
+                <span>Kategori Permainan</span></a>
         </li>
         <li class="nav-item {{ isset($active) && $active === 'settings' ? 'active' : '' }}">
             <a class="nav-link" href="{{ route('settings.index') }}">
@@ -51,7 +51,7 @@
         </li>
     @endif
 
-    @if (auth()->user()->isAdmin() || auth()->user()->isKasir())
+    @if (auth()->user()->isAdmin() || auth()->user()->isKasir() || auth()->user()->isOwner())
         <div class="sidebar-heading">
             Operasional
         </div>
@@ -78,6 +78,48 @@
     @endif
 
     @if (auth()->user()->isAdmin() || auth()->user()->isOwner())
+        <!-- Heading -->
+        <div class="sidebar-heading">
+            Hardware IoT
+        </div>
+
+        <li class="nav-item {{ isset($active) && $active === 'hardware-registry' ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('admin.hardware.registry') }}">
+                <i class="fas fa-microchip"></i>
+                <span>Device Registry</span></a>
+        </li>
+
+        <li class="nav-item {{ isset($active) && $active === 'hardware-mappings' ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('admin.hardware.mappings') }}">
+                <i class="fas fa-network-wired"></i>
+                <span>Station Mapping</span></a>
+        </li>
+
+        @if(auth()->user()->isAdmin() && config('hardware.simulation_enabled', false))
+            <li class="nav-item {{ isset($active) && $active === 'hardware-simulator' ? 'active' : '' }}">
+                <a class="nav-link text-warning" href="{{ route('admin.hardware.simulator.index') }}">
+                    <i class="fas fa-flask text-warning"></i>
+                    <span>Hardware Simulator</span></a>
+            </li>
+        @endif
+
+        @if(auth()->user()->isAdmin())
+            <li class="nav-item {{ isset($active) && $active === 'hardware-diagnostics' ? 'active' : '' }}">
+                <a class="nav-link text-info" href="{{ route('admin.hardware.diagnostics.index') }}">
+                    <i class="fas fa-stethoscope text-info"></i>
+                    <span>Hardware Diagnostics</span></a>
+            </li>
+            @if(\Illuminate\Support\Facades\Route::has('admin.tv-lab.index'))
+                <li class="nav-item {{ isset($active) && $active === 'tv-lab' ? 'active' : '' }}">
+                    <a class="nav-link text-warning" href="{{ route('admin.tv-lab.index') }}">
+                        <i class="fas fa-tv text-warning"></i>
+                        <span>Samsung TV Lab</span></a>
+                </li>
+            @endif
+        @endif
+    @endif
+
+    @if (auth()->user()->isAdmin() || auth()->user()->isOwner())
         <li class="nav-item">
             <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseFnb"
                 aria-expanded="true" aria-controls="collapseFnb">
@@ -98,7 +140,7 @@
         </li>
     @endif
 
-    @if (auth()->user()->isAdmin() || auth()->user()->isKasir())
+    @if (auth()->user()->isAdmin() || auth()->user()->isKasir() || auth()->user()->isOwner())
         <li class="nav-item">
             <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseExpense"
                 aria-expanded="true" aria-controls="collapseExpense">

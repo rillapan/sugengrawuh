@@ -35,6 +35,15 @@ class DatabaseSeeder extends Seeder
             'role' => 'admin',
         ]);
 
+        // Buat user owner
+        \App\Models\User::updateOrCreate([
+            'email' => 'owner@gmail.com',
+        ], [
+            'name' => 'Owner',
+            'password' => bcrypt('password'),
+            'role' => 'owner',
+        ]);
+
        
     }
 }

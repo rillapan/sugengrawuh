@@ -25,23 +25,15 @@ class AppSettingsController extends Controller
     }
 
     /**
-     * Reset semua data transaksi yang tersedia
+     * Reset transaksi telah dinonaktifkan demi integritas data keuangan dan kepatuhan audit.
      */
     public function resetTransactions(Request $request)
     {
-        $request->validate([
-            'confirm_delete' => 'accepted'
+        \Illuminate\Support\Facades\Log::warning('Percobaan eksekusi reset data transaksi ditolak.', [
+            'user_id' => auth()->id(),
+            'ip' => $request->ip()
         ]);
 
-        DB::transaction(function () {
-            // Hapus detail FnB terlebih dahulu untuk menghindari constraint
-            TransactionFnb::query()->delete();
-            // Hapus semua transaksi
-            Transaction::query()->delete();
-            // Set semua perangkat menjadi tersedia
-            Device::query()->update(['status' => 'Tersedia']);
-        });
-
-        return redirect()->route('settings.index')->with('success', 'Seluruh data transaksi berhasil direset.');
+        return redirect()->route('settings.index')->with('gagal', 'Operasi reset data transaksi telah dinonaktifkan demi integritas data dan keamanan operasional.');
     }
 }

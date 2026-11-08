@@ -61,8 +61,8 @@
                     </div>
                 </div>
                 <div class="card-footer">
-                    <a href="{{ route('playstation.index') }}" class="btn btn-secondary">
-                        <i class="fas fa-arrow-left"></i> Kembali ke PlayStation
+                    <a href="{{ route('kategori-permainan.index') }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left"></i> Kembali ke Kategori Permainan
                     </a>
                 </div>
             </div>

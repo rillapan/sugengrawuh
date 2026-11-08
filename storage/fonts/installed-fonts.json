@@ -1,25 +1,25 @@
 {
     "nunito": {
-        "normal": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_normal_a79d5d478ff144acb132596b30109135",
-        "200_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_200_italic_b1972605e8640c4a34c2e5e6d5f7a282",
-        "300_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_300_italic_1cbee99640d022fb4f6d976376031b0b",
-        "italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_italic_73424994d9a0d36f6a9693c475fb71f3",
-        "600_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_600_italic_67f0d6fee18f75bc389f799a76427197",
-        "bold_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_bold_italic_64c0a35799a32ba8fc33372ea7a1b037",
-        "800_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_800_italic_4eb80a421956abfd1c95218974886e97",
-        "900_italic": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_900_italic_e444473789d7bc6c8432aa8c5dd902bc",
-        "200": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_200_c48a2401e13ed46254a964ef74b03562",
-        "300": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_300_94c0e0cc951325d5fe102516071deddc",
-        "600": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_600_2ca724e4e1a9f8e2ed8bb752920a8be4",
-        "bold": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_bold_00e56b884f6187001db248b275d34500",
-        "800": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/nunito_800_5a6a0e09ab1d4c2019b0beffe8e7afb3",
-        "900": "nunito_900_95f298ee457c4c1b7e0f30d7ef8b03f7"
+        "normal": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_normal_a79d5d478ff144acb132596b30109135",
+        "200_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_200_italic_b1972605e8640c4a34c2e5e6d5f7a282",
+        "300_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_300_italic_1cbee99640d022fb4f6d976376031b0b",
+        "italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_italic_73424994d9a0d36f6a9693c475fb71f3",
+        "600_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_600_italic_67f0d6fee18f75bc389f799a76427197",
+        "bold_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_bold_italic_64c0a35799a32ba8fc33372ea7a1b037",
+        "800_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_800_italic_4eb80a421956abfd1c95218974886e97",
+        "900_italic": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_900_italic_e444473789d7bc6c8432aa8c5dd902bc",
+        "200": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_200_c48a2401e13ed46254a964ef74b03562",
+        "300": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_300_94c0e0cc951325d5fe102516071deddc",
+        "600": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_600_2ca724e4e1a9f8e2ed8bb752920a8be4",
+        "bold": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_bold_00e56b884f6187001db248b275d34500",
+        "800": "nunito_800_5a6a0e09ab1d4c2019b0beffe8e7afb3",
+        "900": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/nunito_900_95f298ee457c4c1b7e0f30d7ef8b03f7"
     },
     "font awesome 5 brands": {
-        "normal": "font_awesome_5_brands_normal_0956d86ced4d3f38531b4f974cd78830"
+        "normal": "font_awesome_5_brands_normal_0a5eb493c8cccb73fb8cf869e1b2da58"
     },
     "font awesome 5 free": {
-        "normal": "D:\\web rental PS\\rentalPS-wiradesa\\storage\\fonts\/font_awesome_5_free_normal_7e6b4b9e914b23d1fd3e47b0ce9a0d46",
-        "900": "font_awesome_5_free_900_a45db25efa5ae4388a100c024b56cdcd"
+        "normal": "\/Users\/mohammadkhairilaffan\/Rillapancode\/billing sugeng rawuh\/sistem_kasir_PS-main\/storage\/fonts\/font_awesome_5_free_normal_3999761eca29a00eae1e0aaef0e06d9c",
+        "900": "font_awesome_5_free_900_7f7c9fd504f4c0cb95be4165a26425a4"
     }
 }

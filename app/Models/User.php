@@ -65,7 +65,7 @@ class User extends Authenticatable
      */
     public function isAdmin()
     {
-        return $this->role === 'admin';
+        return strtolower($this->role ?? '') === 'admin';
     }
 
     /**
@@ -73,7 +73,7 @@ class User extends Authenticatable
      */
     public function isOwner()
     {
-        return $this->role === 'owner';
+        return strtolower($this->role ?? '') === 'owner';
     }
 
     /**
@@ -81,7 +81,7 @@ class User extends Authenticatable
      */
     public function isKasir()
     {
-        return $this->role === 'kasir';
+        return strtolower($this->role ?? '') === 'kasir';
     }
 
     /**
@@ -89,9 +89,10 @@ class User extends Authenticatable
      */
     public function hasRole($role)
     {
+        $currentRole = strtolower($this->role ?? '');
         if (is_array($role)) {
-            return in_array($this->role, $role);
+            return in_array($currentRole, array_map('strtolower', $role));
         }
-        return $this->role === $role;
+        return $currentRole === strtolower($role);
     }
 }

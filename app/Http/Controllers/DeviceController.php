@@ -117,11 +117,17 @@ class DeviceController extends Controller
         $latestTransactionsSub = Transaction::select('device_id', DB::raw('MAX(created_at) as latest_transaction_at'))
             ->groupBy('device_id');
 
+        $withRelations = ['playstations', 'playstation'];
+        if (\Illuminate\Support\Facades\Schema::hasTable('station_device_mappings')) {
+            $withRelations[] = 'activeHardwareMappings.physicalDevice';
+            $withRelations[] = 'activeDisplayTv.physicalDevice';
+        }
+
         $devices = Device::select('devices.*')
             ->leftJoinSub($latestTransactionsSub, 'latest_transactions', 'devices.id', '=', 'latest_transactions.device_id')
             ->orderByRaw('CASE WHEN devices.status = "Digunakan" THEN 0 ELSE 1 END')
             ->orderBy('latest_transactions.latest_transaction_at', 'desc')
-            ->with('playstations')
+            ->with($withRelations)
             ->paginate(12);
 
         // Count devices by status
@@ -221,6 +227,22 @@ class DeviceController extends Controller
             }
         }
 
+        $tvControlData = [];
+        if (auth()->check() && auth()->user()->isAdmin()) {
+            try {
+                /** @var \App\Services\Hardware\TvAlertService $tvAlertService */
+                $tvAlertService = app(\App\Services\Hardware\TvAlertService::class);
+                $tvAlertService->evaluateAutoAlerts();
+                foreach ($devices as $dev) {
+                    if ($dev->getStationCategory() === Playstation::CATEGORY_PLAYSTATION) {
+                        $tvControlData[$dev->id] = $tvAlertService->getStationControlStatus($dev, 10);
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Non-blocking fallback if TV schema is unavailable
+            }
+        }
+
         return view('device.index', [
             'title' => 'Data Perangkat',
             'active' => 'device',
@@ -231,7 +253,11 @@ class DeviceController extends Controller
             'countAvailable' => $countAvailable,
             'countInUse' => $countInUse,
             'availableDevices' => $availableDevices,
-            'inUseDevices' => $inUseDevices
+            'inUseDevices' => $inUseDevices,
+            'serverTimestamp' => $now->timestamp * 1000,
+            'serverNow' => $now->toIso8601String(),
+            'tvPresets' => \App\Models\TvAlertEvent::getPresetMessages(),
+            'tvControlData' => $tvControlData,
         ]);
     }
 
@@ -589,15 +615,12 @@ class DeviceController extends Controller
                 ], 400);
             }
 
-            // Mark transaction as finished regardless of device status
-            $activeTransaction->update([
-                'waktu_Selesai' => Carbon::now()->format('H:i'),
-                'status_transaksi' => 'selesai',
-                'payment_status' => 'unpaid'
-            ]);
+            $previousStatus = $device->status;
 
-            // Force update device status to 'Tersedia'
-            $device->update(['status' => 'Tersedia']);
+            // Delegate core session stop and outbox intent creation to BillingService
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $stoppedTx = $billingService->stopSession($activeTransaction->id_transaksi, 'cashier_stop');
 
             return response()->json([
                 'success' => true,
@@ -605,8 +628,8 @@ class DeviceController extends Controller
                 'device_id' => $id,
                 'device_name' => $device->nama,
                 'new_status' => 'Tersedia',
-                'previous_status' => $device->getOriginal('status'),
-                'transaction_id' => $activeTransaction->id_transaksi
+                'previous_status' => $previousStatus,
+                'transaction_id' => $stoppedTx->id_transaksi
             ]);
 
         } catch (\Exception $e) {
@@ -690,19 +713,30 @@ class DeviceController extends Controller
                         $minutes = $durationMinutes % 60;
                         $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
 
-                        $activeTransaction->update([
+                        $payload = [
                             'waktu_Selesai' => $waktuSelesai->format('H:i'),
                             'jam_main' => $formattedDuration,
                             'total' => $total,
                             'status_transaksi' => 'selesai',
-                            'payment_status' => 'unpaid'
-                        ]);
+                            'payment_status' => $activeTransaction->payment_status === 'paid' ? 'paid' : 'unpaid'
+                        ];
+                        if (Transaction::hasG2Schema()) {
+                            $payload['ended_at'] = $waktuSelesai;
+                            $payload['billing_status'] = Transaction::BILLING_COMPLETED;
+                        }
+                        $activeTransaction->update($payload);
                     } else {
-                        // For prepaid and custom_package, just mark as finished
-                        $activeTransaction->update([
+                        // For prepaid and custom_package, mark as finished
+                        $payload = [
+                            'waktu_Selesai' => $waktuSelesai->format('H:i'),
                             'status_transaksi' => 'selesai',
-                            'payment_status' => 'unpaid'
-                        ]);
+                            'payment_status' => $activeTransaction->payment_status === 'paid' ? 'paid' : 'unpaid'
+                        ];
+                        if (Transaction::hasG2Schema()) {
+                            $payload['ended_at'] = $waktuSelesai;
+                            $payload['billing_status'] = Transaction::BILLING_COMPLETED;
+                        }
+                        $activeTransaction->update($payload);
                     }
                 }
             }
@@ -776,5 +810,67 @@ class DeviceController extends Controller
             // Round up to next thousand
             return $lowerThousand + 1000;
         }
+    }
+
+    /**
+     * Provide synchronized server-side timer status for all devices.
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getTimerSyncData()
+    {
+        $now = Carbon::now();
+        $devices = Device::all();
+        $deviceData = [];
+
+        foreach ($devices as $dev) {
+            $txQuery = Transaction::where('device_id', $dev->id);
+            if (Transaction::hasG2Schema()) {
+                $txQuery->where('billing_status', Transaction::BILLING_RUNNING);
+            } else {
+                $txQuery->where('status_transaksi', '!=', 'selesai');
+            }
+            $activeTx = $txQuery->latest()->first();
+
+            $txInfo = null;
+            if ($activeTx) {
+                $hasG2 = Transaction::hasG2Schema();
+                $remainingSeconds = 0;
+                if ($hasG2 && $activeTx->expires_at) {
+                    $remainingSeconds = max(0, $now->diffInSeconds($activeTx->expires_at, false));
+                }
+
+                $elapsedSeconds = 0;
+                $started = ($hasG2 && $activeTx->started_at) ? $activeTx->started_at : Carbon::parse($activeTx->created_at->toDateString() . ' ' . $activeTx->waktu_mulai);
+                if ($started) {
+                    $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
+                }
+
+                $txInfo = [
+                    'id_transaksi' => $activeTx->id_transaksi,
+                    'nama' => $activeTx->nama,
+                    'tipe_transaksi' => $activeTx->tipe_transaksi,
+                    'billing_status' => $hasG2 ? $activeTx->billing_status : 'RUNNING',
+                    'started_at' => ($hasG2 && $activeTx->started_at) ? $activeTx->started_at->toIso8601String() : null,
+                    'expires_at' => ($hasG2 && $activeTx->expires_at) ? $activeTx->expires_at->toIso8601String() : null,
+                    'remaining_seconds' => $remainingSeconds,
+                    'elapsed_seconds' => $elapsedSeconds,
+                    'is_expired' => ($hasG2 && $activeTx->expires_at) ? $now->greaterThanOrEqualTo($activeTx->expires_at) : false,
+                ];
+            }
+
+            $deviceData[] = [
+                'id' => $dev->id,
+                'nama' => $dev->nama,
+                'status' => $dev->status,
+                'transaction' => $txInfo,
+            ];
+        }
+
+        return response()->json([
+            'server_now' => $now->toIso8601String(),
+            'server_timestamp' => $now->timestamp * 1000,
+            'devices' => $deviceData,
+        ]);
     }
 }

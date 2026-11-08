@@ -9,7 +9,46 @@ class Playstation extends Model
 {
     use HasFactory;
 
+    public const CATEGORY_PLAYSTATION = 'PLAYSTATION';
+    public const CATEGORY_BILLIARD = 'BILLIARD';
+
     protected $guarded = [];
+
+    /**
+     * Identify station service category (PLAYSTATION vs BILLIARD).
+     * Returns null if unrecognized or ambiguous.
+     *
+     * @return string|null
+     */
+    public function getCategory(): ?string
+    {
+        $name = strtoupper(trim((string) $this->nama));
+        if ($name === '') {
+            return null;
+        }
+
+        $isBilliard = str_contains($name, 'BILLIARD')
+            || str_contains($name, 'BILIAR')
+            || str_starts_with($name, 'MEJA');
+
+        $isPlaystation = str_contains($name, 'PLAYSTATION')
+            || str_contains($name, 'PS5')
+            || str_contains($name, 'PS4')
+            || str_contains($name, 'PS3')
+            || str_contains($name, 'PS 5')
+            || str_contains($name, 'PS 4')
+            || str_contains($name, 'PS 3');
+
+        if ($isBilliard && !$isPlaystation) {
+            return self::CATEGORY_BILLIARD;
+        }
+
+        if ($isPlaystation && !$isBilliard) {
+            return self::CATEGORY_PLAYSTATION;
+        }
+
+        return null;
+    }
 
     public function device()
     {
