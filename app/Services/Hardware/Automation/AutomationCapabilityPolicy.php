@@ -3,6 +3,7 @@
 namespace App\Services\Hardware\Automation;
 
 use App\Models\PhysicalDevice;
+use Illuminate\Support\Facades\Config;
 
 class AutomationCapabilityPolicy
 {
@@ -55,12 +56,19 @@ class AutomationCapabilityPolicy
 
         // Samsung Smart TV
         if ($device->category === PhysicalDevice::CATEGORY_SMART_TV && $device->brand === PhysicalDevice::BRAND_SAMSUNG) {
-            // Power automation for Samsung TV is physically unverified and strictly skipped
-            return [
-                'allowed' => false,
-                'result_code' => self::RESULT_SKIPPED_UNVERIFIED,
-                'reason' => 'Samsung TV power commands are unverified for automated dispatch and skipped for safety.',
-            ];
+            if (Config::get('hardware.driver', 'real') === 'mock') {
+                return ['allowed' => true, 'result_code' => self::RESULT_ALLOWED, 'reason' => null];
+            }
+            $requiredCapability = (strtoupper($desiredState) === 'ON') ? 'POWER_ON' : 'STANDBY';
+            $hasCapability = in_array($requiredCapability, (array) ($device->verified_capabilities ?? []), true);
+            if (!$hasCapability) {
+                return [
+                    'allowed' => false,
+                    'result_code' => self::RESULT_SKIPPED_UNVERIFIED,
+                    'reason' => "Samsung TV capability '{$requiredCapability}' not verified.",
+                ];
+            }
+            return ['allowed' => true, 'result_code' => self::RESULT_ALLOWED, 'reason' => null];
         }
 
         return [
