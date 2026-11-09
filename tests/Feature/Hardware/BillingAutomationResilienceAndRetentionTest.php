@@ -308,6 +308,9 @@ class BillingAutomationResilienceAndRetentionTest extends TestCase
             ]
         );
 
+        // Real mode: unverified capability should be blocked
+        Config::set('hardware.driver', 'real');
+
         $now = Carbon::parse('2026-11-05 14:00:00');
         Carbon::setTestNow($now);
 
@@ -331,7 +334,7 @@ class BillingAutomationResilienceAndRetentionTest extends TestCase
 
         $intent->refresh();
         $this->assertEquals(AutomationIntent::STATUS_SKIPPED, $intent->status);
-        $this->assertStringContainsString('Samsung TV power commands are unverified', $intent->last_error_message);
+        $this->assertStringContainsString("Samsung TV capability 'POWER_ON' not verified", $intent->last_error_message);
         $this->assertEquals('SKIPPED_UNVERIFIED_CAPABILITY', $log->result_code);
     }
 

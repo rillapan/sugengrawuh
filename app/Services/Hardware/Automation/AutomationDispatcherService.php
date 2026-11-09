@@ -132,14 +132,22 @@ class AutomationDispatcherService
             );
         }
 
-        // 3. Resolve Driver
+        // 3. Category-aware command translation
+        $command = match([$physicalDevice->category, $intent->desired_state]) {
+            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_ON]  => 'POWER_ON',
+            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_OFF] => 'STANDBY',
+            [PhysicalDevice::CATEGORY_SMART_RELAY, AutomationIntent::STATE_ON] => 'SWITCH_ON',
+            default => 'SWITCH_OFF',
+        };
+
+        // 4. Resolve Driver
         try {
             $driver = $this->driverManager->getDriverForDevice($physicalDevice);
         } catch (Throwable $e) {
-            return $this->handleDispatchFailure($intent, $physicalDevice, 'CONFIG_ERROR', $e->getMessage(), 0, $now);
+            return $this->handleDispatchFailure($intent, $physicalDevice, 'CONFIG_ERROR', $e->getMessage(), 0, $now, $command);
         }
 
-        // 4. Mandatory Read-Back Before Retry (for Shelly Relay)
+        // 5. Mandatory Read-Back Before Retry (for Shelly Relay)
         if ($intent->attempts > 1 && $physicalDevice->category === PhysicalDevice::CATEGORY_SMART_RELAY) {
             try {
                 $statusResult = $driver->getStatus($physicalDevice);
@@ -157,6 +165,7 @@ class AutomationDispatcherService
                             $isCurrentlyOn,
                             $state['power_watts'] ?? $state['apower'] ?? 0.0,
                             0,
+                            $command,
                             'VERIFIED_OK_READBACK',
                             $now
                         );
@@ -167,9 +176,8 @@ class AutomationDispatcherService
             }
         }
 
-        // 5. Driver Dispatch
+        // 6. Driver Dispatch
         $startTime = microtime(true);
-        $command = ($intent->desired_state === AutomationIntent::STATE_ON) ? 'SWITCH_ON' : 'SWITCH_OFF';
 
         try {
             $cmdResult = $driver->sendCommand($physicalDevice, $command, ['channel' => $intent->target_channel]);
@@ -182,14 +190,19 @@ class AutomationDispatcherService
                     $errorCat,
                     $cmdResult->message ?: "Driver command {$command} failed",
                     (int) round((microtime(true) - $startTime) * 1000),
-                    $now
+                    $now,
+                    $command
                 );
             }
 
-            // Post-dispatch read-back verification
+            // Post-dispatch read-back verification (category-aware)
             $statusResult = $driver->getStatus($physicalDevice);
             $state = $statusResult->simulatedState ?: $statusResult->rawResponse;
-            $observedOutput = isset($state['output']) ? (bool) $state['output'] : (($state['switch'] ?? '') === 'ON');
+            if ($physicalDevice->category === PhysicalDevice::CATEGORY_SMART_TV) {
+                $observedOutput = ($state['power_state'] ?? '') === 'on' || ($state['power'] ?? '') === 'ON';
+            } else {
+                $observedOutput = isset($state['output']) ? (bool) $state['output'] : (($state['switch'] ?? '') === 'ON');
+            }
             $expectedOutput = ($intent->desired_state === AutomationIntent::STATE_ON);
 
             $latencyMs = (int) round((microtime(true) - $startTime) * 1000);
@@ -201,7 +214,8 @@ class AutomationDispatcherService
                     'READBACK_MISMATCH',
                     "READBACK_MISMATCH: Expected output=" . ($expectedOutput ? 'true' : 'false') . ", observed=" . ($observedOutput ? 'true' : 'false'),
                     $latencyMs,
-                    $now
+                    $now,
+                    $command
                 );
             }
 
@@ -212,6 +226,7 @@ class AutomationDispatcherService
                 $observedOutput,
                 $state['power_watts'] ?? $state['apower'] ?? 0.0,
                 $latencyMs,
+                $command,
                 'VERIFIED_OK',
                 $now
             );
@@ -224,7 +239,7 @@ class AutomationDispatcherService
                 $errorCategory = 'OFFLINE';
             }
 
-            return $this->handleDispatchFailure($intent, $physicalDevice, $errorCategory, $e->getMessage(), $latencyMs, $now);
+            return $this->handleDispatchFailure($intent, $physicalDevice, $errorCategory, $e->getMessage(), $latencyMs, $now, $command);
         }
     }
 
@@ -238,6 +253,7 @@ class AutomationDispatcherService
         bool $observedOutput,
         ?float $powerWatts,
         int $latencyMs,
+        string $command,
         string $resultCode,
         Carbon $now
     ): AutomationExecutionLog {
@@ -265,7 +281,7 @@ class AutomationDispatcherService
             'station_name' => $intent->station_name ?? "Station #{$intent->station_id}",
             'physical_device_id' => $physicalDevice->id,
             'driver_type' => $driver->getDriverType(),
-            'command_sent' => $intent->desired_state === AutomationIntent::STATE_ON ? 'Switch.Set on=true' : 'Switch.Set on=false',
+            'command_sent' => $command,
             'attempt_number' => $intent->attempts,
             'execution_status' => AutomationExecutionLog::STATUS_SUCCESS,
             'result_code' => $resultCode,
@@ -329,7 +345,8 @@ class AutomationDispatcherService
         string $errorCategory,
         string $errorMessage,
         int $latencyMs,
-        Carbon $now
+        Carbon $now,
+        ?string $command = null
     ): AutomationExecutionLog {
         // Backoff schedule: Attempt 1 -> +3s, Attempt 2 -> +10s, Attempt 3 -> +30s
         $backoffs = [1 => 3, 2 => 10, 3 => 30];
@@ -372,8 +389,10 @@ class AutomationDispatcherService
             'station_id' => $intent->station_id,
             'station_name' => $intent->station_name ?? "Station #{$intent->station_id}",
             'physical_device_id' => $physicalDevice ? $physicalDevice->id : $intent->physical_device_id,
-            'driver_type' => 'shelly_relay',
-            'command_sent' => $intent->desired_state === AutomationIntent::STATE_ON ? 'Switch.Set on=true' : 'Switch.Set on=false',
+            'driver_type' => $physicalDevice ? ($physicalDevice->category === PhysicalDevice::CATEGORY_SMART_TV ? 'samsung_tv' : 'shelly_relay') : 'unknown',
+            'command_sent' => $command ?? ($physicalDevice?->category === PhysicalDevice::CATEGORY_SMART_TV
+                ? ($intent->desired_state === AutomationIntent::STATE_ON ? 'POWER_ON' : 'STANDBY')
+                : ($intent->desired_state === AutomationIntent::STATE_ON ? 'SWITCH_ON' : 'SWITCH_OFF')),
             'attempt_number' => $currentAttempt,
             'execution_status' => $execStatus,
             'result_code' => $resultCode,
