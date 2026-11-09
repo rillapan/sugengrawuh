@@ -653,6 +653,10 @@
                                     ? $device->activeDisplayTv
                                     : $device->activeDisplayTv()->with('physicalDevice')->first();
                                 $tvPhysical = $tvMapping ? $tvMapping->physicalDevice : null;
+                                $consoleMapping = $device->relationLoaded('activeGameConsole')
+                                    ? $device->activeGameConsole
+                                    : $device->activeGameConsole()->with('physicalDevice')->first();
+                                $consolePhysical = $consoleMapping ? $consoleMapping->physicalDevice : null;
                                 $initTvCtrl = $tvControlData[$device->id] ?? null;
                                 $initVol = $initTvCtrl['tv_state']['volume'] ?? 30;
                                 $initMute = !empty($initTvCtrl['tv_state']['mute']);
@@ -662,7 +666,7 @@
                             @if ($stationCategory === 'PLAYSTATION')
                                 @if ($device->status === 'Tersedia')
                                     <div class="mt-2 mb-2 p-2 bg-light border rounded small text-muted" id="tv-control-inactive-{{ $device->id }}">
-                                        <i class="fas fa-tv mr-1"></i><strong>Kontrol Samsung TV:</strong> Nonaktif (Station belum sedang digunakan pelanggan).
+                                        <i class="fas fa-tv mr-1"></i><strong>Kontrol Hardware:</strong> Nonaktif (Station belum sedang digunakan pelanggan).
                                     </div>
                                 @elseif ($device->status === 'Digunakan' && auth()->user()->isAdmin())
                                     <div class="mt-2 mb-3 p-2 bg-white border border-warning rounded shadow-sm tv-control-panel"
@@ -670,25 +674,34 @@
                                          data-station-id="{{ $device->id }}"
                                          data-station-name="{{ $device->nama }}"
                                          data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
+                                         data-notification-url="{{ route('admin.stations.notifications.store', ['station' => $device->id]) }}"
                                          data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
                                          data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
                                          data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
                                         <div class="d-flex justify-content-between align-items-center mb-1">
                                             <small class="font-weight-bold text-dark text-uppercase">
-                                                <i class="fas fa-tv text-primary mr-1"></i>KONTROL SAMSUNG TV
+                                                <i class="fas fa-sliders-h text-primary mr-1"></i>KONTROL PERANGKAT & VOLUME
                                             </small>
                                             <a href="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}" target="_blank" class="badge badge-dark text-warning" title="Buka Simulator TV 16:9 untuk station ini">
                                                 <i class="fas fa-external-link-alt mr-1"></i>TV Lab
                                             </a>
                                         </div>
                                         <span class="badge badge-warning text-dark d-block mb-2 py-1 text-wrap">
-                                            <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGONTROL TV FISIK
+                                            <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGIRIM PERINTAH FISIK TANPA VERIFIKASI
                                         </span>
 
                                         <div class="small mb-2">
                                             <div class="d-flex justify-content-between">
                                                 <span class="text-muted">Station & Kategori:</span>
                                                 <strong class="text-dark">{{ $device->nama }} ({{ $device->playstation_names ?: 'PlayStation' }})</strong>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Konsol PlayStation:</span>
+                                                @if ($consolePhysical)
+                                                    <strong class="text-dark" id="console-name-{{ $device->id }}">{{ $consolePhysical->name }} ({{ $consolePhysical->model }})</strong>
+                                                @else
+                                                    <span class="badge badge-light border text-muted" id="console-name-{{ $device->id }}">Belum Dipetakan</span>
+                                                @endif
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
                                                 <span class="text-muted">Samsung TV:</span>
@@ -699,15 +712,21 @@
                                                 @endif
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
-                                                <span class="text-muted">Koneksi & Pairing:</span>
-                                                <span>
-                                                    <span class="badge badge-secondary" id="tv-conn-status-{{ $device->id }}">{{ $tvPhysical->connection_status ?? 'UNVERIFIED' }}</span>
-                                                    <span class="badge badge-light border text-dark" id="tv-pair-status-{{ $device->id }}">{{ $tvPhysical->pairing_status ?? 'UNVERIFIED' }}</span>
+                                                <span class="text-muted">Metode Notifikasi:</span>
+                                                <span id="tv-notif-method-{{ $device->id }}">
+                                                    @if ($consolePhysical && $consolePhysical->is_active)
+                                                        <span class="badge badge-success"><i class="fas fa-gamepad mr-1"></i>Konsol PS (Utama)</span>
+                                                    @elseif ($tvPhysical && $tvPhysical->is_active)
+                                                        <span class="badge badge-primary"><i class="fas fa-tv mr-1"></i>Samsung TV (Utama)</span>
+                                                    @else
+                                                        <span class="badge badge-secondary">Tidak Ada Perangkat</span>
+                                                    @endif
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
-                                                <span class="text-muted">Mode Kontrol & Consumer:</span>
+                                                <span class="text-muted">Koneksi & Status TV:</span>
                                                 <span>
+                                                    <span class="badge badge-secondary" id="tv-conn-status-{{ $device->id }}">{{ $tvPhysical->connection_status ?? 'UNVERIFIED' }}</span>
                                                     <span class="badge badge-info" id="tv-mode-{{ $device->id }}">MOCK</span>
                                                     <span class="badge {{ $initSimOnline ? 'badge-success' : 'badge-secondary' }}" id="tv-sim-conn-{{ $device->id }}">
                                                         {{ $initSimOnline ? 'CONNECTED' : 'WAITING_CONSUMER' }}
@@ -715,12 +734,18 @@
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
-                                                <span class="text-muted">Volume & Audio (Simulasi):</span>
+                                                <span class="text-muted">Status Audio (Sim):</span>
                                                 <span>
                                                     <span class="badge badge-primary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $initVol }}/100</span>
                                                     <span class="badge {{ $initMute ? 'badge-danger' : 'badge-success' }}" id="tv-mute-badge-{{ $device->id }}">
                                                         {{ $initMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)' }}
                                                     </span>
+                                                </span>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <span class="text-muted">Batas Volume Maks:</span>
+                                                <span class="badge {{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? 'badge-success' : 'badge-secondary' }}" id="tv-vol-limit-badge-{{ $device->id }}">
+                                                    {{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? 'BATAS: ' . ($tvPhysical->max_volume_limit ?? 50) . '%' : 'NONAKTIF' }}
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
@@ -731,14 +756,63 @@
                                             </div>
                                         </div>
 
+                                        <!-- SR-TV-VOLUME: Volume Slider & Numerical Input -->
+                                        <div class="p-2 mb-2 bg-light border rounded">
+                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                                <small class="font-weight-bold text-dark"><i class="fas fa-volume-up text-primary mr-1"></i>Kontrol Volume</small>
+                                                <span>
+                                                    <span class="badge badge-primary mr-1" id="tv-target-vol-badge-{{ $device->id }}">Target: {{ $initVol }}/100</span>
+                                                    <span class="badge badge-secondary" id="tv-actual-vol-badge-{{ $device->id }}">Aktual: {{ $tvPhysical && $tvPhysical->current_volume !== null ? $tvPhysical->current_volume . '/100' : 'UNVERIFIED' }}</span>
+                                                </span>
+                                            </div>
+                                            <div class="input-group input-group-sm mb-1">
+                                                <input type="range" class="form-range custom-range mr-2 flex-grow-1 tv-vol-slider"
+                                                       id="tv-vol-slider-{{ $device->id }}"
+                                                       data-station-id="{{ $device->id }}"
+                                                       min="0" max="100" value="{{ $initVol }}"
+                                                       {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <input type="number" class="form-control form-control-sm text-center tv-vol-number"
+                                                       id="tv-vol-number-{{ $device->id }}"
+                                                       data-station-id="{{ $device->id }}"
+                                                       min="0" max="100" value="{{ $initVol }}"
+                                                       style="max-width: 60px;"
+                                                       {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <div class="input-group-append">
+                                                    <button type="button" class="btn btn-sm btn-primary btn-tv-set-volume"
+                                                            data-station-id="{{ $device->id }}"
+                                                            data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
+                                                            {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}
+                                                            title="Terapkan angka volume">
+                                                        <i class="fas fa-check"></i> Set
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                                <small class="text-muted">Status Eksekusi:</small>
+                                                <span class="badge badge-info" id="tv-exec-status-badge-{{ $device->id }}">SIMULASI</span>
+                                            </div>
+                                        </div>
+
                                         <div class="d-flex flex-wrap">
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-primary mr-1 mb-1 btn-open-tv-alert-modal"
                                                     data-station-id="{{ $device->id }}"
                                                     data-station-name="{{ $device->nama }}"
                                                     data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
-                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled title=Belum_ada_Samsung_TV_aktif' : '' }}>
-                                                <i class="fas fa-bullhorn mr-1"></i> Kirim Peringatan
+                                                    data-notification-url="{{ route('admin.stations.notifications.store', ['station' => $device->id]) }}"
+                                                    data-has-console="{{ $consolePhysical ? '1' : '0' }}"
+                                                    data-has-tv="{{ ($tvPhysical && $tvPhysical->brand === 'SAMSUNG') ? '1' : '0' }}">
+                                                <i class="fas fa-bullhorn mr-1"></i> Kirim Pesan
+                                            </button>
+                                            <button type="button"
+                                                    class="btn btn-xs btn-sm btn-outline-primary mr-1 mb-1 btn-open-tv-limit-modal"
+                                                    data-station-id="{{ $device->id }}"
+                                                    data-station-name="{{ $device->nama }}"
+                                                    data-limit-url="{{ route('admin.stations.tv-volume-limit.store', ['station' => $device->id]) }}"
+                                                    data-limit-enabled="{{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? '1' : '0' }}"
+                                                    data-max-volume="{{ $tvPhysical->max_volume_limit ?? 50 }}"
+                                                    {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                <i class="fas fa-sliders-h mr-1"></i> Batas
                                             </button>
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
@@ -746,7 +820,7 @@
                                                     data-command="VOLUME_DOWN"
                                                     data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
                                                     {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                <i class="fas fa-volume-down"></i> Vol Turun
+                                                <i class="fas fa-volume-down"></i> -5
                                             </button>
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-outline-secondary mr-1 mb-1 btn-tv-volume-cmd"
@@ -754,7 +828,7 @@
                                                     data-command="VOLUME_UP"
                                                     data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
                                                     {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                <i class="fas fa-volume-up"></i> Vol Naik
+                                                <i class="fas fa-volume-up"></i> +5
                                             </button>
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-outline-warning text-dark mr-1 mb-1 btn-tv-volume-cmd"
@@ -762,7 +836,7 @@
                                                     data-command="MUTE_TOGGLE"
                                                     data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
                                                     {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
-                                                <i class="fas fa-volume-mute"></i> Mute/Unmute (Sim)
+                                                <i class="fas fa-volume-mute"></i> Mute
                                             </button>
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-outline-info mb-1 btn-open-tv-history-modal"
@@ -770,7 +844,7 @@
                                                     data-station-name="{{ $device->nama }}"
                                                     data-status-url="{{ route('admin.stations.tv-control.status', ['station' => $device->id]) }}"
                                                     data-lab-url="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}">
-                                                <i class="fas fa-history mr-1"></i> Lihat Riwayat Kontrol
+                                                <i class="fas fa-history mr-1"></i> Riwayat
                                             </button>
                                         </div>
                                     </div>
@@ -992,10 +1066,21 @@
                             <input type="hidden" id="tv-alert-action-url" value="">
 
                             <div class="form-group">
+                                <label for="tv-alert-channel" class="font-weight-bold small text-dark">Target Perangkat (Channel)</label>
+                                <select class="form-control" id="tv-alert-channel" name="channel">
+                                    <option value="AUTO" selected>Otomatis (Prioritas Konsol PS jika aktif, atau Samsung TV)</option>
+                                    <option value="CONSOLE">Game Console (PS3 / PS4 HEN Direct Popup)</option>
+                                    <option value="TV">Samsung Smart TV (Overlay)</option>
+                                    <option value="BOTH">Keduanya (Konsol + TV)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
                                 <label for="tv-alert-preset" class="font-weight-bold small text-dark">Pilih Preset Peringatan</label>
                                 <select class="form-control" id="tv-alert-preset" name="preset" required>
                                     <option value="REMAINING_10_MIN">REMAINING_10_MIN — Waktu bermain tersisa 10 menit.</option>
                                     <option value="ALMOST_FINISHED">ALMOST_FINISHED — Waktu bermain hampir habis.</option>
+                                    <option value="TIME_EXPIRED">TIME_EXPIRED — Waktu bermain telah berakhir.</option>
                                     <option value="LOWER_VOLUME">LOWER_VOLUME — Mohon kecilkan volume permainan.</option>
                                     <option value="CONTACT_CASHIER">CONTACT_CASHIER — Silakan hubungi kasir.</option>
                                     <option value="CUSTOM">CUSTOM — Pesan khusus.</option>
@@ -1100,6 +1185,74 @@
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal" data-bs-dismiss="modal">Tutup</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TV Volume Limit Settings Modal -->
+        <div class="modal fade" id="tvVolumeLimitModal" tabindex="-1" role="dialog" aria-labelledby="tvVolumeLimitModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <form id="tvVolumeLimitForm">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="tvVolumeLimitModalLabel">
+                                <i class="fas fa-shield-alt mr-2"></i>Batas Volume Maksimal — <span id="tv-limit-station-name">PS 01</span>
+                            </h5>
+                            <button type="button" class="close btn-close text-white" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="tv-limit-station-id" value="">
+                            <input type="hidden" id="tv-limit-action-url" value="">
+
+                            <div class="alert alert-info py-2 small mb-3">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Jika proteksi aktif, aplikasi TV Samsung Tizen dan simulator akan otomatis membatasi volume agar tidak melebihi batas maksimal yang ditentukan.
+                            </div>
+
+                            <div class="form-group mb-3">
+                                <div class="custom-control custom-switch">
+                                    <input type="checkbox" class="custom-control-input" id="tv-limit-enabled" name="enabled" value="1">
+                                    <label class="custom-control-label font-weight-bold text-dark" for="tv-limit-enabled">
+                                        Aktifkan Batas Volume Maksimal Otomatis
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-1">Mengaktifkan pengawasan volume otomatis pada TV stasiun ini.</small>
+                            </div>
+
+                            <div class="form-group mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label for="tv-limit-max-volume" class="font-weight-bold text-dark mb-0">Batas Maksimal Volume (0 - 100):</label>
+                                    <span class="badge badge-primary px-2 py-1 font-weight-bold" id="tv-limit-volume-val">50%</span>
+                                </div>
+                                <input type="range" class="custom-range" id="tv-limit-max-volume" min="0" max="100" step="5" value="50">
+                                <div class="d-flex justify-content-between text-muted" style="font-size: 0.75rem;">
+                                    <span>0% (Bisu)</span>
+                                    <span>30% (Sedang)</span>
+                                    <span>50% (Standar)</span>
+                                    <span>70% (Keras)</span>
+                                    <span>100% (Maksimal)</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group mb-0 p-2 bg-light border rounded">
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="tv-limit-enforce-now" name="enforce_now" value="1" checked>
+                                    <label class="custom-control-label small font-weight-bold text-dark" for="tv-limit-enforce-now">
+                                        Terapkan Sekarang (Enforce Now)
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block pl-4">Bila volume TV saat ini melebihi batas, langsung kirim perintah penyesuaian volume.</small>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal" data-bs-dismiss="modal">Batal</button>
+                            <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitTvVolumeLimit">
+                                <i class="fas fa-save mr-1"></i> Simpan Pengaturan
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
@@ -1553,6 +1706,16 @@
                                 alertEl.addClass('d-none');
                             }
 
+                            // Sync station billing status badge (Tersedia / Digunakan) — independent of hardware state
+                            var stationStatus = res.data.station_status;
+                            if (stationStatus) {
+                                var statusPill = document.getElementById('status-' + deviceId);
+                                if (statusPill) {
+                                    var dotClass = stationStatus === 'Tersedia' ? 'stitch-dot-available' : 'stitch-dot-used';
+                                    statusPill.innerHTML = '<span class="text-muted small font-weight-medium">Status:</span> <span class="stitch-status-dot ' + dotClass + '"></span><span class="font-weight-bold text-dark small">' + stationStatus + '</span>';
+                                }
+                            }
+
                             // Sync power button status text if not currently processing
                             var hwState = res.data.hardware_state;
                             if (hwState) {
@@ -1777,6 +1940,44 @@
                     volBadge.textContent = 'Vol: ' + (typeof vol !== 'undefined' ? vol : 30) + '/100';
                 }
 
+                var targetVolBadge = document.getElementById('tv-target-vol-badge-' + stationId);
+                var sliderEl = document.getElementById('tv-vol-slider-' + stationId);
+                var numberEl = document.getElementById('tv-vol-number-' + stationId);
+                var currentVolVal = (data.tv_state && typeof data.tv_state.volume !== 'undefined') ? data.tv_state.volume : (data.simulated_volume || 30);
+                if (targetVolBadge) targetVolBadge.textContent = 'Target: ' + currentVolVal + '/100';
+                if (sliderEl && document.activeElement !== sliderEl) sliderEl.value = currentVolVal;
+                if (numberEl && document.activeElement !== numberEl) numberEl.value = currentVolVal;
+
+                var actualVolBadge = document.getElementById('tv-actual-vol-badge-' + stationId);
+                if (actualVolBadge) {
+                    var actVol = (data.volume_limit_config && data.volume_limit_config.current_volume !== null && typeof data.volume_limit_config.current_volume !== 'undefined')
+                        ? data.volume_limit_config.current_volume + '/100'
+                        : 'UNVERIFIED';
+                    actualVolBadge.textContent = 'Aktual: ' + actVol;
+                }
+
+                var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
+                if (execBadge) {
+                    execBadge.className = 'badge badge-info';
+                    execBadge.textContent = 'SIMULASI';
+                }
+
+                var consoleNameEl = document.getElementById('console-name-' + stationId);
+                if (consoleNameEl && data.console_info) {
+                    if (data.console_info.mapped) {
+                        consoleNameEl.textContent = data.console_info.name + ' (' + (data.console_info.model || 'HEN') + ')';
+                    }
+                }
+
+                var notifMethodEl = document.getElementById('tv-notif-method-' + stationId);
+                if (notifMethodEl && data.console_info) {
+                    if (data.console_info.mapped && data.console_info.is_active) {
+                        notifMethodEl.innerHTML = '<span class="badge badge-success"><i class="fas fa-gamepad mr-1"></i>Konsol PS (Utama)</span>';
+                    } else if (data.tv_device) {
+                        notifMethodEl.innerHTML = '<span class="badge badge-primary"><i class="fas fa-tv mr-1"></i>Samsung TV (Utama)</span>';
+                    }
+                }
+
                 var muteBadge = document.getElementById('tv-mute-badge-' + stationId);
                 if (muteBadge) {
                     var isMute = (data.tv_state && typeof data.tv_state.mute !== 'undefined') ? data.tv_state.mute : data.simulated_muted;
@@ -1789,6 +1990,19 @@
                     var isOnline = !!data.simulator_online;
                     simConn.className = 'badge ' + (isOnline ? 'badge-success' : 'badge-secondary');
                     simConn.textContent = isOnline ? 'CONNECTED' : 'WAITING_CONSUMER';
+                }
+
+                if (data.volume_limit_config) {
+                    var limitBadge = document.getElementById('tv-vol-limit-badge-' + stationId);
+                    if (limitBadge) {
+                        if (data.volume_limit_config.enabled) {
+                            limitBadge.className = 'badge badge-success';
+                            limitBadge.textContent = 'BATAS: ' + (data.volume_limit_config.max_limit || 50) + '%';
+                        } else {
+                            limitBadge.className = 'badge badge-secondary';
+                            limitBadge.textContent = 'NONAKTIF';
+                        }
+                    }
                 }
 
                 var lastEvBadge = document.getElementById('tv-last-event-badge-' + stationId);
@@ -1910,21 +2124,24 @@
                 if (presetSelect) presetSelect.addEventListener('change', updateTvPreview);
                 if (customTextarea) customTextarea.addEventListener('input', updateTvPreview);
 
-                // Open Send TV Alert Modal
+                // Open Send TV/Console Alert Modal
                 document.addEventListener('click', function(e) {
                     var btn = e.target.closest('.btn-open-tv-alert-modal');
                     if (!btn) return;
 
                     var stationId = btn.getAttribute('data-station-id');
                     var stationName = btn.getAttribute('data-station-name');
-                    var alertUrl = btn.getAttribute('data-alert-url');
+                    var notifUrl = btn.getAttribute('data-notification-url') || btn.getAttribute('data-alert-url');
 
                     var stNameEl = document.getElementById('tv-alert-station-name');
                     if (stNameEl) stNameEl.textContent = stationName;
                     var stIdInput = document.getElementById('tv-alert-station-id');
                     if (stIdInput) stIdInput.value = stationId;
                     var urlInput = document.getElementById('tv-alert-action-url');
-                    if (urlInput) urlInput.value = alertUrl;
+                    if (urlInput) urlInput.value = notifUrl;
+
+                    var channelSelect = document.getElementById('tv-alert-channel');
+                    if (channelSelect) channelSelect.value = 'AUTO';
 
                     if (presetSelect) presetSelect.value = 'REMAINING_10_MIN';
                     if (customTextarea) customTextarea.value = '';
@@ -1933,13 +2150,14 @@
                     safeShowModal('tvAlertModal');
                 });
 
-                // Submit Send TV Alert Form
+                // Submit Send TV/Console Alert Form
                 var tvAlertForm = document.getElementById('tvAlertForm');
                 if (tvAlertForm) {
                     tvAlertForm.addEventListener('submit', function(e) {
                         e.preventDefault();
                         var stationId = document.getElementById('tv-alert-station-id').value;
                         var actionUrl = document.getElementById('tv-alert-action-url').value;
+                        var channel = document.getElementById('tv-alert-channel') ? document.getElementById('tv-alert-channel').value : 'AUTO';
                         var preset = document.getElementById('tv-alert-preset').value;
                         var customMsg = document.getElementById('tv-alert-custom-message').value;
                         var durationSec = parseInt(document.getElementById('tv-alert-duration').value || '8', 10);
@@ -1961,6 +2179,7 @@
                                 'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
                             },
                             body: JSON.stringify({
+                                channel: channel,
                                 preset: preset,
                                 custom_message: preset === 'CUSTOM' ? customMsg : null,
                                 duration_seconds: durationSec
@@ -1976,10 +2195,11 @@
                                 safeHideModal('tvAlertModal');
                                 var badge = document.getElementById('tv-last-event-badge-' + stationId);
                                 if (badge && res.body.data) {
-                                    badge.className = 'badge ' + getEventBadgeClass(res.body.data.status);
-                                    badge.textContent = res.body.data.status;
+                                    var st = res.body.data.status || 'DELIVERED_TO_APP';
+                                    badge.className = 'badge ' + getEventBadgeClass(st);
+                                    badge.textContent = st;
                                 }
-                                showFeedbackAlert('success', res.body.message || 'Peringatan berhasil dicatat (PENDING).');
+                                showFeedbackAlert('success', res.body.message || 'Peringatan berhasil dikirim/dicatat.');
                                 pollTvControlPanels();
                             } else {
                                 var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal mengirim peringatan ke station.';
@@ -1987,7 +2207,7 @@
                             }
                         })
                         .catch(function() {
-                            showFeedbackAlert('danger', 'Gagal menghubungi server untuk mengirim peringatan TV.');
+                            showFeedbackAlert('danger', 'Gagal menghubungi server untuk mengirim peringatan.');
                         })
                         .finally(function() {
                             if (submitBtn) {
@@ -1997,6 +2217,90 @@
                         });
                     });
                 }
+
+                // Synchronize Volume Slider & Number Input
+                document.addEventListener('input', function(e) {
+                    if (e.target.classList.contains('tv-vol-slider')) {
+                        var stId = e.target.getAttribute('data-station-id');
+                        var numInput = document.getElementById('tv-vol-number-' + stId);
+                        var targetBadge = document.getElementById('tv-target-vol-badge-' + stId);
+                        if (numInput) numInput.value = e.target.value;
+                        if (targetBadge) targetBadge.textContent = 'Target: ' + e.target.value + '/100';
+                    }
+                    if (e.target.classList.contains('tv-vol-number')) {
+                        var stId = e.target.getAttribute('data-station-id');
+                        var slider = document.getElementById('tv-vol-slider-' + stId);
+                        var targetBadge = document.getElementById('tv-target-vol-badge-' + stId);
+                        var val = Math.max(0, Math.min(100, parseInt(e.target.value || '0', 10)));
+                        if (slider) slider.value = val;
+                        if (targetBadge) targetBadge.textContent = 'Target: ' + val + '/100';
+                    }
+                });
+
+                // Set Volume Direct Numerical Command (SET_VOLUME)
+                document.addEventListener('click', function(e) {
+                    var btn = e.target.closest('.btn-tv-set-volume');
+                    if (!btn || btn.disabled) return;
+
+                    var stationId = btn.getAttribute('data-station-id');
+                    var volumeUrl = btn.getAttribute('data-volume-url');
+                    var numInput = document.getElementById('tv-vol-number-' + stationId);
+                    var targetVol = parseInt(numInput ? numInput.value : '30', 10);
+                    var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
+
+                    btn.disabled = true;
+                    if (execBadge) {
+                        execBadge.className = 'badge badge-warning text-dark';
+                        execBadge.textContent = 'PENDING';
+                    }
+
+                    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                    fetch(volumeUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
+                        },
+                        body: JSON.stringify({
+                            command: 'SET_VOLUME',
+                            target_volume: targetVol
+                        })
+                    })
+                    .then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b }; }); })
+                    .then(function(res) {
+                        if (res.ok && res.body && res.body.success && res.body.data) {
+                            var d = res.body.data;
+                            var volBadge = document.getElementById('tv-vol-badge-' + stationId);
+                            if (volBadge) volBadge.textContent = 'Vol: ' + d.volume + '/100';
+                            var targetBadge = document.getElementById('tv-target-vol-badge-' + stationId);
+                            if (targetBadge) targetBadge.textContent = 'Target: ' + d.volume + '/100';
+                            if (execBadge) {
+                                execBadge.className = 'badge badge-success';
+                                execBadge.textContent = 'SIMULASI (SET ' + d.volume + ')';
+                            }
+                            showFeedbackAlert('success', 'Volume berhasil disetel ke ' + d.volume + '/100 (Simulasi)');
+                        } else {
+                            if (execBadge) {
+                                execBadge.className = 'badge badge-danger';
+                                execBadge.textContent = 'FAILED';
+                            }
+                            var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal menyetel volume.';
+                            showFeedbackAlert('warning', errMsg);
+                        }
+                    })
+                    .catch(function() {
+                        if (execBadge) {
+                            execBadge.className = 'badge badge-danger';
+                            execBadge.textContent = 'FAILED';
+                        }
+                        showFeedbackAlert('danger', 'Gagal menghubungi server untuk menyetel volume.');
+                    })
+                    .finally(function() {
+                        btn.disabled = false;
+                    });
+                });
 
                 // Volume & Mute Commands
                 document.addEventListener('click', function(e) {
@@ -2087,6 +2391,123 @@
                         });
                     }
                 });
+
+                // TV Volume Limit Slider Update
+                var limitSlider = document.getElementById('tv-limit-max-volume');
+                var limitValBadge = document.getElementById('tv-limit-volume-val');
+                if (limitSlider && limitValBadge) {
+                    limitSlider.addEventListener('input', function() {
+                        limitValBadge.textContent = limitSlider.value + '%';
+                    });
+                }
+
+                // Open TV Volume Limit Modal
+                document.addEventListener('click', function(e) {
+                    var btn = e.target.closest('.btn-open-tv-limit-modal');
+                    if (!btn) return;
+
+                    var stationId = btn.getAttribute('data-station-id');
+                    var stationName = btn.getAttribute('data-station-name');
+                    var limitUrl = btn.getAttribute('data-limit-url');
+                    var enabled = btn.getAttribute('data-limit-enabled') === '1';
+                    var maxVol = parseInt(btn.getAttribute('data-max-volume') || '50', 10);
+
+                    var stNameEl = document.getElementById('tv-limit-station-name');
+                    if (stNameEl) stNameEl.textContent = stationName;
+                    var stIdInput = document.getElementById('tv-limit-station-id');
+                    if (stIdInput) stIdInput.value = stationId;
+                    var urlInput = document.getElementById('tv-limit-action-url');
+                    if (urlInput) urlInput.value = limitUrl;
+
+                    var enabledInput = document.getElementById('tv-limit-enabled');
+                    if (enabledInput) enabledInput.checked = enabled;
+
+                    if (limitSlider) limitSlider.value = maxVol;
+                    if (limitValBadge) limitValBadge.textContent = maxVol + '%';
+
+                    var enforceNowInput = document.getElementById('tv-limit-enforce-now');
+                    if (enforceNowInput) enforceNowInput.checked = true;
+
+                    safeShowModal('tvVolumeLimitModal');
+                });
+
+                // Submit TV Volume Limit Form
+                var tvVolumeLimitForm = document.getElementById('tvVolumeLimitForm');
+                if (tvVolumeLimitForm) {
+                    tvVolumeLimitForm.addEventListener('submit', function(e) {
+                        e.preventDefault();
+                        var stationId = document.getElementById('tv-limit-station-id').value;
+                        var actionUrl = document.getElementById('tv-limit-action-url').value;
+                        var enabled = document.getElementById('tv-limit-enabled').checked;
+                        var maxVolume = parseInt(document.getElementById('tv-limit-max-volume').value || '50', 10);
+                        var enforceNow = document.getElementById('tv-limit-enforce-now').checked;
+                        var submitBtn = document.getElementById('btnSubmitTvVolumeLimit');
+
+                        if (!actionUrl) return;
+                        if (submitBtn) {
+                            submitBtn.disabled = true;
+                            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Menyimpan...';
+                        }
+
+                        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                        fetch(actionUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
+                            },
+                            body: JSON.stringify({
+                                enabled: enabled,
+                                max_volume: maxVolume,
+                                enforce_now: enforceNow
+                            })
+                        })
+                        .then(function(r) {
+                            return r.json().then(function(body) {
+                                return { ok: r.ok, status: r.status, body: body };
+                            });
+                        })
+                        .then(function(res) {
+                            if (res.ok && res.body && res.body.success) {
+                                safeHideModal('tvVolumeLimitModal');
+
+                                var limitBadge = document.getElementById('tv-vol-limit-badge-' + stationId);
+                                if (limitBadge) {
+                                    if (enabled) {
+                                        limitBadge.className = 'badge badge-success';
+                                        limitBadge.textContent = 'BATAS: ' + maxVolume + '%';
+                                    } else {
+                                        limitBadge.className = 'badge badge-secondary';
+                                        limitBadge.textContent = 'NONAKTIF';
+                                    }
+                                }
+
+                                // Update open button data attributes
+                                document.querySelectorAll('.btn-open-tv-limit-modal[data-station-id="' + stationId + '"]').forEach(function(b) {
+                                    b.setAttribute('data-limit-enabled', enabled ? '1' : '0');
+                                    b.setAttribute('data-max-volume', String(maxVolume));
+                                });
+
+                                showFeedbackAlert('success', res.body.message || 'Pengaturan batas volume berhasil disimpan.');
+                                pollTvControlPanels();
+                            } else {
+                                var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal menyimpan batas volume.';
+                                showFeedbackAlert('danger', errMsg);
+                            }
+                        })
+                        .catch(function() {
+                            showFeedbackAlert('danger', 'Gagal menghubungi server untuk menyimpan batas volume.');
+                        })
+                        .finally(function() {
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                submitBtn.innerHTML = '<i class="fas fa-save mr-1"></i> Simpan Pengaturan';
+                            }
+                        });
+                    });
+                }
 
                 // Poll TV control status every 2.5 seconds
                 pollTvControlPanels();

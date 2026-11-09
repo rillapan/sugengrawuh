@@ -25,6 +25,7 @@ class AutomationStatusService
             return [
                 'station_id' => $station->id,
                 'station_name' => $station->nama,
+                'station_status' => $station->status,
                 'has_hardware' => false,
                 'hardware_state' => 'NO_HARDWARE',
                 'hardware_badge' => [
@@ -55,7 +56,7 @@ class AutomationStatusService
 
         if ($failedIntent) {
             $currentState = 'COMMAND_FAILED';
-        } elseif ($pendingIntent && $pendingIntent->status === AutomationIntent::STATUS_PROCESSING) {
+        } elseif ($pendingIntent) {
             $currentState = 'COMMAND_PENDING';
         }
 
@@ -75,6 +76,7 @@ class AutomationStatusService
         return [
             'station_id' => $station->id,
             'station_name' => $station->nama,
+            'station_status' => $station->status,
             'has_hardware' => true,
             'hardware_state' => $currentState,
             'hardware_badge' => $badge,
