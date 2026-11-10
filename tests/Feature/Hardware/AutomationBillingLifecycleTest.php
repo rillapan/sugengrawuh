@@ -410,4 +410,29 @@ class AutomationBillingLifecycleTest extends TestCase
         $this->assertEquals(Transaction::BILLING_COMPLETED, $tx->billing_status);
         $this->assertEquals('Tersedia', $tx->device->fresh()->status);
     }
+
+    // 15. HTTP endpoint POST /transaction triggers immediate ON intent dispatch
+    public function test_store_transaction_http_endpoint_triggers_immediate_on_intent_dispatch(): void
+    {
+        $response = $this->actingAs($this->kasir)->post(route('transaction.store'), [
+            'nama' => 'Pelanggan Store Immediate',
+            'tipe_transaksi' => 'prepaid',
+            'device_id' => $this->station->id,
+            'jam_main' => 1,
+            'harga' => 10000,
+            'total' => 10000,
+            'playstation_id' => $this->ps->id,
+            'action' => 'simpan',
+        ]);
+
+        $response->assertRedirect('transaction');
+
+        $intent = AutomationIntent::where('station_id', $this->station->id)
+            ->where('event_type', AutomationIntent::EVENT_BILLING_STARTED)
+            ->first();
+
+        $this->assertNotNull($intent, 'ON intent must exist');
+        $this->assertEquals(AutomationIntent::STATUS_COMPLETED, $intent->status,
+            'ON intent must be immediately dispatched and COMPLETED after store commit');
+    }
 }

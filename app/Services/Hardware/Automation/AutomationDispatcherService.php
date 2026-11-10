@@ -199,7 +199,11 @@ class AutomationDispatcherService
             $statusResult = $driver->getStatus($physicalDevice);
             $state = $statusResult->simulatedState ?: $statusResult->rawResponse;
             if ($physicalDevice->category === PhysicalDevice::CATEGORY_SMART_TV) {
-                $observedOutput = ($state['power_state'] ?? '') === 'on' || ($state['power'] ?? '') === 'ON';
+                if ($intent->desired_state === AutomationIntent::STATE_ON && ($cmdResult->resultCode === 'ACK_WAKEUP' || ($state['power_state'] ?? '') === 'waking')) {
+                    $observedOutput = true;
+                } else {
+                    $observedOutput = ($state['power_state'] ?? '') === 'on' || ($state['power'] ?? '') === 'ON';
+                }
             } else {
                 $observedOutput = isset($state['output']) ? (bool) $state['output'] : (($state['switch'] ?? '') === 'ON');
             }

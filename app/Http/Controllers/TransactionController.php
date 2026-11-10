@@ -665,6 +665,15 @@ class TransactionController extends Controller
             }
 
             \DB::commit();
+
+            // Trigger immediate dispatch of outbox intent so hardware turns ON immediately
+            try {
+                if (app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
+                    app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(5);
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('Immediate automation dispatch after store failed: ' . $e->getMessage());
+            }
         } catch (\Exception $e) {
             \DB::rollBack();
             \Log::error('Transaction Store Error: ' . $e->getMessage());
@@ -1254,6 +1263,9 @@ class TransactionController extends Controller
                     \App\Models\AutomationIntent::STATE_OFF,
                     Carbon::now()
                 );
+
+                // Trigger immediate dispatch so hardware turns OFF immediately
+                app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(5);
             }
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('Failed to record automation intent on manual stop: ' . $e->getMessage(), [
