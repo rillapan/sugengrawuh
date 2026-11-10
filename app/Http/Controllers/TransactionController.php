@@ -1164,7 +1164,10 @@ class TransactionController extends Controller
             abort(403, 'Unauthorized');
         }
 
-        if ($transaction->status_transaksi !== 'berjalan') {
+        $canEnd = $transaction->status_transaksi === 'berjalan'
+            || (Transaction::hasG2Schema() && $transaction->billing_status === Transaction::BILLING_RUNNING);
+
+        if (!$canEnd) {
             return redirect('transaction')->with('gagal', 'Transaksi tidak dapat diakhiri.');
         }
 
@@ -1236,20 +1239,27 @@ class TransactionController extends Controller
         }
 
         // Wire automation OFF intent for manual session stop
-        /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
-        $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
-        if ($intentService->isAutomationEnabled() && $transaction->device) {
-            $station = $transaction->device;
-            $newGen = $intentService->bumpSessionGeneration($station);
-            $transaction->update(['session_generation' => $newGen]);
-            $intentService->cancelPendingOffIntents($transaction);
-            $intentService->recordIntent(
-                $station,
-                $transaction,
-                \App\Models\AutomationIntent::EVENT_BILLING_STOPPED,
-                \App\Models\AutomationIntent::STATE_OFF,
-                Carbon::now()
-            );
+        try {
+            /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+            $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+            if ($intentService->isAutomationEnabled() && $transaction->device) {
+                $station = $transaction->device;
+                $newGen = $intentService->bumpSessionGeneration($station);
+                $transaction->update(['session_generation' => $newGen]);
+                $intentService->cancelPendingOffIntents($transaction);
+                $intentService->recordIntent(
+                    $station,
+                    $transaction,
+                    \App\Models\AutomationIntent::EVENT_BILLING_STOPPED,
+                    \App\Models\AutomationIntent::STATE_OFF,
+                    Carbon::now()
+                );
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Failed to record automation intent on manual stop: ' . $e->getMessage(), [
+                'transaction_id' => $transaction->id_transaksi ?? null,
+                'exception' => $e,
+            ]);
         }
 
         if (TvAlertService::hasTvControlSchema()) {

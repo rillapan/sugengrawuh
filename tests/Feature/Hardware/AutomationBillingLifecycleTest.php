@@ -357,4 +357,57 @@ class AutomationBillingLifecycleTest extends TestCase
             ->exists();
         $this->assertTrue($completed, 'At least one intent must reach COMPLETED status');
     }
+
+    // 13. HTTP endpoint POST /transaction/{id}/end creates OFF intent
+    public function test_end_transaction_http_endpoint_creates_off_intent(): void
+    {
+        $tx = $this->billing->startSession([
+            'device_id' => $this->station->id,
+            'nama' => 'Pelanggan HTTP End',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 1,
+        ], $this->kasir->id);
+
+        $response = $this->actingAs($this->kasir)->post(route('transaction.end', $tx->id_transaksi));
+        $response->assertRedirect(route('transaction.showPayment', $tx->id_transaksi));
+
+        $intent = AutomationIntent::where('station_id', $this->station->id)
+            ->where('event_type', AutomationIntent::EVENT_BILLING_STOPPED)
+            ->where('desired_state', AutomationIntent::STATE_OFF)
+            ->first();
+
+        $this->assertNotNull($intent, 'OFF intent must be created when cashier hits endTransaction HTTP endpoint');
+        $this->assertEquals(AutomationIntent::STATE_OFF, $intent->desired_state);
+    }
+
+    // 14. HTTP endpoint POST /transaction/{id}/end survives intent recording exception
+    public function test_end_transaction_http_endpoint_survives_automation_failure(): void
+    {
+        $tx = $this->billing->startSession([
+            'device_id' => $this->station->id,
+            'nama' => 'Pelanggan Exception Test',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 1,
+        ], $this->kasir->id);
+
+        $mockIntentService = \Mockery::mock(\App\Services\Hardware\Automation\AutomationIntentService::class);
+        $mockIntentService->shouldReceive('isAutomationEnabled')->andReturn(true);
+        $mockIntentService->shouldReceive('bumpSessionGeneration')->andThrow(new \RuntimeException('Hardware DB deadlocked'));
+
+        $this->app->instance(\App\Services\Hardware\Automation\AutomationIntentService::class, $mockIntentService);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('error')
+            ->once()
+            ->withArgs(function ($message, $context) {
+                return str_contains($message, 'Failed to record automation intent on manual stop')
+                    && isset($context['exception']);
+            });
+
+        $response = $this->actingAs($this->kasir)->post(route('transaction.end', $tx->id_transaksi));
+        $response->assertRedirect(route('transaction.showPayment', $tx->id_transaksi));
+
+        $tx->refresh();
+        $this->assertEquals(Transaction::BILLING_COMPLETED, $tx->billing_status);
+        $this->assertEquals('Tersedia', $tx->device->fresh()->status);
+    }
 }
