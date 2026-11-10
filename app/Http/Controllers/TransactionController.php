@@ -225,8 +225,11 @@ class TransactionController extends Controller
 
         // Call DeviceController's status update logic to ensure device statuses are accurate
         try {
+            if (class_exists(\App\Services\BillingService::class)) {
+                app(\App\Services\BillingService::class)->reconcileSessions();
+            }
             app(\App\Http\Controllers\DeviceController::class)->index();
-            \Log::info('Device status update completed successfully');
+            \Log::info('Device status and session reconciliation completed successfully');
         } catch (\Exception $e) {
             \Log::error('Device status update failed: ' . $e->getMessage());
             \Log::error('Error trace: ' . $e->getTraceAsString());
@@ -358,6 +361,9 @@ class TransactionController extends Controller
         // Jika waktu mulai dan waktu selesai sudah ada di database, kembalikan response error
         // Removed notification to allow transactions for available devices
 
+        if ($jam_main_calc && !$request->filled('jam_main')) {
+            $request->merge(['jam_main' => $jam_main_calc]);
+        }
 
         $validatedData = $request->validate([
             'nama' => 'required',
@@ -561,8 +567,21 @@ class TransactionController extends Controller
             }
 
             if (Transaction::hasG2Schema()) {
+                // Reconcile expired sessions so past sessions don't falsely block new bookings
+                if (class_exists(\App\Services\BillingService::class)) {
+                    try {
+                        app(\App\Services\BillingService::class)->reconcileSessions();
+                    } catch (\Throwable $e) {
+                        \Log::warning('Session reconciliation in store() failed: ' . $e->getMessage());
+                    }
+                }
+
                 $activeExisting = Transaction::where('device_id', $targetDevice->id)
                     ->where('billing_status', Transaction::BILLING_RUNNING)
+                    ->where(function ($q) {
+                        $q->whereNull('expires_at')
+                          ->orWhere('expires_at', '>', Carbon::now());
+                    })
                     ->exists();
                 if ($activeExisting) {
                     \DB::rollBack();
@@ -1230,6 +1249,23 @@ class TransactionController extends Controller
         // Update device status to available
         if ($transaction->device) {
             $transaction->device->update(['status' => 'Tersedia']);
+        }
+
+        // Wire automation OFF intent for manual session stop
+        /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+        $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+        if ($intentService->isAutomationEnabled() && $transaction->device) {
+            $station = $transaction->device;
+            $newGen = $intentService->bumpSessionGeneration($station);
+            $transaction->update(['session_generation' => $newGen]);
+            $intentService->cancelPendingOffIntents($transaction);
+            $intentService->recordIntent(
+                $station,
+                $transaction,
+                \App\Models\AutomationIntent::EVENT_BILLING_STOPPED,
+                \App\Models\AutomationIntent::STATE_OFF,
+                Carbon::now()
+            );
         }
 
         if (TvAlertService::hasTvControlSchema()) {
