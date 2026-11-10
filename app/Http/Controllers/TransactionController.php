@@ -225,11 +225,8 @@ class TransactionController extends Controller
 
         // Call DeviceController's status update logic to ensure device statuses are accurate
         try {
-            if (class_exists(\App\Services\BillingService::class)) {
-                app(\App\Services\BillingService::class)->reconcileSessions();
-            }
             app(\App\Http\Controllers\DeviceController::class)->index();
-            \Log::info('Device status and session reconciliation completed successfully');
+            \Log::info('Device status update completed successfully');
         } catch (\Exception $e) {
             \Log::error('Device status update failed: ' . $e->getMessage());
             \Log::error('Error trace: ' . $e->getTraceAsString());
@@ -567,21 +564,8 @@ class TransactionController extends Controller
             }
 
             if (Transaction::hasG2Schema()) {
-                // Reconcile expired sessions so past sessions don't falsely block new bookings
-                if (class_exists(\App\Services\BillingService::class)) {
-                    try {
-                        app(\App\Services\BillingService::class)->reconcileSessions();
-                    } catch (\Throwable $e) {
-                        \Log::warning('Session reconciliation in store() failed: ' . $e->getMessage());
-                    }
-                }
-
                 $activeExisting = Transaction::where('device_id', $targetDevice->id)
                     ->where('billing_status', Transaction::BILLING_RUNNING)
-                    ->where(function ($q) {
-                        $q->whereNull('expires_at')
-                          ->orWhere('expires_at', '>', Carbon::now());
-                    })
                     ->exists();
                 if ($activeExisting) {
                     \DB::rollBack();
