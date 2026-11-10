@@ -21,6 +21,8 @@ class Kernel extends ConsoleKernel
         $schedule->command('billing:tv-alert-worker --once')->everyMinute()->withoutOverlapping();
         // Periodic reconciliation audit
         $schedule->command('billing:reconcile')->everyTenMinutes()->withoutOverlapping();
+        // Dispatch pending AutomationIntents to hardware
+        $schedule->command('billing:automation-worker --once')->everyMinute()->withoutOverlapping();
         // Daily automation pruning of expired intents and audit logs
         $schedule->command('billing:automation-prune')->dailyAt('04:00')->withoutOverlapping();
     }
