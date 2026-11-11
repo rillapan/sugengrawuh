@@ -585,28 +585,79 @@ class SamsungTvDriver implements HardwareDriverInterface
 
         $packet = str_repeat(chr(0xFF), 6) . str_repeat(pack('H*', $cleanMac), 16);
 
+        $udpSent = false;
         $sock = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-        if (!$sock) {
+        if ($sock) {
+            @socket_set_option($sock, SOL_SOCKET, SO_BROADCAST, 1);
+            @socket_sendto($sock, $packet, strlen($packet), 0, '255.255.255.255', 9);
+            @socket_sendto($sock, $packet, strlen($packet), 0, '255.255.255.255', 7);
+
+            if ($ipAddress) {
+                $parts = explode('.', $ipAddress);
+                if (count($parts) === 4) {
+                    $subnetBcast = "{$parts[0]}.{$parts[1]}.{$parts[2]}.255";
+                    @socket_sendto($sock, $packet, strlen($packet), 0, $subnetBcast, 9);
+                    @socket_sendto($sock, $packet, strlen($packet), 0, $subnetBcast, 7);
+                }
+                @socket_sendto($sock, $packet, strlen($packet), 0, $ipAddress, 9);
+            }
+
+            @socket_close($sock);
+            $udpSent = true;
+        }
+
+        $helperSent = $this->forwardWakeOnLanToHostHelper($macAddress, $ipAddress);
+
+        return $udpSent || $helperSent;
+    }
+
+    /**
+     * Forward Wake-on-LAN request to Windows Host WOL Helper when enabled (Docker Desktop NAT bridge).
+     */
+    protected function forwardWakeOnLanToHostHelper(string $macAddress, ?string $ipAddress = null): bool
+    {
+        if (!config('hardware.wol_helper.enabled', false)) {
             return false;
         }
 
-        @socket_set_option($sock, SOL_SOCKET, SO_BROADCAST, 1);
-        @socket_sendto($sock, $packet, strlen($packet), 0, '255.255.255.255', 9);
-        @socket_sendto($sock, $packet, strlen($packet), 0, '255.255.255.255', 7);
-
-        if ($ipAddress) {
-            $parts = explode('.', $ipAddress);
-            if (count($parts) === 4) {
-                $subnetBcast = "{$parts[0]}.{$parts[1]}.{$parts[2]}.255";
-                @socket_sendto($sock, $packet, strlen($packet), 0, $subnetBcast, 9);
-                @socket_sendto($sock, $packet, strlen($packet), 0, $subnetBcast, 7);
-            }
-            @socket_sendto($sock, $packet, strlen($packet), 0, $ipAddress, 9);
+        $url = trim((string) config('hardware.wol_helper.url', ''));
+        if ($url === '') {
+            return false;
         }
 
-        @socket_close($sock);
+        $token = (string) config('hardware.wol_helper.token', '');
+        $timeoutMs = max(200, (int) config('hardware.wol_helper.timeout_ms', 1500));
 
-        return true;
+        $payload = json_encode([
+            'mac_address' => $macAddress,
+            'ip_address' => $ipAddress,
+        ]);
+
+        $headers = [
+            'Content-Type: application/json',
+            'Accept: application/json',
+        ];
+        if ($token !== '') {
+            $headers[] = 'X-WOL-Token: ' . $token;
+        }
+
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => implode("\r\n", $headers) . "\r\n",
+                'content' => $payload,
+                'timeout' => $timeoutMs / 1000.0,
+                'ignore_errors' => true,
+            ],
+        ]);
+
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false) {
+            return false;
+        }
+
+        $decoded = json_decode($response, true);
+        return is_array($decoded) && !empty($decoded['success']);
     }
 
     protected function validateDevice(PhysicalDevice $device): void

@@ -6,6 +6,11 @@
 /vendor
 .env
 .env.backup
+.env.production
+.env.docker*
+/data
+/dist/*.exe
+/offline-bundle/images/*.tar.gz
 .phpunit.result.cache
 docker-compose.override.yml
 Homestead.json

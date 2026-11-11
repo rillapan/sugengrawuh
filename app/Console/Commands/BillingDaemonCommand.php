@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\DB;
 
 class BillingDaemonCommand extends Command
 {
+    public const HEARTBEAT_CACHE_KEY = 'billing:daemon:heartbeat';
+    public const HEARTBEAT_TTL_SECONDS = 15;
+
     /**
      * The name and signature of the console command.
      *
@@ -80,6 +83,16 @@ class BillingDaemonCommand extends Command
             try {
                 $now = Carbon::now();
 
+                try {
+                    \Illuminate\Support\Facades\Cache::put(self::HEARTBEAT_CACHE_KEY, [
+                        'worker_id' => $workerId,
+                        'timestamp' => $now->timestamp,
+                        'updated_at' => $now->toIso8601String(),
+                    ], self::HEARTBEAT_TTL_SECONDS);
+                } catch (\Throwable $cacheErr) {
+                    // Ignore cache write errors so daemon loop never halts
+                }
+
                 // 1. Evaluate expired sessions
                 if (Transaction::hasG2Schema()) {
                     $result = $billingService->evaluateExpiration($now);
@@ -123,6 +136,14 @@ class BillingDaemonCommand extends Command
 
             usleep($intervalMs * 1000);
         } while ($running);
+
+        if (!$once) {
+            try {
+                \Illuminate\Support\Facades\Cache::forget(self::HEARTBEAT_CACHE_KEY);
+            } catch (\Throwable $cacheErr) {
+                // Ignore cache errors on shutdown
+            }
+        }
 
         $this->info("Unified Billing Daemon stopped cleanly.");
         return Command::SUCCESS;

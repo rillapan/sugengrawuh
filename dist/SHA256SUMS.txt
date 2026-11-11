@@ -1,0 +1,1 @@
+609f03803d58c688a27d5a54ec934c34c267c8c3cf89f8aad96a6258f5c8ae5c  dist/SugengRawuh-Setup-v1.0.0.exe

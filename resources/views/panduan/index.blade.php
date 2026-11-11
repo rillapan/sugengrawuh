@@ -221,7 +221,7 @@
             }
         }
     </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ asset('vendor/fontawesome-free/css/all.min.css') }}">
     <header>
         <div class="container">
             <h1><i class="fas fa-gamepad"></i> Panduan Sistem Rental PlayStation</h1>

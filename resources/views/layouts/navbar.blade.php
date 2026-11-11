@@ -78,8 +78,8 @@
         setInterval(updateWIBTime, 1000);
     </script>
     
-    <!-- Add Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600&family=Poppins:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Offline Fonts -->
+    <link href="{{ asset('css/offline-fonts.css') }}" rel="stylesheet">
 
     <!-- Topbar Navbar -->
     <ul class="navbar-nav ml-auto">

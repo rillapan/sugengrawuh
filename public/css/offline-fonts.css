@@ -1,0 +1,47 @@
+/*
+ * Offline Local Font Fallbacks (Sugeng Rawuh Production Deployment)
+ * Replaces external Google Fonts (Nunito, Poppins, Roboto Mono) with local system fonts
+ * so the application renders cleanly with zero external internet dependencies.
+ */
+
+@font-face {
+    font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 200 900;
+    font-display: swap;
+    src: local('Nunito'), local('Segoe UI'), local('Roboto'), local('Helvetica Neue'), local('Arial');
+}
+
+@font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: local('Poppins'), local('Segoe UI'), local('Roboto'), local('Helvetica Neue'), local('Arial');
+}
+
+@font-face {
+    font-family: 'Roboto Mono';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: local('Roboto Mono'), local('Cascadia Mono'), local('Consolas'), local('Courier New');
+}
+
+:root {
+    --font-family-sans-serif: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-family-monospace: "Roboto Mono", "Cascadia Mono", "Consolas", "Courier New", monospace;
+}
+
+body {
+    font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+#wib-time {
+    font-family: "Roboto Mono", "Cascadia Mono", "Consolas", "Courier New", monospace !important;
+}
+
+#wib-date {
+    font-family: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+}
+

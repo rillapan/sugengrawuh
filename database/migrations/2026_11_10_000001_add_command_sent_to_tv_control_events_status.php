@@ -17,7 +17,7 @@ class AddCommandSentToTvControlEventsStatus extends Migration
         $dbName = DB::connection()->getDatabaseName();
         $driver = DB::connection()->getDriverName();
 
-        if (!in_array($dbName, ['kasir_ps_test', 'billing-sugeng-rawuh'], true) && $driver !== 'sqlite') {
+        if (!in_array($dbName, ['kasir_ps_test', 'billing-sugeng-rawuh', 'sugeng_rawuh_pos'], true) && $driver !== 'sqlite') {
             throw new \RuntimeException("SAFETY ABORT: Migration is only authorized on 'kasir_ps_test', 'billing-sugeng-rawuh', or sqlite. Active DB: {$dbName}");
         }
 
@@ -47,7 +47,7 @@ class AddCommandSentToTvControlEventsStatus extends Migration
         $dbName = DB::connection()->getDatabaseName();
         $driver = DB::connection()->getDriverName();
 
-        if (!in_array($dbName, ['kasir_ps_test', 'billing-sugeng-rawuh'], true) && $driver !== 'sqlite') {
+        if (!in_array($dbName, ['kasir_ps_test', 'billing-sugeng-rawuh', 'sugeng_rawuh_pos'], true) && $driver !== 'sqlite') {
             throw new \RuntimeException("SAFETY ABORT: Rollback is only authorized on 'kasir_ps_test', 'billing-sugeng-rawuh', or sqlite. Active DB: {$dbName}");
         }
 

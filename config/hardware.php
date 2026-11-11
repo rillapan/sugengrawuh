@@ -158,4 +158,19 @@ return [
         'rate_limit_ms' => 400,
         'simulator_token' => env('HARDWARE_TV_SIMULATOR_TOKEN', null),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Windows Host Wake-on-LAN Helper Service
+    |--------------------------------------------------------------------------
+    | When running inside Docker Desktop on Windows (WSL2 bridge NAT), UDP broadcast
+    | packets sent from the container do not reach the physical LAN Layer 2 switch.
+    | Enabling this forwards WOL requests to the lightweight host PowerShell helper.
+    */
+    'wol_helper' => [
+        'enabled' => (bool) env('HARDWARE_WOL_HELPER_ENABLED', false),
+        'url' => env('HARDWARE_WOL_HELPER_URL', 'http://host.docker.internal:18009/wol'),
+        'token' => env('HARDWARE_WOL_HELPER_TOKEN', ''),
+        'timeout_ms' => (int) env('HARDWARE_WOL_HELPER_TIMEOUT_MS', 1500),
+    ],
 ];

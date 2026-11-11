@@ -15,7 +15,7 @@ class CreateAutomationIntentsTable extends Migration
     public function up()
     {
         // Explicit safety check: strictly require kasir_ps_test or billing-sugeng-rawuh
-        if (!in_array(DB::connection()->getDatabaseName(), ['kasir_ps_test', 'billing-sugeng-rawuh'], true)) {
+        if (!in_array(DB::connection()->getDatabaseName(), ['kasir_ps_test', 'billing-sugeng-rawuh', 'sugeng_rawuh_pos'], true)) {
             throw new \RuntimeException("SAFETY ABORT: Migration is only authorized on 'kasir_ps_test' or 'billing-sugeng-rawuh'. Active DB: " . DB::connection()->getDatabaseName());
         }
 
@@ -84,7 +84,7 @@ class CreateAutomationIntentsTable extends Migration
      */
     public function down()
     {
-        if (!in_array(DB::connection()->getDatabaseName(), ['kasir_ps_test', 'billing-sugeng-rawuh'], true)) {
+        if (!in_array(DB::connection()->getDatabaseName(), ['kasir_ps_test', 'billing-sugeng-rawuh', 'sugeng_rawuh_pos'], true)) {
             throw new \RuntimeException("SAFETY ABORT: Rollback is only authorized on 'kasir_ps_test' or 'billing-sugeng-rawuh'. Active DB: " . DB::connection()->getDatabaseName());
         }
 

@@ -18,6 +18,8 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
+Route::get('/health', [App\Http\Controllers\Api\HealthCheckController::class, 'index'])->name('api.health');
+
 Route::get('/get-harga', 'App\Http\Controllers\TransactionController@getHarga');
 Route::get('/get-hourly-prices', 'App\Http\Controllers\TransactionController@getHourlyPrices');
 Route::match(['get', 'post'], '/calculate-duration-price', 'App\Http\Controllers\TransactionController@calculateDurationPrice');

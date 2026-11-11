@@ -1,0 +1,208 @@
+name: sugeng_rawuh_pos
+
+x-app-common-env: &app-common-env
+  APP_NAME: ${APP_NAME:-Sugeng Rawuh Billing & POS}
+  APP_ENV: ${APP_ENV:-production}
+  APP_KEY: ${APP_KEY:-}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_URL: ${APP_URL:-http://localhost:8008}
+  TZ: ${TZ:-Asia/Jakarta}
+  LOG_CHANNEL: ${LOG_CHANNEL:-daily}
+  LOG_DEPRECATIONS_CHANNEL: ${LOG_DEPRECATIONS_CHANNEL:-null}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_CONNECTION: ${DB_CONNECTION:-mysql}
+  DB_HOST: ${DB_HOST:-db}
+  DB_PORT: ${DB_PORT:-3306}
+  DB_DATABASE: ${DB_DATABASE:-sugeng_rawuh_pos}
+  DB_USERNAME: ${DB_USERNAME:-sugeng_pos}
+  DB_PASSWORD: ${DB_PASSWORD:-CHANGE_ME_STRONG_DB_PASSWORD}
+  BROADCAST_DRIVER: ${BROADCAST_DRIVER:-log}
+  CACHE_DRIVER: ${CACHE_DRIVER:-file}
+  FILESYSTEM_DRIVER: ${FILESYSTEM_DRIVER:-local}
+  QUEUE_CONNECTION: ${QUEUE_CONNECTION:-sync}
+  SESSION_DRIVER: ${SESSION_DRIVER:-file}
+  SESSION_LIFETIME: ${SESSION_LIFETIME:-480}
+  HARDWARE_DRIVER: ${HARDWARE_DRIVER:-real}
+  HARDWARE_REAL_EXECUTION_ENABLED: ${HARDWARE_REAL_EXECUTION_ENABLED:-false}
+  HARDWARE_REAL_ALLOWED_DEVICES: ${HARDWARE_REAL_ALLOWED_DEVICES:-*}
+  HARDWARE_SIMULATION_ENABLED: ${HARDWARE_SIMULATION_ENABLED:-false}
+  HARDWARE_AUTOMATION_ENABLED: ${HARDWARE_AUTOMATION_ENABLED:-true}
+  HARDWARE_TIMEOUT_MS: ${HARDWARE_TIMEOUT_MS:-3000}
+  HARDWARE_CONNECT_TIMEOUT_MS: ${HARDWARE_CONNECT_TIMEOUT_MS:-3000}
+  HARDWARE_REQUEST_TIMEOUT_MS: ${HARDWARE_REQUEST_TIMEOUT_MS:-5000}
+  HARDWARE_APP_NAME: ${HARDWARE_APP_NAME:-Sugeng Rawuh POS}
+  HARDWARE_SAMSUNG_WS_VERIFY_SSL: ${HARDWARE_SAMSUNG_WS_VERIFY_SSL:-false}
+  CONSOLE_NOTIFICATIONS_ENABLED: ${CONSOLE_NOTIFICATIONS_ENABLED:-true}
+  CONSOLE_NOTIFICATIONS_TRANSPORT: ${CONSOLE_NOTIFICATIONS_TRANSPORT:-http}
+  CONSOLE_REAL_EXECUTION_ENABLED: ${CONSOLE_REAL_EXECUTION_ENABLED:-false}
+  PS3_WEBMAN_PORT: ${PS3_WEBMAN_PORT:-80}
+  PS3_HTTP_CONNECT_TIMEOUT_MS: ${PS3_HTTP_CONNECT_TIMEOUT_MS:-2000}
+  PS3_HTTP_TIMEOUT_MS: ${PS3_HTTP_TIMEOUT_MS:-5000}
+  PS4_NOTIFY_PORT: ${PS4_NOTIFY_PORT:-8080}
+  PS4_NOTIFY_TIMEOUT_MS: ${PS4_NOTIFY_TIMEOUT_MS:-2000}
+  PS4_REAL_PROTOCOL_ENABLED: ${PS4_REAL_PROTOCOL_ENABLED:-false}
+  HARDWARE_WOL_HELPER_ENABLED: ${HARDWARE_WOL_HELPER_ENABLED:-true}
+  HARDWARE_WOL_HELPER_URL: ${HARDWARE_WOL_HELPER_URL:-http://host.docker.internal:18009/wol}
+  HARDWARE_WOL_HELPER_TOKEN: ${HARDWARE_WOL_HELPER_TOKEN:-}
+  HARDWARE_WOL_HELPER_TIMEOUT_MS: ${HARDWARE_WOL_HELPER_TIMEOUT_MS:-1500}
+  BILLING_DAEMON_INTERVAL_MS: ${BILLING_DAEMON_INTERVAL_MS:-1000}
+  BILLING_DAEMON_LEASE_SECONDS: ${BILLING_DAEMON_LEASE_SECONDS:-60}
+
+services:
+  db:
+    image: mysql:8.0
+    platform: linux/amd64
+    container_name: sugeng_rawuh_db
+    restart: unless-stopped
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=256M
+      --max-connections=150
+    env_file:
+      - path: ${SR_ENV_FILE:-.env.production}
+        required: false
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-sugeng_rawuh_pos}
+      MYSQL_USER: ${DB_USERNAME:-sugeng_pos}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-CHANGE_ME_STRONG_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-CHANGE_ME_STRONG_ROOT_PASSWORD}
+      TZ: ${TZ:-Asia/Jakarta}
+    ports:
+      - "127.0.0.1:${DB_LOCAL_PORT:-13306}:3306"
+    volumes:
+      - sr_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      sr_internal:
+        aliases:
+          - db
+          - mysql
+
+  app:
+    image: sugeng-rawuh-app:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    container_name: sugeng_rawuh_app
+    restart: unless-stopped
+    env_file:
+      - path: ${SR_ENV_FILE:-.env.production}
+        required: false
+    environment:
+      <<: *app-common-env
+      CONTAINER_ROLE: app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - sr_storage_data:/var/www/html/storage
+      - ./data/logs:/var/www/html/storage/logs
+      - sr_public_assets:/var/www/html/public-shared
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php /var/www/html/artisan --version > /dev/null && nc -z 127.0.0.1 9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - sr_internal
+
+  web:
+    image: nginx:1.26-alpine
+    platform: linux/amd64
+    container_name: sugeng_rawuh_web
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8008}:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - sr_public_assets:/var/www/html/public:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks:
+      - sr_internal
+
+  daemon:
+    image: sugeng-rawuh-app:1.0.0
+    platform: linux/amd64
+    container_name: sugeng_rawuh_daemon
+    restart: unless-stopped
+    env_file:
+      - path: ${SR_ENV_FILE:-.env.production}
+        required: false
+    environment:
+      <<: *app-common-env
+      CONTAINER_ROLE: daemon
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - sr_storage_data:/var/www/html/storage
+      - ./data/logs:/var/www/html/storage/logs
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'require \"/var/www/html/vendor/autoload.php\"; $$app = require \"/var/www/html/bootstrap/app.php\"; $$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); exit(Illuminate\\Support\\Facades\\Cache::has(\"billing:daemon:heartbeat\") ? 0 : 1);'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - sr_internal
+
+  scheduler:
+    image: sugeng-rawuh-app:1.0.0
+    platform: linux/amd64
+    container_name: sugeng_rawuh_scheduler
+    restart: unless-stopped
+    env_file:
+      - path: ${SR_ENV_FILE:-.env.production}
+        required: false
+    environment:
+      <<: *app-common-env
+      CONTAINER_ROLE: scheduler
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - sr_storage_data:/var/www/html/storage
+      - ./data/logs:/var/www/html/storage/logs
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f \"entrypoint\" > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - sr_internal
+
+volumes:
+  sr_mysql_data:
+  sr_storage_data:
+  sr_public_assets:
+
+networks:
+  sr_internal:
+    driver: bridge
+
