@@ -226,6 +226,7 @@
                             <option value="">Semua Kategori</option>
                             <option value="SMART_TV" {{ request('category') === 'SMART_TV' ? 'selected' : '' }}>Smart TV (Samsung)</option>
                             <option value="SMART_RELAY" {{ request('category') === 'SMART_RELAY' ? 'selected' : '' }}>Smart Relay (Shelly)</option>
+                            <option value="GAME_CONSOLE" {{ request('category') === 'GAME_CONSOLE' ? 'selected' : '' }}>Game Console (PS3 / PS4 HEN)</option>
                         </select>
                     </div>
                     <div class="col-xl-2 col-lg-4 col-md-6 col-12 mb-3 mb-xl-0">
@@ -236,6 +237,8 @@
                             <option value="">Semua Brand</option>
                             <option value="SAMSUNG" {{ request('brand') === 'SAMSUNG' ? 'selected' : '' }}>SAMSUNG</option>
                             <option value="SHELLY" {{ request('brand') === 'SHELLY' ? 'selected' : '' }}>SHELLY</option>
+                            <option value="SONY" {{ request('brand') === 'SONY' ? 'selected' : '' }}>SONY</option>
+                            <option value="PLAYSTATION" {{ request('brand') === 'PLAYSTATION' ? 'selected' : '' }}>PLAYSTATION</option>
                         </select>
                     </div>
                     <div class="col-xl-2 col-lg-4 col-md-6 col-12 mb-3 mb-xl-0">
@@ -301,9 +304,11 @@
                                 </td>
                                 <td class="align-middle">
                                     <div class="d-flex align-items-start">
-                                        <div class="device-avatar mr-2 mt-1 {{ $device->category === 'SMART_TV' ? 'device-avatar-tv' : 'device-avatar-relay' }}">
+                                        <div class="device-avatar mr-2 mt-1 {{ $device->category === 'SMART_TV' ? 'device-avatar-tv' : ($device->category === 'GAME_CONSOLE' ? 'device-avatar-console bg-dark text-warning' : 'device-avatar-relay') }}">
                                             @if($device->category === 'SMART_TV')
                                                 <i class="fas fa-tv"></i>
+                                            @elseif($device->category === 'GAME_CONSOLE')
+                                                <i class="fas fa-gamepad"></i>
                                             @else
                                                 <i class="fas fa-bolt"></i>
                                             @endif
@@ -316,6 +321,10 @@
                                                 @if($device->category === 'SMART_TV')
                                                     <span class="badge badge-primary badge-modern">
                                                         <i class="fas fa-tv mr-1"></i>SAMSUNG SMART_TV
+                                                    </span>
+                                                @elseif($device->category === 'GAME_CONSOLE')
+                                                    <span class="badge badge-dark text-warning badge-modern">
+                                                        <i class="fas fa-gamepad mr-1"></i>{{ $device->brand }} {{ $device->category }}
                                                     </span>
                                                 @else
                                                     <span class="badge badge-info badge-modern">
@@ -501,6 +510,7 @@
                                 <select class="form-control custom-select" id="reg_category" name="category" required>
                                     <option value="SMART_TV">Smart TV (Khusus PlayStation)</option>
                                     <option value="SMART_RELAY">Smart Relay (Khusus Meja Biliar)</option>
+                                    <option value="GAME_CONSOLE">Game Console (PlayStation 3 / 4)</option>
                                 </select>
                                 <div class="invalid-feedback" id="err_reg_category"></div>
                             </div>
@@ -677,10 +687,16 @@ $(document).ready(function() {
 
     // Brand Automatic Sync on Category Change
     $('#reg_category').on('change', function() {
-        if ($(this).val() === 'SMART_TV') {
+        var cat = $(this).val();
+        if (cat === 'SMART_TV') {
             $('#reg_brand').val('SAMSUNG');
-        } else if ($(this).val() === 'SMART_RELAY') {
+            $('#reg_mac_address').prop('required', true);
+        } else if (cat === 'SMART_RELAY') {
             $('#reg_brand').val('SHELLY');
+            $('#reg_mac_address').prop('required', true);
+        } else if (cat === 'GAME_CONSOLE') {
+            $('#reg_brand').val('SONY');
+            $('#reg_mac_address').prop('required', false);
         }
     });
 

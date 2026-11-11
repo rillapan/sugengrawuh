@@ -114,22 +114,26 @@
                         <div class="form-group mb-3">
                             <label class="font-weight-bold small text-gray-700">Pilihan Transport Layer</label>
                             <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                <label class="btn btn-outline-primary active w-50" id="btnModeFake">
-                                    <input type="radio" name="transportMode" id="optFake" value="fake" checked>
+                                <label class="btn btn-outline-primary {{ !$realExecutionEnabled ? 'active' : '' }} w-50" id="btnModeFake">
+                                    <input type="radio" name="transportMode" id="optFake" value="fake" {{ !$realExecutionEnabled ? 'checked' : '' }}>
                                     <i class="fas fa-vial mr-1"></i> Fake Transport
                                 </label>
-                                <label class="btn btn-outline-danger w-50 disabled" id="btnModeReal" title="Physical execution is blocked by Safety Guard until G4-B2">
-                                    <input type="radio" name="transportMode" id="optReal" value="real" disabled>
-                                    <i class="fas fa-lock mr-1"></i> Real Network <small>(Blocked)</small>
+                                <label class="btn btn-outline-success {{ $realExecutionEnabled ? 'active' : 'disabled' }} w-50" id="btnModeReal" title="{{ $realExecutionEnabled ? 'Physical execution enabled' : 'Physical execution is blocked by Safety Guard' }}">
+                                    <input type="radio" name="transportMode" id="optReal" value="real" {{ $realExecutionEnabled ? 'checked' : 'disabled' }}>
+                                    <i class="fas fa-network-wired mr-1"></i> Real Network
                                 </label>
                             </div>
                             <small class="form-text text-muted mt-2">
-                                <em>Real Network terkunci secara otomatis. Seluruh uji software driver dijalankan aman via Fake Transport.</em>
+                                @if($realExecutionEnabled)
+                                    <span class="text-success font-weight-bold"><i class="fas fa-check-circle mr-1"></i>Real Network Aktif. Operasi dikirim ke perangkat fisik nyata di LAN.</span>
+                                @else
+                                    <em>Real Network terkunci secara otomatis. Seluruh uji software driver dijalankan aman via Fake Transport.</em>
+                                @endif
                             </small>
                         </div>
 
                         <!-- Scenario Selector for Fake Transport -->
-                        <div class="form-group mb-3" id="groupFakeScenario">
+                        <div class="form-group mb-3" id="groupFakeScenario" style="{{ $realExecutionEnabled ? 'display: none;' : '' }}">
                             <label for="fakeScenarioSelect" class="font-weight-bold small text-gray-700">Skenario Respons Tiruan (Fake Protocol)</label>
                             <select id="fakeScenarioSelect" class="form-control form-control-sm">
                                 <option value="SUCCESS">SUCCESS — Perangkat Normal & Responsif</option>
@@ -193,7 +197,7 @@
                                 </button>
                             </div>
                             <small class="text-muted d-block mt-1">
-                                <i class="fas fa-info-circle mr-1"></i> Catatan: <code>POWER_ON</code> via WebSocket belum diverifikasi untuk Samsung 50U8500 karena TV menonaktifkan jaringan saat mode standby.
+                                <i class="fas fa-info-circle mr-1"></i> Catatan: <code>POWER_ON</code> pada Samsung Smart TV memerlukan paket <strong>Wake-on-LAN (WOL)</strong> atau verifikasi kapabilitas pada model TV aktif (misal: FE60EF).
                             </small>
                         </div>
 
@@ -385,6 +389,14 @@ $(document).ready(function() {
 
     // Event Listeners
     $('#diagDeviceSelector').on('change', updateSelectedDevice);
+
+    $('input[name="transportMode"]').on('change', function() {
+        if ($(this).val() === 'real') {
+            $('#groupFakeScenario').slideUp();
+        } else {
+            $('#groupFakeScenario').slideDown();
+        }
+    });
 
     $('#btnClearConsole').on('click', function() {
         $('#consoleOutput').text('// Layar dibersihkan.\n// Siap menerima output diagnostik baru...');

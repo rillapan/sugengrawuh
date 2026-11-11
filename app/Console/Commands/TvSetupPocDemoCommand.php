@@ -48,7 +48,10 @@ class TvSetupPocDemoCommand extends Command
 
         $remainingMinutes = max(1, (int) $this->option('minutes'));
 
-        $this->info("=== Menyiapkan Samsung 43FE60 TV Alert & Control PoC Demo (DB: {$activeDb}) ===");
+        $lanHostIp = $tvAlertService->getLanHostIp();
+        $lanBaseUrl = $tvAlertService->getLanBaseUrl();
+
+        $this->info("=== Menyiapkan Samsung 43FE60 TV Alert & Control PoC Demo (DB: {$activeDb}, LAN Host: {$lanHostIp}) ===");
 
         // 1. Ensure Admin user exists
         $admin = User::where('role', 'admin')->first();
@@ -114,6 +117,15 @@ class TvSetupPocDemoCommand extends Command
                 ->all();
 
             if (!empty($duplicateIds)) {
+                if (\Illuminate\Support\Facades\Schema::hasTable('automation_execution_logs')) {
+                    DB::table('automation_execution_logs')->whereIn('station_id', $duplicateIds)->delete();
+                }
+                if (\Illuminate\Support\Facades\Schema::hasTable('automation_intents')) {
+                    DB::table('automation_intents')->whereIn('station_id', $duplicateIds)->delete();
+                }
+                if (\Illuminate\Support\Facades\Schema::hasTable('tv_control_events')) {
+                    DB::table('tv_control_events')->whereIn('station_id', $duplicateIds)->delete();
+                }
                 StationDeviceMapping::whereIn('station_id', $duplicateIds)->delete();
                 Transaction::whereIn('device_id', $duplicateIds)->delete();
                 DB::table('device_playstation')->whereIn('device_id', $duplicateIds)->delete();
@@ -239,8 +251,10 @@ class TvSetupPocDemoCommand extends Command
             $this->info('Direct URLs for 2-Tab Browser & Tizen Studio Testing:');
             $this->line("  1. Panel Kontrol Kasir (/device) : http://127.0.0.1:8000/device");
             $this->line("  2. Simulator Layar 16:9 (/tv-lab): http://127.0.0.1:8000/admin/tv-lab?station_id={$sid}");
-            $this->line("  3. Consumer Poll API             : http://127.0.0.1:8000/api/tv-agent/events?station_id={$sid}&token={$devToken}");
-            $this->line("  4. Tizen Web App Query String    : index.html?station_id={$sid}&token={$devToken}&api_url=http://127.0.0.1:8000");
+            $this->line("  3. Consumer Poll API (Local)     : http://127.0.0.1:8000/api/tv-agent/events?station_id={$sid}&token={$devToken}");
+            $this->line("  4. Consumer Poll API (LAN Direct): {$lanBaseUrl}/api/tv-agent/events?station_id={$sid}&token={$devToken}");
+            $this->line("  5. Tizen Web App Query (Local)   : index.html?station_id={$sid}&token={$devToken}&api_url=http://127.0.0.1:8000");
+            $this->line("  6. Tizen Web App Query (LAN Direct): index.html?station_id={$sid}&token={$devToken}&api_url={$lanBaseUrl}");
         }
 
         return Command::SUCCESS;

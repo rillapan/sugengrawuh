@@ -28,3 +28,11 @@ Route::get('/get-price-groups', 'App\Http\Controllers\TransactionController@getP
 // SR-TV-INTEGRATION-001: Consumer TV Agent Polling & ACK API (Samsung Tizen Web App & TV Lab Simulator)
 Route::get('/tv-agent/events', [App\Http\Controllers\TvAgentController::class, 'pollEvents'])->name('api.tv-agent.events.index');
 Route::post('/tv-agent/events/{event}/ack', [App\Http\Controllers\TvAgentController::class, 'acknowledge'])->name('api.tv-agent.events.ack')->whereNumber('event');
+Route::post('/tv-agent/events/volume-enforcement', [App\Http\Controllers\TvAgentController::class, 'recordVolumeEnforcement'])->name('api.tv-agent.events.volume-enforcement');
+
+// SR-CONSOLE-ALERT-001: PlayStation Console Agent Polling, ACK & Heartbeat API (PS4 GoldHEN Outbound Polling)
+Route::prefix('console-agent/v1')->group(function () {
+    Route::get('/events', [App\Http\Controllers\Api\ConsoleAgentController::class, 'pollEvents'])->name('api.console-agent.events');
+    Route::post('/events/{event}/ack', [App\Http\Controllers\Api\ConsoleAgentController::class, 'acknowledge'])->name('api.console-agent.ack')->whereNumber('event');
+    Route::post('/heartbeat', [App\Http\Controllers\Api\ConsoleAgentController::class, 'heartbeat'])->name('api.console-agent.heartbeat');
+});

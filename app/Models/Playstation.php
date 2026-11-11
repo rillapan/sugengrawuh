@@ -144,7 +144,7 @@ class Playstation extends Model
      */
     public function getAvailableDurationsWithPrices(): array
     {
-        return $this->hourlyPrices()
+        $durations = $this->hourlyPrices()
             ->orderByRaw('COALESCE(duration_seconds, hour * 3600) ASC')
             ->get()
             ->map(function (HourlyPrice $p) {
@@ -160,6 +160,24 @@ class Playstation extends Model
             })
             ->values()
             ->toArray();
+
+        // Fallback: If no custom presets are defined, generate standard 1-5 hour durations from base price
+        if (empty($durations) && (int) ($this->harga ?? 0) > 0) {
+            $base = (int) $this->harga;
+            for ($h = 1; $h <= 5; $h++) {
+                $sec = $h * 3600;
+                $durations[] = [
+                    'id' => null,
+                    'duration_seconds' => $sec,
+                    'formatted' => HourlyPrice::formatSeconds($sec),
+                    'human' => $h . ' jam',
+                    'hours' => $h,
+                    'price' => $base * $h,
+                ];
+            }
+        }
+
+        return $durations;
     }
 
     /**
@@ -183,6 +201,14 @@ class Playstation extends Model
             } else {
                 // For non-integer hour presets (e.g. 1800s / 30 mins)
                 $prices[HourlyPrice::formatSeconds($sec)] = (int) $p->price;
+            }
+        }
+
+        // Fallback: If no custom presets are defined, generate standard 1-5 hour prices from base price
+        if (empty($prices) && (int) ($this->harga ?? 0) > 0) {
+            $base = (int) $this->harga;
+            for ($h = 1; $h <= 5; $h++) {
+                $prices[$h] = $base * $h;
             }
         }
 

@@ -14,6 +14,35 @@
             </div>
             <!-- Card Body -->
             <div class="card-body p-3">
+                @if (session('gagal'))
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="fas fa-exclamation-circle mr-1"></i> {{ session('gagal') }}
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                @endif
+                @if (session('error'))
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="fas fa-exclamation-circle mr-1"></i> {{ session('error') }}
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                @endif
+                @if ($errors->any())
+                    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                        <i class="fas fa-exclamation-triangle mr-1"></i> <strong>Form belum lengkap / tidak valid:</strong>
+                        <ul class="mb-0 mt-1 pl-3">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                @endif
                 <form method="POST" action="{{ route('transaction.store') }}" onsubmit="return validateTransactionForm()">
                     @csrf
                     <input type="hidden" name="transaksi" value="transaksi">
@@ -587,6 +616,22 @@
             const selectedPlaystationId = playstationSelect ? playstationSelect.value : null;
             if (selectedPlaystationId) {
                 params.playstation_id = selectedPlaystationId;
+            } else {
+                // Check if device requires selecting a playstation type first
+                const deviceSelect = document.getElementById('device_id');
+                const selectedOption = deviceSelect ? deviceSelect.options[deviceSelect.selectedIndex] : null;
+                const psData = selectedOption ? selectedOption.getAttribute('data-playstations') : null;
+                if (psData) {
+                    try {
+                        const parsed = JSON.parse(psData);
+                        if (Array.isArray(parsed) && parsed.length > 1) {
+                            harga.value = '';
+                            totalField.value = '';
+                            jamMainSelect.innerHTML = '<option value="">Pilih jenis perangkat terlebih dahulu</option>';
+                            return;
+                        }
+                    } catch (e) {}
+                }
             }
 
             // Get base price first
@@ -1205,6 +1250,10 @@
                     // Clear price until user selects a playstation type
                     document.getElementById('harga').value = '';
                     document.getElementById('total_ps').value = '';
+                    const jamMainSelect = document.getElementById('jam_main_select');
+                    if (jamMainSelect) {
+                        jamMainSelect.innerHTML = '<option value="">Pilih jenis perangkat terlebih dahulu</option>';
+                    }
                 } else if (playstations && playstations.length === 1) {
                     // Only one playstation, hide selection and use it directly
                     playstationTypeRow.style.display = 'none';

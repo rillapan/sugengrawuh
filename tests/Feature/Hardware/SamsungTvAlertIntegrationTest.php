@@ -743,4 +743,178 @@ class SamsungTvAlertIntegrationTest extends TestCase
         $this->assertFalse((bool) config('hardware.real_execution_enabled'));
         $this->assertSame('mock', config('hardware.driver'));
     }
+
+    /**
+     * Scenario 17: Admin can send explicit MUTE and UNMUTE audio commands.
+     */
+    public function test_admin_can_send_explicit_mute_and_unmute_commands(): void
+    {
+        $this->startPrepaidSession($this->ps01, 1);
+
+        // 1. Send explicit MUTE
+        $muteRes = $this->actingAs($this->admin)->postJson(
+            route('admin.stations.tv-volume.store', ['station' => $this->ps01->id]),
+            ['command' => 'MUTE']
+        );
+
+        $muteRes->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.command', 'MUTE')
+            ->assertJsonPath('data.muted', true)
+            ->assertJsonPath('data.simulated_muted', true);
+
+        $muteEvent = TvAlertEvent::where('station_id', $this->ps01->id)
+            ->where('command', 'MUTE')
+            ->first();
+        $this->assertNotNull($muteEvent);
+        $this->assertTrue($muteEvent->simulated_muted);
+
+        // 2. Send explicit UNMUTE
+        $unmuteRes = $this->actingAs($this->admin)->postJson(
+            route('admin.stations.tv-volume.store', ['station' => $this->ps01->id]),
+            ['command' => 'UNMUTE']
+        );
+
+        $unmuteRes->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.command', 'UNMUTE')
+            ->assertJsonPath('data.muted', false)
+            ->assertJsonPath('data.simulated_muted', false);
+
+        $unmuteEvent = TvAlertEvent::where('station_id', $this->ps01->id)
+            ->where('command', 'UNMUTE')
+            ->first();
+        $this->assertNotNull($unmuteEvent);
+        $this->assertFalse($unmuteEvent->simulated_muted);
+    }
+
+    /**
+     * Scenario 18: Consumer ACK lifecycle statuses (COMMAND_RECEIVED, STATE_VERIFIED, UNSUPPORTED, FAILED).
+     */
+    public function test_consumer_ack_lifecycle_statuses(): void
+    {
+        $this->startPrepaidSession($this->ps01, 1);
+        $devToken = 'dev_tv_station_' . $this->ps01->id;
+
+        // 1. Create alert and ACK with STATE_VERIFIED
+        $resAlert = $this->actingAs($this->admin)->postJson(
+            route('admin.stations.tv-alerts.store', ['station' => $this->ps01->id]),
+            ['preset' => 'REMAINING_10_MIN']
+        );
+        $alertId = $resAlert->json('data.event_id');
+
+        $ackRes = $this->postJson(
+            route('api.tv-agent.events.ack', ['event' => $alertId]),
+            [
+                'station_id' => $this->ps01->id,
+                'token' => $devToken,
+                'execution_status' => 'STATE_VERIFIED',
+                'real_volume' => 35,
+                'real_muted' => false,
+            ]
+        );
+
+        $ackRes->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.execution_status', 'STATE_VERIFIED')
+            ->assertJsonPath('data.physical_display_verified', true)
+            ->assertJsonPath('data.real_volume', 35)
+            ->assertJsonPath('data.real_muted', false);
+
+        $event = TvAlertEvent::find($alertId);
+        $this->assertSame('STATE_VERIFIED', $event->execution_status);
+        $this->assertSame(35, $event->real_volume);
+        $this->assertFalse($event->real_muted);
+
+        // Status endpoint should report physical_display_verified = true
+        $statusRes = $this->actingAs($this->admin)->getJson(
+            route('admin.stations.tv-control.status', ['station' => $this->ps01->id])
+        );
+        $statusRes->assertStatus(200)
+            ->assertJsonPath('data.physical_display_verified', true);
+
+        // 2. Create second alert and ACK with UNSUPPORTED
+        $resAlert2 = $this->actingAs($this->admin)->postJson(
+            route('admin.stations.tv-alerts.store', ['station' => $this->ps01->id]),
+            ['preset' => 'LOWER_VOLUME']
+        );
+        $alert2Id = $resAlert2->json('data.event_id');
+
+        $ack2Res = $this->postJson(
+            route('api.tv-agent.events.ack', ['event' => $alert2Id]),
+            [
+                'station_id' => $this->ps01->id,
+                'token' => $devToken,
+                'execution_status' => 'UNSUPPORTED',
+            ]
+        );
+        $ack2Res->assertStatus(200)
+            ->assertJsonPath('data.execution_status', 'UNSUPPORTED')
+            ->assertJsonPath('data.result_code', 'UNSUPPORTED_ON_TARGET');
+
+        $event2 = TvAlertEvent::find($alert2Id);
+        $this->assertSame('UNSUPPORTED_ON_TARGET', $event2->result_code);
+
+        // 3. Create third alert and ACK with FAILED and hardware error
+        $resAlert3 = $this->actingAs($this->admin)->postJson(
+            route('admin.stations.tv-alerts.store', ['station' => $this->ps01->id]),
+            ['preset' => 'CONTACT_CASHIER']
+        );
+        $alert3Id = $resAlert3->json('data.event_id');
+
+        $ack3Res = $this->postJson(
+            route('api.tv-agent.events.ack', ['event' => $alert3Id]),
+            [
+                'station_id' => $this->ps01->id,
+                'token' => $devToken,
+                'execution_status' => 'FAILED',
+                'hardware_error_code' => 'TIZEN_RENDER_ERROR',
+                'hardware_error_message' => 'WebAudio context blocked by autoplay policy',
+            ]
+        );
+        $ack3Res->assertStatus(200)
+            ->assertJsonPath('data.status', 'FAILED')
+            ->assertJsonPath('data.execution_status', 'FAILED')
+            ->assertJsonPath('data.hardware_error_code', 'TIZEN_RENDER_ERROR')
+            ->assertJsonPath('data.hardware_error_message', 'WebAudio context blocked by autoplay policy');
+
+        $event3 = TvAlertEvent::find($alert3Id);
+        $this->assertSame(TvAlertEvent::STATUS_FAILED, $event3->status);
+        $this->assertSame('TIZEN_RENDER_ERROR', $event3->hardware_error_code);
+    }
+
+    /**
+     * Scenario 19: LAN Host IP configuration and exposure in consumer_config and setup demo command.
+     */
+    public function test_lan_host_ip_configuration_and_exposure(): void
+    {
+        $this->startPrepaidSession($this->ps01, 1);
+
+        // 1. Default LAN host IP in status response
+        $statusRes = $this->actingAs($this->admin)->getJson(
+            route('admin.stations.tv-control.status', ['station' => $this->ps01->id])
+        );
+
+        $statusRes->assertStatus(200)
+            ->assertJsonPath('data.consumer_config.lan_host_ip', '192.168.200.240');
+
+        $this->assertStringContainsString('http://192.168.200.240:', $statusRes->json('data.consumer_config.lan_api_url'));
+        $this->assertStringContainsString('/api/tv-agent/events?station_id=' . $this->ps01->id . '&token=dev_tv_station_' . $this->ps01->id, $statusRes->json('data.consumer_config.lan_api_url'));
+
+        // 2. Custom LAN IP via TV_AGENT_HOST_IP env
+        putenv('TV_AGENT_HOST_IP=192.168.1.50');
+        $statusResCustom = $this->actingAs($this->admin)->getJson(
+            route('admin.stations.tv-control.status', ['station' => $this->ps01->id])
+        );
+        $statusResCustom->assertStatus(200)
+            ->assertJsonPath('data.consumer_config.lan_host_ip', '192.168.1.50');
+
+        putenv('TV_AGENT_HOST_IP'); // cleanup
+
+        // 3. Demo setup command includes LAN URL
+        $exitCode = \Illuminate\Support\Facades\Artisan::call('tv:setup-poc-demo');
+        $this->assertSame(0, $exitCode);
+        $output = \Illuminate\Support\Facades\Artisan::output();
+        $this->assertStringContainsString('192.168.200.240', $output);
+    }
 }

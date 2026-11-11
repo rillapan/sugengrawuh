@@ -84,6 +84,24 @@ class Device extends Model
     }
 
     /**
+     * Active Game Console (PS3/PS4 HEN) mapping.
+     */
+    public function activeGameConsole()
+    {
+        return $this->hasOne(StationDeviceMapping::class, 'station_id')
+            ->where('mapping_status', StationDeviceMapping::STATUS_ACTIVE)
+            ->where('mapping_role', StationDeviceMapping::ROLE_GAME_CONSOLE);
+    }
+
+    /**
+     * TV Volume enforcement logs recorded for this station.
+     */
+    public function volumeEnforcementLogs()
+    {
+        return $this->hasMany(TvVolumeEnforcementLog::class, 'station_id');
+    }
+
+    /**
      * Get verified station category (PLAYSTATION vs BILLIARD).
      * Returns null if ambiguous, empty, or unrecognized.
      *
@@ -114,6 +132,7 @@ class Device extends Model
     protected $casts = [
         'session_generation' => 'integer',
         'last_hardware_verified_at' => 'datetime',
+        'last_manual_power_at' => 'datetime',
     ];
 
     public function automationIntents()

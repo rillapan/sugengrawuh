@@ -49,14 +49,17 @@ class CreateTvControlEventsTable extends Migration
                 $table->string('idempotency_key', 160)->unique();
                 $table->enum('status', [
                     'PENDING',
+                    'COMMAND_SENT',
                     'SENT_TO_SIMULATOR',
                     'DELIVERED_TO_APP',
                     'ACKED_BY_SIMULATOR',
+                    'ACCEPTED',
                     'EXPIRED',
                     'CANCELLED',
                     'STALE',
                     'FAILED',
-                    'REJECTED'
+                    'REJECTED',
+                    'UNVERIFIED'
                 ])->default('PENDING');
 
                 $table->string('result_code', 50)->nullable();

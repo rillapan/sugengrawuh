@@ -92,11 +92,15 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
             $protocol = $isSecure ? 'ssl' : 'tcp';
             $timeoutSeconds = $timeoutMs / 1000.0;
 
+            // Samsung TVs use self-signed certificates on port 8002.
+            // verify_peer defaults to false for LAN deployments without a CA chain.
+            // Set HARDWARE_SAMSUNG_WS_VERIFY_SSL=true to enforce strict certificate checking.
+            $verifySsl = (bool) config('hardware.samsung_ws_verify_ssl', false);
             $contextOptions = [
                 'ssl' => [
-                    'verify_peer' => true,
-                    'verify_peer_name' => true,
-                    'allow_self_signed' => false,
+                    'verify_peer' => $verifySsl,
+                    'verify_peer_name' => $verifySsl,
+                    'allow_self_signed' => !$verifySsl,
                     'SNI_enabled' => true,
                 ],
             ];
@@ -140,8 +144,7 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
                 "Upgrade: websocket\r\n" .
                 "Connection: Upgrade\r\n" .
                 "Sec-WebSocket-Key: {$key}\r\n" .
-                "Sec-WebSocket-Version: 13\r\n" .
-                "Origin: http://localhost\r\n\r\n";
+                "Sec-WebSocket-Version: 13\r\n\r\n";
 
             fwrite($this->socket, $headers);
 
@@ -184,37 +187,49 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
 
             $this->connected = true;
 
-            // Read initial message frame (e.g. ms.channel.connect event with pairing token)
-            $frame = $this->readFrame();
-            if ($frame !== null && isset($frame['event'])) {
-                if ($frame['event'] === 'ms.channel.connect') {
-                    $receivedToken = $frame['data']['token'] ?? null;
-                    if ($receivedToken) {
-                        $this->lastToken = (string) $receivedToken;
+            // Read message frames — wait for ms.channel.connect or ms.channel.unauthorized.
+            // When pairing (no token), allow up to 30s for the user to press 'Allow' on TV remote.
+            // When executing operational commands with a token, cap at 5s to avoid blocking callers.
+            $startTime = microtime(true);
+            $maxWaitSeconds = empty($token)
+                ? max(1.0, min(30.0, (float) $timeoutSeconds))
+                : max(1.0, min(5.0, (float) $timeoutSeconds));
+            $frame = null;
+
+            while ((microtime(true) - $startTime) < $maxWaitSeconds) {
+                $frame = $this->readFrame();
+                if ($frame !== null && isset($frame['event'])) {
+                    if ($frame['event'] === 'ms.channel.connect') {
+                        $receivedToken = $frame['data']['token'] ?? null;
+                        if ($receivedToken) {
+                            $this->lastToken = (string) $receivedToken;
+                        }
+                        return [
+                            'success' => true,
+                            'status' => 'PAIRED',
+                            'token' => $this->lastToken,
+                            'message' => 'WebSocket terhubung dan channel pairing aktif',
+                            'event' => $frame['event'],
+                        ];
                     }
-                    return [
-                        'success' => true,
-                        'status' => 'PAIRED',
-                        'token' => $this->lastToken,
-                        'message' => 'WebSocket terhubung dan channel pairing aktif',
-                        'event' => $frame['event'],
-                    ];
+
+                    if ($frame['event'] === 'ms.channel.unauthorized') {
+                        return [
+                            'success' => false,
+                            'status' => 'AUTH_REJECTED',
+                            'token' => null,
+                            'message' => 'Otorisasi pairing ditolak pada layar TV',
+                            'event' => $frame['event'],
+                        ];
+                    }
                 }
 
-                if ($frame['event'] === 'ms.channel.unauthorized') {
-                    return [
-                        'success' => false,
-                        'status' => 'AUTH_REJECTED',
-                        'token' => null,
-                        'message' => 'Otorisasi pairing ditolak pada layar TV',
-                        'event' => $frame['event'],
-                    ];
-                }
+                usleep(150000); // 150ms interval between read checks
             }
 
             return [
                 'success' => true,
-                'status' => 'CONNECTED',
+                'status' => !empty($this->lastToken) ? 'PAIRED' : 'CONNECTED',
                 'token' => $this->lastToken,
                 'message' => 'WebSocket terhubung ke Samsung Remote Channel',
                 'event' => $frame['event'] ?? 'connected',

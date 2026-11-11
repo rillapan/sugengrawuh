@@ -8,10 +8,20 @@ use App\Models\PhysicalDevice;
 use App\Services\Hardware\Contracts\HardwareDriverInterface;
 use App\Services\Hardware\Drivers\MockSamsungTvDriver;
 use App\Services\Hardware\Drivers\MockShellyRelayDriver;
+use App\Services\Hardware\Drivers\Ps3HenNotificationDriver;
+use App\Services\Hardware\Drivers\Ps3WebmanDriver;
+use App\Services\Hardware\Drivers\Ps4GoldHenDriver;
+use App\Services\Hardware\Drivers\Ps4HenNotificationDriver;
 use App\Services\Hardware\Drivers\SamsungTvDriver;
 use App\Services\Hardware\Drivers\ShellyRelayDriver;
 use App\Services\Hardware\Security\HardwareSafetyGuard;
 use App\Services\Hardware\Simulation\HardwareSimulationManager;
+use App\Services\Hardware\Transports\GoldHenHttpNotificationTransport;
+use App\Services\Hardware\Transports\MockPs3HenTransport;
+use App\Services\Hardware\Transports\MockPs4HenTransport;
+use App\Services\Hardware\Transports\Ps3HenHttpTransport;
+use App\Services\Hardware\Transports\Ps3TransportInterface;
+use App\Services\Hardware\Transports\Ps4TransportInterface;
 use App\Services\Hardware\Transports\SamsungTransportInterface;
 use App\Services\Hardware\Transports\SamsungWebSocketTransport;
 use App\Services\Hardware\Transports\ShellyHttpRpcTransport;
@@ -22,6 +32,8 @@ class HardwareDriverManager
     protected HardwareSimulationManager $simulationManager;
     protected ?SamsungTransportInterface $samsungTransport = null;
     protected ?ShellyTransportInterface $shellyTransport = null;
+    protected ?Ps3TransportInterface $ps3Transport = null;
+    protected ?Ps4TransportInterface $ps4Transport = null;
     protected ?DeviceStatusManagementService $statusService = null;
     protected bool $bypassSafetyGuardForTesting = false;
 
@@ -29,12 +41,16 @@ class HardwareDriverManager
         HardwareSimulationManager $simulationManager,
         ?SamsungTransportInterface $samsungTransport = null,
         ?ShellyTransportInterface $shellyTransport = null,
-        ?DeviceStatusManagementService $statusService = null
+        ?DeviceStatusManagementService $statusService = null,
+        ?Ps3TransportInterface $ps3Transport = null,
+        ?Ps4TransportInterface $ps4Transport = null
     ) {
         $this->simulationManager = $simulationManager;
         $this->samsungTransport = $samsungTransport;
         $this->shellyTransport = $shellyTransport;
         $this->statusService = $statusService ?? new DeviceStatusManagementService();
+        $this->ps3Transport = $ps3Transport;
+        $this->ps4Transport = $ps4Transport;
     }
 
     public function getSimulationManager(): HardwareSimulationManager
@@ -51,6 +67,18 @@ class HardwareDriverManager
     public function setShellyTransport(ShellyTransportInterface $transport): self
     {
         $this->shellyTransport = $transport;
+        return $this;
+    }
+
+    public function setPs3Transport(Ps3TransportInterface $transport): self
+    {
+        $this->ps3Transport = $transport;
+        return $this;
+    }
+
+    public function setPs4Transport(Ps4TransportInterface $transport): self
+    {
+        $this->ps4Transport = $transport;
         return $this;
     }
 
@@ -87,8 +115,19 @@ class HardwareDriverManager
                 return new MockShellyRelayDriver($this->simulationManager);
             }
 
+            if ($device->category === PhysicalDevice::CATEGORY_GAME_CONSOLE) {
+                $modelUpper = strtoupper((string) ($device->driver_type ?: $device->model));
+                if (strpos($modelUpper, 'PS3') !== false || strpos($modelUpper, 'WEBMAN') !== false) {
+                    $transport = $this->ps3Transport ?? new MockPs3HenTransport();
+                    return new Ps3WebmanDriver($transport, $this->statusService, false);
+                }
+
+                $transport = $this->ps4Transport ?? new MockPs4HenTransport();
+                return new Ps4GoldHenDriver($transport, $this->statusService, false);
+            }
+
             throw HardwareSimulationException::incompatibleDevice(
-                'SMART_TV (SAMSUNG) atau SMART_RELAY (SHELLY)',
+                'SMART_TV (SAMSUNG), SMART_RELAY (SHELLY), atau GAME_CONSOLE (SONY/PLAYSTATION)',
                 "{$device->category} ({$device->brand})"
             );
         }
@@ -112,8 +151,19 @@ class HardwareDriverManager
                 return new ShellyRelayDriver($transport, $this->statusService, $isRealVerified);
             }
 
+            if ($device->category === PhysicalDevice::CATEGORY_GAME_CONSOLE) {
+                $modelUpper = strtoupper((string) ($device->driver_type ?: $device->model));
+                if (strpos($modelUpper, 'PS3') !== false || strpos($modelUpper, 'WEBMAN') !== false) {
+                    $transport = $this->ps3Transport ?? new Ps3HenHttpTransport();
+                    return new Ps3WebmanDriver($transport, $this->statusService, $isRealVerified);
+                }
+
+                $transport = $this->ps4Transport ?? new GoldHenHttpNotificationTransport();
+                return new Ps4GoldHenDriver($transport, $this->statusService, $isRealVerified);
+            }
+
             throw HardwareSimulationException::incompatibleDevice(
-                'SMART_TV (SAMSUNG) atau SMART_RELAY (SHELLY)',
+                'SMART_TV (SAMSUNG), SMART_RELAY (SHELLY), atau GAME_CONSOLE (SONY/PLAYSTATION)',
                 "{$device->category} ({$device->brand})"
             );
         }

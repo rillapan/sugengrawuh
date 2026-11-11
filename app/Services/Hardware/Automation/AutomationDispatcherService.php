@@ -120,7 +120,11 @@ class AutomationDispatcherService
         }
 
         // 2. Capability Policy Validation
-        $physicalDevice = $intent->physicalDevice ?? ($station ? ($station->activeLightRelay()->first()?->physicalDevice ?? $station->activeDisplayTv()->first()?->physicalDevice) : null);
+        $physicalDevice = $intent->physicalDevice ?? ($station ? (
+            $station->activeLightRelay()->first()?->physicalDevice
+            ?? $station->activeDisplayTv()->first()?->physicalDevice
+            ?? $station->activeGameConsole()->first()?->physicalDevice
+        ) : null);
         $capability = $this->capabilityPolicy->isCommandAllowed($physicalDevice, $intent->desired_state);
 
         if (!$capability['allowed']) {
@@ -134,9 +138,12 @@ class AutomationDispatcherService
 
         // 3. Category-aware command translation
         $command = match([$physicalDevice->category, $intent->desired_state]) {
-            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_ON]  => 'POWER_ON',
-            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_OFF] => 'STANDBY',
-            [PhysicalDevice::CATEGORY_SMART_RELAY, AutomationIntent::STATE_ON] => 'SWITCH_ON',
+            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_ON]      => 'POWER_ON',
+            [PhysicalDevice::CATEGORY_SMART_TV, AutomationIntent::STATE_OFF]     => 'STANDBY',
+            [PhysicalDevice::CATEGORY_SMART_RELAY, AutomationIntent::STATE_ON]   => 'SWITCH_ON',
+            [PhysicalDevice::CATEGORY_SMART_RELAY, AutomationIntent::STATE_OFF]  => 'SWITCH_OFF',
+            [PhysicalDevice::CATEGORY_GAME_CONSOLE, AutomationIntent::STATE_ON]  => 'SHOW_NOTIFICATION',
+            [PhysicalDevice::CATEGORY_GAME_CONSOLE, AutomationIntent::STATE_OFF] => 'SHOW_NOTIFICATION',
             default => 'SWITCH_OFF',
         };
 
@@ -179,8 +186,16 @@ class AutomationDispatcherService
         // 6. Driver Dispatch
         $startTime = microtime(true);
 
+        $cmdPayload = ['channel' => $intent->target_channel];
+        if ($physicalDevice->category === PhysicalDevice::CATEGORY_GAME_CONSOLE) {
+            $cmdPayload['title'] = $intent->desired_state === AutomationIntent::STATE_ON ? 'Mulai Sesi' : 'Sesi Selesai';
+            $cmdPayload['message'] = $intent->desired_state === AutomationIntent::STATE_ON
+                ? 'Sesi dimulai. Selamat bermain!'
+                : 'Waktu bermain selesai. Terima kasih!';
+        }
+
         try {
-            $cmdResult = $driver->sendCommand($physicalDevice, $command, ['channel' => $intent->target_channel]);
+            $cmdResult = $driver->sendCommand($physicalDevice, $command, $cmdPayload);
 
             if (!$cmdResult->success) {
                 $errorCat = $cmdResult->resultCode ?: 'TIMEOUT';

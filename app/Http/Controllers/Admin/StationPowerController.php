@@ -56,6 +56,7 @@ class StationPowerController extends Controller
             'INVALID_STATE', 'INVALID_MAPPING', 'DEVICE_INACTIVE', 'SAFETY_BLOCKED' => 422,
             'DEVICE_LOCKED' => 423,
             'UNSUPPORTED_CAPABILITY' => 400,
+            'AUTH_REQUIRED', 'AUTH_REJECTED' => 422,
             default => 500,
         };
 

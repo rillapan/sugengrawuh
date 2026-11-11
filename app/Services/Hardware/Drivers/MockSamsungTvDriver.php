@@ -19,6 +19,7 @@ class MockSamsungTvDriver implements HardwareDriverInterface
     public const CMD_MUTE_TOGGLE = 'MUTE_TOGGLE';
     public const CMD_VOLUME_UP = 'VOLUME_UP';
     public const CMD_VOLUME_DOWN = 'VOLUME_DOWN';
+    public const CMD_SET_VOLUME = 'SET_VOLUME';
     public const CMD_SHOW_ALERT = 'SHOW_ALERT';
     public const CMD_GET_STATUS = 'GET_STATUS';
 
@@ -30,6 +31,7 @@ class MockSamsungTvDriver implements HardwareDriverInterface
         self::CMD_MUTE_TOGGLE,
         self::CMD_VOLUME_UP,
         self::CMD_VOLUME_DOWN,
+        self::CMD_SET_VOLUME,
         self::CMD_SHOW_ALERT,
         self::CMD_GET_STATUS,
     ];
@@ -232,6 +234,11 @@ class MockSamsungTvDriver implements HardwareDriverInterface
                 $currentVol = (int) ($state['volume'] ?? config('hardware.tv_control.default_volume', 30));
                 $state['volume'] = min(100, $currentVol + $step);
                 $message = "Volume simulasi Samsung Smart TV dinaikkan menjadi {$state['volume']}/100 (Simulasi).";
+                break;
+            case self::CMD_SET_VOLUME:
+                $targetVol = isset($payload['target_volume']) ? (int) $payload['target_volume'] : (isset($payload['volume']) ? (int) $payload['volume'] : 30);
+                $state['volume'] = max(0, min(100, $targetVol));
+                $message = "Volume simulasi Samsung Smart TV disetel menjadi {$state['volume']}/100 (Simulasi).";
                 break;
             case self::CMD_SHOW_ALERT:
                 $alertTitle = (string) ($payload['title'] ?? 'PERINGATAN WAKTU BERMAIN');

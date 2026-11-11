@@ -29,7 +29,8 @@ class StationMappingService
         $macAddress = $data['mac_address'] ?? null;
         $ipAddress = $data['ip_address'] ?? null;
 
-        if (!$category || !$brand || !$macAddress || !$ipAddress) {
+        $isConsole = ($category === PhysicalDevice::CATEGORY_GAME_CONSOLE);
+        if (!$category || !$brand || (!$macAddress && !$isConsole) || !$ipAddress) {
             throw StationMappingException::invalidData("Data hardware tidak lengkap. Field name, category, brand, mac_address, dan ip_address wajib diisi.");
         }
 
@@ -39,12 +40,15 @@ class StationMappingService
         // Validate IP address RFC 1918
         PhysicalDevice::validateIpAddress($ipAddress);
 
-        // Normalize MAC
-        $normalizedMac = PhysicalDevice::normalizeMacAddress($macAddress);
+        $normalizedMac = null;
+        if (!empty($macAddress)) {
+            // Normalize MAC
+            $normalizedMac = PhysicalDevice::normalizeMacAddress($macAddress);
 
-        // Check duplicate MAC
-        if (PhysicalDevice::where('mac_address', $normalizedMac)->exists()) {
-            throw StationMappingException::duplicateMac($normalizedMac);
+            // Check duplicate MAC
+            if (PhysicalDevice::where('mac_address', $normalizedMac)->exists()) {
+                throw StationMappingException::duplicateMac($normalizedMac);
+            }
         }
 
         // Check IP conflict against other active devices
@@ -55,6 +59,19 @@ class StationMappingService
             throw StationMappingException::ipConflict($ipAddress, $ipConflict->name);
         }
 
+        $defaultCapabilities = match (true) {
+            $category === PhysicalDevice::CATEGORY_SMART_RELAY && $brand === PhysicalDevice::BRAND_SHELLY => [
+                'SWITCH_ON', 'SWITCH_OFF', 'GET_STATUS'
+            ],
+            $category === PhysicalDevice::CATEGORY_SMART_TV && $brand === PhysicalDevice::BRAND_SAMSUNG => [
+                'GET_STATUS', 'POWER_ON', 'STANDBY', 'MUTE', 'UNMUTE', 'VOLUME_UP', 'VOLUME_DOWN'
+            ],
+            $category === PhysicalDevice::CATEGORY_GAME_CONSOLE => [
+                'SHOW_NOTIFICATION'
+            ],
+            default => null,
+        };
+
         try {
             return PhysicalDevice::create([
                 'name' => $data['name'],
@@ -64,10 +81,16 @@ class StationMappingService
                 'mac_address' => $normalizedMac,
                 'ip_address' => $ipAddress,
                 'device_identifier' => $data['device_identifier'] ?? null,
+                'device_token_hash' => $data['device_token_hash'] ?? null,
+                'firmware_version' => $data['firmware_version'] ?? null,
+                'homebrew_type' => $data['homebrew_type'] ?? null,
+                'homebrew_version' => $data['homebrew_version'] ?? null,
+                'driver_type' => $data['driver_type'] ?? null,
+                'transport_config' => $data['transport_config'] ?? null,
                 'connection_status' => PhysicalDevice::CONNECTION_UNVERIFIED,
                 'pairing_status' => PhysicalDevice::PAIRING_UNVERIFIED,
                 'pairing_payload' => $data['pairing_payload'] ?? null,
-                'verified_capabilities' => $data['verified_capabilities'] ?? null,
+                'verified_capabilities' => $data['verified_capabilities'] ?? $defaultCapabilities,
                 'last_seen_at' => null,
                 'is_active' => $data['is_active'] ?? true,
             ]);
@@ -104,15 +127,19 @@ class StationMappingService
             }
         }
 
-        if (isset($data['mac_address'])) {
-            $normalizedMac = PhysicalDevice::normalizeMacAddress($data['mac_address']);
-            $duplicate = PhysicalDevice::where('mac_address', $normalizedMac)
-                ->where('id', '!=', $id)
-                ->exists();
-            if ($duplicate) {
-                throw StationMappingException::duplicateMac($normalizedMac);
+        if (array_key_exists('mac_address', $data)) {
+            if (!empty($data['mac_address'])) {
+                $normalizedMac = PhysicalDevice::normalizeMacAddress($data['mac_address']);
+                $duplicate = PhysicalDevice::where('mac_address', $normalizedMac)
+                    ->where('id', '!=', $id)
+                    ->exists();
+                if ($duplicate) {
+                    throw StationMappingException::duplicateMac($normalizedMac);
+                }
+                $data['mac_address'] = $normalizedMac;
+            } else {
+                $data['mac_address'] = null;
             }
-            $data['mac_address'] = $normalizedMac;
         }
 
         // Prevent deactivating if device has active mapping
@@ -424,14 +451,21 @@ class StationMappingService
         }
 
         if ($stationCategory === Playstation::CATEGORY_PLAYSTATION) {
-            if ($device->category !== PhysicalDevice::CATEGORY_SMART_TV) {
+            if ($device->category === PhysicalDevice::CATEGORY_SMART_TV) {
+                if ($mappingRole !== StationDeviceMapping::ROLE_DISPLAY_TV) {
+                    throw StationMappingException::incompatibleHardware(
+                        "Peran mapping untuk Smart TV pada stasiun PlayStation harus DISPLAY_TV, bukan {$mappingRole}."
+                    );
+                }
+            } elseif ($device->category === PhysicalDevice::CATEGORY_GAME_CONSOLE) {
+                if ($mappingRole !== StationDeviceMapping::ROLE_GAME_CONSOLE) {
+                    throw StationMappingException::incompatibleHardware(
+                        "Peran mapping untuk Game Console pada stasiun PlayStation harus GAME_CONSOLE, bukan {$mappingRole}."
+                    );
+                }
+            } else {
                 throw StationMappingException::incompatibleHardware(
-                    "Stasiun PlayStation '{$station->nama}' hanya dapat dipetakan dengan Smart TV (SMART_TV). Hardware '{$device->name}' adalah {$device->category}."
-                );
-            }
-            if ($mappingRole !== StationDeviceMapping::ROLE_DISPLAY_TV) {
-                throw StationMappingException::incompatibleHardware(
-                    "Peran mapping untuk Smart TV pada stasiun PlayStation harus DISPLAY_TV, bukan {$mappingRole}."
+                    "Stasiun PlayStation '{$station->nama}' hanya dapat dipetakan dengan Smart TV (SMART_TV) atau Game Console (GAME_CONSOLE). Hardware '{$device->name}' adalah {$device->category}."
                 );
             }
         } elseif ($stationCategory === Playstation::CATEGORY_BILLIARD) {

@@ -43,6 +43,31 @@ class DeviceController extends Controller
         $today = $now->toDateString();
         $currentTime = $now->format('H:i:s');
 
+        // Autonomous Expiration & Hardware Automation Heartbeat:
+        // Evaluates expired sessions and dispatches pending hardware intents smoothly
+        try {
+            if (Transaction::hasG2Schema()) {
+                $hasExpired = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
+                    ->whereNotNull('expires_at')
+                    ->where('expires_at', '<=', $now)
+                    ->exists();
+
+                if ($hasExpired) {
+                    app(\App\Services\BillingService::class)->evaluateExpiration($now);
+                }
+            }
+
+            if (\App\Services\Hardware\Automation\AutomationIntentService::hasG5Schema() &&
+                app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
+                $hasEligibleIntents = \App\Models\AutomationIntent::eligible($now)->exists();
+                if ($hasEligibleIntents) {
+                    app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(10, $now);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('DeviceController index heartbeat issue: ' . $e->getMessage());
+        }
+
         // Update status for all devices based on transactions today
         $allDevices = Device::all();
         foreach ($allDevices as $device) {
@@ -831,6 +856,33 @@ class DeviceController extends Controller
     public function getTimerSyncData()
     {
         $now = Carbon::now();
+
+        // Autonomous Expiration & Hardware Automation Heartbeat:
+        // Evaluates expired sessions and dispatches pending hardware intents smoothly
+        // even if no background CLI daemon is currently running.
+        try {
+            if (Transaction::hasG2Schema()) {
+                $hasExpired = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
+                    ->whereNotNull('expires_at')
+                    ->where('expires_at', '<=', $now)
+                    ->exists();
+
+                if ($hasExpired) {
+                    app(\App\Services\BillingService::class)->evaluateExpiration($now);
+                }
+            }
+
+            if (\App\Services\Hardware\Automation\AutomationIntentService::hasG5Schema() &&
+                app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
+                $hasEligibleIntents = \App\Models\AutomationIntent::eligible($now)->exists();
+                if ($hasEligibleIntents) {
+                    app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(10, $now);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Device timer sync heartbeat issue: ' . $e->getMessage());
+        }
+
         $devices = Device::all();
         $deviceData = [];
 

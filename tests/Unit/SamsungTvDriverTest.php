@@ -269,4 +269,46 @@ class SamsungTvDriverTest extends TestCase
 
         $this->driver->probe($wrongDevice);
     }
+
+    /** @test */
+    public function pairing_reuses_existing_token_by_default()
+    {
+        $this->device->pairing_payload = 'stale_token_12345';
+        $this->device->save();
+
+        $this->fakeTransport->setScenario(FakeSamsungWebSocketTransport::SCENARIO_SUCCESS);
+        $result = $this->driver->pair($this->device);
+
+        $this->assertTrue($result->success);
+        $attempts = $this->fakeTransport->getConnectionAttempts();
+        $lastAttempt = end($attempts);
+        $this->assertEquals('stale_token_12345', $lastAttempt['token'], 'pair() must reuse existing token by default');
+    }
+
+    /** @test */
+    public function pairing_discards_token_when_force_new_is_true()
+    {
+        $this->device->pairing_payload = 'stale_token_12345';
+        $this->device->save();
+
+        $this->fakeTransport->setScenario(FakeSamsungWebSocketTransport::SCENARIO_SUCCESS);
+        $result = $this->driver->pair($this->device, ['force_new' => true]);
+
+        $this->assertTrue($result->success);
+        $attempts = $this->fakeTransport->getConnectionAttempts();
+        $lastAttempt = end($attempts);
+        $this->assertNull($lastAttempt['token'], 'pair() with force_new=true must discard existing token');
+    }
+
+    /** @test */
+    public function send_command_records_pairing_failure_when_auth_rejected()
+    {
+        $driver = new SamsungTvDriver($this->fakeTransport, $this->statusService, true);
+        $this->fakeTransport->setScenario(FakeSamsungWebSocketTransport::SCENARIO_AUTH_REJECTED);
+
+        $result = $driver->sendCommand($this->device, 'STANDBY');
+
+        $this->assertFalse($result->success);
+        $this->assertEquals('AUTH_REQUIRED', $result->resultCode);
+    }
 }

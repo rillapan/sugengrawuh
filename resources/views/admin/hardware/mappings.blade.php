@@ -316,7 +316,9 @@
                                 <div id="attachErrorAlert" class="alert alert-danger d-none"></div>
 
                                 @php
-                                    $availableDevices = ($stationCategory === 'BILLIARD') ? $availableRelays : $availableTvs;
+                                    $availableDevices = ($stationCategory === 'BILLIARD')
+                                        ? $availableRelays
+                                        : ($availableTvs->merge($availableConsoles ?? collect()));
                                     $targetRole = ($stationCategory === 'BILLIARD') ? 'LIGHT_RELAY' : 'DISPLAY_TV';
                                 @endphp
 
@@ -327,11 +329,11 @@
                                     <select class="form-control" id="attach_device_id" name="physical_device_id" required>
                                         <option value="">-- Pilih Perangkat Kompatibel (Belum Terpetakan) --</option>
                                         @forelse($availableDevices as $ad)
-                                            <option value="{{ $ad->id }}">
-                                                {{ $ad->name }} ({{ $ad->brand }} {{ $ad->model }} — IP: {{ $ad->ip_address }} — MAC: {{ $ad->mac_address }})
+                                            <option value="{{ $ad->id }}" data-category="{{ $ad->category }}">
+                                                {{ $ad->name }} ({{ $ad->brand }} {{ $ad->category }} — IP: {{ $ad->ip_address }})
                                             </option>
                                         @empty
-                                            <option value="" disabled>Tidak ada perangkat {{ $stationCategory === 'BILLIARD' ? 'Shelly Smart Relay' : 'Samsung Smart TV' }} yang belum terpetakan.</option>
+                                            <option value="" disabled>Tidak ada perangkat hardware yang belum terpetakan.</option>
                                         @endforelse
                                     </select>
                                     <small class="form-text text-muted">
@@ -343,7 +345,7 @@
                                     <label for="attach_mapping_role" class="font-weight-bold">Peran Pemetaan (Mapping Role)</label>
                                     <input type="text" class="form-control bg-light font-weight-bold" id="attach_mapping_role" name="mapping_role" value="{{ $targetRole }}" readonly>
                                     <small class="form-text text-muted">
-                                        Otomatis: PlayStation menggunakan <code>DISPLAY_TV</code>, Meja Biliar menggunakan <code>LIGHT_RELAY</code>.
+                                        Otomatis: Smart TV = <code>DISPLAY_TV</code>, Game Console = <code>GAME_CONSOLE</code>, Smart Relay = <code>LIGHT_RELAY</code>.
                                     </small>
                                 </div>
 
@@ -498,6 +500,18 @@ $(document).ready(function() {
         $('#alertContainer').html(alertHtml);
         $('html, body').animate({ scrollTop: $('#alertContainer').offset().top - 20 }, 300);
     }
+
+    // Dynamic role mapping on device selection
+    $('#attach_device_id').on('change', function() {
+        var cat = $(this).find('option:selected').data('category');
+        if (cat === 'GAME_CONSOLE') {
+            $('#attach_mapping_role').val('GAME_CONSOLE');
+        } else if (cat === 'SMART_TV') {
+            $('#attach_mapping_role').val('DISPLAY_TV');
+        } else if (cat === 'SMART_RELAY') {
+            $('#attach_mapping_role').val('LIGHT_RELAY');
+        }
+    });
 
     // --- 1. SUBMIT ATTACH HARDWARE ---
     $('#attachHardwareForm').on('submit', function(e) {

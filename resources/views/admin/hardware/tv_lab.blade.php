@@ -86,6 +86,10 @@
                                                 <span style="color: #9ca3af;">Audio Status:</span>
                                                 <span id="screenMuteBadge" class="badge badge-success">UNMUTE (SIM)</span>
                                             </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-1" style="font-size: 0.7rem;">
+                                                <span style="color: #9ca3af;"><i class="fas fa-shield-alt mr-1"></i>Batas Max:</span>
+                                                <span id="screenVolLimitBadge" class="badge badge-secondary">NONAKTIF</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -97,6 +101,12 @@
                                         <div style="font-weight: 700; letter-spacing: 1px; color: #d1d5db; font-size: 0.95rem;">[AREA SIMULASI GAME HDMI]</div>
                                         <div id="screenSessionGenLabel" style="font-size: 0.75rem; color: #9ca3af; margin-top: 4px;">Session Generation: #1</div>
                                     </div>
+                                </div>
+
+                                <!-- Volume Enforcement Overlay (Auto-clamped) -->
+                                <div id="screenEnforcementBanner" class="d-none mt-2" style="background-color: #dc2626; color: #ffffff; border-radius: 6px; padding: 10px 14px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.7); font-size: 0.85rem; border: 2px solid #f87171;">
+                                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                                    <strong id="screenEnforcementText">Volume melebihi batas maksimal. Otomatis disesuaikan!</strong>
                                 </div>
 
                                 <!-- Bottom Alert Banner Overlay (Hidden when idle) -->
@@ -182,11 +192,40 @@
                                 <span class="text-muted">Mode Driver:</span>
                                 <span class="badge badge-info">MOCK (mock_samsung_tv)</span>
                             </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted">Batas Volume Maks:</span>
+                                <span id="infoVolLimit" class="badge badge-secondary">NONAKTIF</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="text-muted">Status Penegakan:</span>
+                                <span id="infoEnforceStatus" class="badge badge-light border">WITHIN_LIMIT</span>
+                            </div>
                             <div class="d-flex justify-content-between">
                                 <span class="text-muted">Last Poll:</span>
                                 <code id="infoLastPollTime">-</code>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Volume Limit Enforcement Simulator Card -->
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 bg-warning text-dark d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 font-weight-bold"><i class="fas fa-shield-alt mr-1"></i> Uji Coba Penegakan Batas Volume</h6>
+                    </div>
+                    <div class="card-body small">
+                        <p class="text-muted mb-2">
+                            Simulasikan penegakan batas volume saat TV mendeteksi volume melebihi batas maksimal:
+                        </p>
+                        <div class="d-flex flex-wrap gap-2 mb-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm mr-2 mb-1" id="btnSimulateExceedVolume">
+                                <i class="fas fa-volume-up mr-1"></i> Set Vol 85% (Langgar Batas)
+                            </button>
+                            <button type="button" class="btn btn-outline-success btn-sm mb-1" id="btnSimulateEnforceNow">
+                                <i class="fas fa-shield-alt mr-1"></i> Trigger Enforce Now
+                            </button>
+                        </div>
+                        <div id="simEnforcementFeedback" class="small mt-1 text-muted"></div>
                     </div>
                 </div>
 
@@ -290,6 +329,22 @@
             infoTv.textContent = st.tv_device ? (st.tv_device.name + ' (' + st.tv_device.model + ')') : 'Tidak Ada';
         }
 
+        var limitCfg = st.volume_limit_config || { enabled: false, max_limit: 50, enforcement_status: 'WITHIN_LIMIT' };
+        var scrVolLimit = document.getElementById('screenVolLimitBadge');
+        if (scrVolLimit) {
+            scrVolLimit.className = 'badge ' + (limitCfg.enabled ? 'badge-success' : 'badge-secondary');
+            scrVolLimit.textContent = limitCfg.enabled ? ('BATAS: ' + limitCfg.max_limit + '%') : 'NONAKTIF';
+        }
+        var infoLimit = document.getElementById('infoVolLimit');
+        if (infoLimit) {
+            infoLimit.className = 'badge ' + (limitCfg.enabled ? 'badge-success' : 'badge-secondary');
+            infoLimit.textContent = limitCfg.enabled ? ('BATAS: ' + limitCfg.max_limit + '%') : 'NONAKTIF';
+        }
+        var infoEnforce = document.getElementById('infoEnforceStatus');
+        if (infoEnforce) {
+            infoEnforce.textContent = limitCfg.enforcement_status || 'WITHIN_LIMIT';
+        }
+
         var cfgStationId = document.getElementById('cfgStationId');
         var cfgDeviceToken = document.getElementById('cfgDeviceToken');
         var cfgDevToken = document.getElementById('cfgDevToken');
@@ -379,6 +434,58 @@
         .catch(function() {});
     }
 
+    var lastEnforcementReportTime = 0;
+
+    function enforceVolumeLimitInSimulator(currentVol, maxLimit, st) {
+        // Clamp simulated audio
+        renderSimulatedAudio(maxLimit, false);
+
+        // Show screen overlay notification
+        var enfBanner = document.getElementById('screenEnforcementBanner');
+        var enfText = document.getElementById('screenEnforcementText');
+        if (enfBanner && enfText) {
+            enfText.textContent = 'Volume melebihi batas (' + currentVol + '% > ' + maxLimit + '%). Otomatis diturunkan ke ' + maxLimit + '%!';
+            enfBanner.classList.remove('d-none');
+            setTimeout(function() { enfBanner.classList.add('d-none'); }, 5000);
+        }
+
+        // Rate-limit report to server (at most once every 3 seconds)
+        var now = Date.now();
+        if (now - lastEnforcementReportTime < 3000) return;
+        lastEnforcementReportTime = now;
+
+        var enforceUrl = '/api/tv-agent/events/volume-enforcement';
+        fetch(enforceUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-TV-Station-Id': String(st.id),
+                'X-TV-Device-Token': st.device_token
+            },
+            body: JSON.stringify({
+                station_id: st.id,
+                previous_volume: currentVol,
+                enforced_volume: maxLimit,
+                max_limit: maxLimit,
+                enforcement_source: 'SIMULATOR',
+                status: 'ENFORCED',
+                details: 'Penegakan otomatis oleh TV Lab Simulator (volume diturunkan dari ' + currentVol + ' ke ' + maxLimit + ').'
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+            var fb = document.getElementById('simEnforcementFeedback');
+            if (fb) {
+                fb.className = 'small mt-1 text-success font-weight-bold';
+                fb.textContent = 'Penegakan batas volume berhasil dilaporkan (Log ID: #' + (res.data ? res.data.enforcement_id : 'OK') + ')';
+                setTimeout(function() { fb.textContent = ''; }, 4000);
+            }
+            fetchAdminStationHistory();
+        })
+        .catch(function() {});
+    }
+
     function pollConsumerEvents() {
         var toggle = document.getElementById('toggleAutoPoll');
         if (toggle && !toggle.checked) return;
@@ -434,6 +541,32 @@
                 renderSimulatedAudio(res.body.simulated_state.volume, res.body.simulated_state.mute);
             }
 
+            if (res.body.volume_limit_config) {
+                var limitCfg = res.body.volume_limit_config;
+                st.volume_limit_config = limitCfg;
+                var scrVolLimit = document.getElementById('screenVolLimitBadge');
+                if (scrVolLimit) {
+                    scrVolLimit.className = 'badge ' + (limitCfg.enabled ? 'badge-success' : 'badge-secondary');
+                    scrVolLimit.textContent = limitCfg.enabled ? ('BATAS: ' + limitCfg.max_limit + '%') : 'NONAKTIF';
+                }
+                var infoLimit = document.getElementById('infoVolLimit');
+                if (infoLimit) {
+                    infoLimit.className = 'badge ' + (limitCfg.enabled ? 'badge-success' : 'badge-secondary');
+                    infoLimit.textContent = limitCfg.enabled ? ('BATAS: ' + limitCfg.max_limit + '%') : 'NONAKTIF';
+                }
+                var infoEnforce = document.getElementById('infoEnforceStatus');
+                if (infoEnforce) {
+                    infoEnforce.textContent = limitCfg.enforcement_status || 'WITHIN_LIMIT';
+                }
+
+                if (limitCfg.enabled && res.body.simulated_state && typeof res.body.simulated_state.volume === 'number') {
+                    var curVol = res.body.simulated_state.volume;
+                    if (curVol > limitCfg.max_limit) {
+                        enforceVolumeLimitInSimulator(curVol, limitCfg.max_limit, st);
+                    }
+                }
+            }
+
             var events = res.body.events || [];
             events.forEach(function(ev) {
                 if (renderedEventIds[ev.id]) return;
@@ -441,7 +574,7 @@
 
                 if (ev.command === 'SHOW_ALERT') {
                     showOverlayAlertOnScreen(ev);
-                } else if (ev.command === 'VOLUME_DOWN' || ev.command === 'VOLUME_UP' || ev.command === 'MUTE_TOGGLE') {
+                } else if (ev.command === 'VOLUME_DOWN' || ev.command === 'VOLUME_UP' || ev.command === 'MUTE_TOGGLE' || ev.command === 'SET_VOLUME') {
                     renderSimulatedAudio(ev.simulated_volume, ev.simulated_muted);
                 }
 
@@ -549,6 +682,62 @@
         if (refreshBtn) {
             refreshBtn.addEventListener('click', function() {
                 fetchAdminStationHistory();
+            });
+        }
+
+        var btnExceed = document.getElementById('btnSimulateExceedVolume');
+        if (btnExceed) {
+            btnExceed.addEventListener('click', function() {
+                var st = stationsMap[currentStationId];
+                if (!st) return;
+                renderSimulatedAudio(85, false);
+                var limitCfg = st.volume_limit_config || { enabled: true, max_limit: 50 };
+                if (limitCfg.enabled) {
+                    enforceVolumeLimitInSimulator(85, limitCfg.max_limit, st);
+                } else {
+                    var fb = document.getElementById('simEnforcementFeedback');
+                    if (fb) {
+                        fb.className = 'small mt-1 text-warning';
+                        fb.textContent = 'Volume diubah ke 85%. Proteksi batas volume saat ini NONAKTIF.';
+                        setTimeout(function() { fb.textContent = ''; }, 3000);
+                    }
+                }
+            });
+        }
+
+        var btnEnforceNow = document.getElementById('btnSimulateEnforceNow');
+        if (btnEnforceNow) {
+            btnEnforceNow.addEventListener('click', function() {
+                var st = stationsMap[currentStationId];
+                if (!st) return;
+                var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                var enforceUrl = '/admin/stations/' + st.id + '/tv-volume-limit';
+                fetch(enforceUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
+                    },
+                    body: JSON.stringify({
+                        enabled: true,
+                        max_volume: 50,
+                        enforce_now: true
+                    })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    var fb = document.getElementById('simEnforcementFeedback');
+                    if (fb) {
+                        fb.className = 'small mt-1 text-info font-weight-bold';
+                        fb.textContent = res.message || 'Pengaturan batas volume diperbarui via Enforce Now.';
+                        setTimeout(function() { fb.textContent = ''; }, 4000);
+                    }
+                    pollConsumerEvents();
+                    fetchAdminStationHistory();
+                })
+                .catch(function() {});
             });
         }
 

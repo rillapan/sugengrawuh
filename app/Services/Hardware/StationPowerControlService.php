@@ -147,13 +147,14 @@ class StationPowerControlService
                     $verified = $physicalDevice->verified_capabilities ?? [];
                     if (!in_array(SamsungTvDriver::CMD_POWER_ON, array_map('strtoupper', (array) $verified), true)) {
                         $lock->release();
+                        $modelName = $physicalDevice->model ?: 'Samsung Smart TV';
                         return [
                             'success' => false,
                             'desired_state' => 'ON',
                             'reported_state' => 'UNSUPPORTED',
                             'execution_state' => 'UNSUPPORTED',
                             'result_code' => 'UNSUPPORTED_CAPABILITY',
-                            'message' => "Perintah 'POWER_ON' belum diverifikasi untuk model TV ini (Samsung Smart TV tidak mendukung aktivasi dari mode standby melalui WebSocket tanpa WOL fisik).",
+                            'message' => "Perintah 'POWER_ON' belum diverifikasi untuk model TV ini ({$modelName} tidak mendukung aktivasi dari mode standby melalui WebSocket tanpa WOL fisik).",
                             'latency_ms' => (int) round((microtime(true) - $startTime) * 1000),
                         ];
                     }
@@ -382,6 +383,30 @@ class StationPowerControlService
                 $reportedState = 'ON';
             } elseif (str_contains((string) $station->last_hardware_state, 'STATE_OFF') || str_contains((string) $station->last_hardware_state, 'SIMULATED_OFF')) {
                 $reportedState = 'OFF';
+            } elseif ($physicalDevice->category === PhysicalDevice::CATEGORY_SMART_TV && $physicalDevice->connection_status === PhysicalDevice::CONNECTION_ONLINE) {
+                // Auto-sync real Smart TV power state if online
+                try {
+                    $driver = $this->driverManager->getDriverForDevice($physicalDevice);
+                    $statusResult = $driver->getStatus($physicalDevice);
+                    if ($statusResult->success) {
+                        $pState = strtolower((string) ($statusResult->simulatedState['power_state'] ?? $statusResult->telemetry['power_state'] ?? ''));
+                        if ($pState === 'on') {
+                            $reportedState = 'ON';
+                            $station->update([
+                                'last_hardware_state' => 'STATE_ON',
+                                'last_hardware_verified_at' => Carbon::now(),
+                            ]);
+                        } elseif ($pState === 'standby' || $pState === 'off') {
+                            $reportedState = 'OFF';
+                            $station->update([
+                                'last_hardware_state' => 'STATE_OFF',
+                                'last_hardware_verified_at' => Carbon::now(),
+                            ]);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // Fallback to UNKNOWN
+                }
             }
         }
 
@@ -392,8 +417,8 @@ class StationPowerControlService
             'device_name' => $physicalDevice->name,
             'brand' => $physicalDevice->brand,
             'category' => $physicalDevice->category,
-            'last_verified_at' => $station->last_hardware_verified_at ? $station->last_hardware_verified_at->toDateTimeString() : null,
-            'last_manual_power_at' => $station->last_manual_power_at ? $station->last_manual_power_at->toDateTimeString() : null,
+            'last_verified_at' => $station->last_hardware_verified_at ? ($station->last_hardware_verified_at instanceof Carbon ? $station->last_hardware_verified_at->toDateTimeString() : Carbon::parse($station->last_hardware_verified_at)->toDateTimeString()) : null,
+            'last_manual_power_at' => $station->last_manual_power_at ? ($station->last_manual_power_at instanceof Carbon ? $station->last_manual_power_at->toDateTimeString() : Carbon::parse($station->last_manual_power_at)->toDateTimeString()) : null,
             'telemetry' => $lastLog?->telemetry ?? [],
         ];
     }

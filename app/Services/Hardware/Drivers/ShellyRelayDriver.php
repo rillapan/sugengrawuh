@@ -158,9 +158,8 @@ class ShellyRelayDriver implements HardwareDriverInterface
             );
         }
 
-        if (!empty($password)) {
-            $this->statusService->recordSuccessfulPairing($device, $password, $this->isRealVerifiedMode);
-        }
+        // Record successful pairing (password-protected or passwordless on LAN)
+        $this->statusService->recordSuccessfulPairing($device, $password ?? '', $this->isRealVerifiedMode);
 
         return HardwareCommandResult::createRealResult(
             $device->id,

@@ -223,9 +223,12 @@ class TransactionController extends Controller
         \Log::info('User role: ' . (auth()->user()->role ?? 'guest'));
         \Log::info('User ID: ' . (auth()->user()->id ?? 'none'));
 
-        // Call DeviceController's status update logic to ensure device statuses are accurate
+        // Call DeviceController's status update logic and evaluate expired sessions to ensure device statuses are accurate
         try {
             app(\App\Http\Controllers\DeviceController::class)->index();
+            if (Transaction::hasG2Schema()) {
+                app(\App\Services\BillingService::class)->evaluateExpiration(Carbon::now());
+            }
             \Log::info('Device status update completed successfully');
         } catch (\Exception $e) {
             \Log::error('Device status update failed: ' . $e->getMessage());
@@ -385,12 +388,12 @@ class TransactionController extends Controller
             $device = Device::with('playstations')->find($request->device_id);
             if ($device && $device->playstations->count() > 1) {
                 if (!$request->playstation_id) {
-                    return redirect()->back()->with('gagal', 'Silakan pilih jenis perangkat terlebih dahulu.');
+                    return redirect()->back()->with('gagal', 'Silakan pilih jenis perangkat terlebih dahulu.')->withInput();
                 }
                 
                 // Validate that the selected playstation_id is associated with this device
                 if (!$device->playstations()->where('playstations.id', $request->playstation_id)->exists()) {
-                    return redirect()->back()->with('gagal', 'Jenis perangkat yang dipilih tidak valid untuk perangkat ini.');
+                    return redirect()->back()->with('gagal', 'Jenis perangkat yang dipilih tidak valid untuk perangkat ini.')->withInput();
                 }
             }
         }
@@ -407,7 +410,7 @@ class TransactionController extends Controller
 
             // Validate that device_id is provided and exists
             if (!$request->device_id) {
-                return redirect()->back()->with('gagal', 'Silakan pilih perangkat terlebih dahulu.');
+                return redirect()->back()->with('gagal', 'Silakan pilih perangkat terlebih dahulu.')->withInput();
             }
 
             // Get the selected device and validate it belongs to the package's PlayStation types
@@ -419,11 +422,11 @@ class TransactionController extends Controller
                           || (isset($selectedDevice->playstation_id) && in_array($selectedDevice->playstation_id, $playstationIds));
 
             if (!$isCompatible) {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak sesuai dengan paket custom.');
+                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak sesuai dengan paket custom.')->withInput();
             }
 
             if ($selectedDevice->status !== 'Tersedia') {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.');
+                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.')->withInput();
             }
 
             $validatedData['device_id'] = $selectedDevice->id;
@@ -464,7 +467,7 @@ class TransactionController extends Controller
                               || ($device->playstation_id && $device->playstation_id == $request->playstation_id);
                 
                 if (!$isAssociated) {
-                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
+                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.')->withInput();
                 }
             } else {
                 // Fallback to default PlayStation (backward compatibility)
@@ -472,10 +475,10 @@ class TransactionController extends Controller
             }
             
             if ($durationSeconds === null || $durationSeconds <= 0) {
-                return redirect()->back()->with('gagal', 'Durasi bermain harus lebih dari 0 detik.');
+                return redirect()->back()->with('gagal', 'Durasi bermain harus lebih dari 0 detik.')->withInput();
             }
             if ($durationSeconds > 86400) {
-                return redirect()->back()->with('gagal', 'Durasi bermain maksimal 24 jam.');
+                return redirect()->back()->with('gagal', 'Durasi bermain maksimal 24 jam.')->withInput();
             }
 
             $totalPs = $playstation->calculateCustomPrice($durationSeconds);
@@ -510,7 +513,7 @@ class TransactionController extends Controller
             // Postpaid (Lost Time) - device is now required
             $device = Device::findOrFail($request->device_id);
             if ($device->status !== 'Tersedia') {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.');
+                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.')->withInput();
             }
             
             // Use selected PlayStation if provided, otherwise fallback to default
@@ -522,7 +525,7 @@ class TransactionController extends Controller
                               || ($device->playstation_id && $device->playstation_id == $request->playstation_id);
                 
                 if (!$isAssociated) {
-                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
+                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.')->withInput();
                 }
             } else {
                 // Fallback to default PlayStation (backward compatibility)
@@ -560,16 +563,23 @@ class TransactionController extends Controller
             $targetDevice = Device::where('id', $validatedData['device_id'])->lockForUpdate()->firstOrFail();
             if ($targetDevice->status !== 'Tersedia') {
                 \DB::rollBack();
-                return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').');
+                return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').')->withInput();
             }
 
             if (Transaction::hasG2Schema()) {
+                // Ensure expired sessions on this device are evaluated first
+                try {
+                    app(\App\Services\BillingService::class)->evaluateExpiration(Carbon::now());
+                } catch (\Throwable $e) {
+                    \Log::warning('Evaluate expiration before store failed: ' . $e->getMessage());
+                }
+
                 $activeExisting = Transaction::where('device_id', $targetDevice->id)
                     ->where('billing_status', Transaction::BILLING_RUNNING)
                     ->exists();
                 if ($activeExisting) {
                     \DB::rollBack();
-                    return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.');
+                    return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.')->withInput();
                 }
 
                 $validatedData['started_at'] = Carbon::now();

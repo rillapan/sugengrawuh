@@ -139,4 +139,16 @@ class HardwareSafetyGuardTest extends TestCase
         HardwareSafetyGuard::assertRealExecutionAllowed($this->device, 'MUTE', $this->admin, false);
         $this->assertTrue(HardwareSafetyGuard::isRealExecutionEnabled());
     }
+
+    /** @test */
+    public function allows_execution_when_wildcard_allowlist_configured()
+    {
+        Config::set('hardware.driver', 'real');
+        Config::set('hardware.real_execution_enabled', true);
+        Config::set('hardware.real_allowed_device_ids', ['*']);
+
+        // Wildcard should permit any device without throwing deviceNotAllowlisted
+        HardwareSafetyGuard::assertRealExecutionAllowed($this->device, 'MUTE', $this->admin, false);
+        $this->assertTrue(true);
+    }
 }

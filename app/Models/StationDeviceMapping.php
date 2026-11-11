@@ -15,6 +15,7 @@ class StationDeviceMapping extends Model
     // Roles
     public const ROLE_DISPLAY_TV = 'DISPLAY_TV';
     public const ROLE_LIGHT_RELAY = 'LIGHT_RELAY';
+    public const ROLE_GAME_CONSOLE = 'GAME_CONSOLE';
 
     // Statuses
     public const STATUS_ACTIVE = 'ACTIVE';

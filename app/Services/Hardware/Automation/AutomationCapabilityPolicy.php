@@ -71,6 +71,19 @@ class AutomationCapabilityPolicy
             return ['allowed' => true, 'result_code' => self::RESULT_ALLOWED, 'reason' => null];
         }
 
+        // Game Console — notification-capable devices (Ps4GoldHenDriver, Ps3WebmanDriver)
+        if ($device->category === PhysicalDevice::CATEGORY_GAME_CONSOLE) {
+            $hasNotification = in_array('SHOW_NOTIFICATION', (array) ($device->verified_capabilities ?? []), true);
+            if (!$hasNotification) {
+                return [
+                    'allowed' => false,
+                    'result_code' => self::RESULT_SKIPPED_UNVERIFIED,
+                    'reason' => "Game console 'SHOW_NOTIFICATION' capability not verified.",
+                ];
+            }
+            return ['allowed' => true, 'result_code' => self::RESULT_ALLOWED, 'reason' => null];
+        }
+
         return [
             'allowed' => false,
             'result_code' => self::RESULT_INCOMPATIBLE,

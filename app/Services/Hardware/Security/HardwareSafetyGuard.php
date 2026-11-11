@@ -50,9 +50,9 @@ class HardwareSafetyGuard
             throw new HardwareSafetyException("Perangkat '{$device->name}' berstatus nonaktif. Perintah fisik diblokir.", 409);
         }
 
-        // 5. Approved Device Allowlist check (if allowlist is configured)
+        // 5. Approved Device Allowlist check — fail-closed, supports '*' wildcard or explicit IDs
         $allowlist = config('hardware.real_allowed_device_ids', []);
-        if (!empty($allowlist) && !in_array((string) $device->id, array_map('strval', $allowlist), true)) {
+        if (!empty($allowlist) && !in_array('*', $allowlist, true) && !in_array((string) $device->id, array_map('strval', $allowlist), true)) {
             throw HardwareSafetyException::deviceNotAllowlisted($device->id, $device->name);
         }
 

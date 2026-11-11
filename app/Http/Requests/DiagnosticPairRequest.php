@@ -18,6 +18,7 @@ class DiagnosticPairRequest extends FormRequest
             'transport_mode' => ['nullable', 'string', 'in:fake,real'],
             'password' => ['nullable', 'string', 'max:100'],
             'scenario' => ['nullable', 'string', 'in:SUCCESS,OFFLINE,TIMEOUT,AUTH_REJECTED,INVALID_CREDENTIALS'],
+            'force_new' => ['nullable', 'boolean'],
         ];
     }
 

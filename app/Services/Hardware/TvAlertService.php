@@ -9,9 +9,11 @@ use App\Models\Playstation;
 use App\Models\StationDeviceMapping;
 use App\Models\Transaction;
 use App\Models\TvAlertEvent;
+use App\Models\TvVolumeEnforcementLog;
 use App\Models\User;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\Drivers\MockSamsungTvDriver;
+use App\Services\Hardware\Drivers\SamsungTvDriver;
 use App\Services\Hardware\Simulation\HardwareSimulationManager;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -316,6 +318,7 @@ class TvAlertService
             'simulated_muted' => isset($state['mute']) ? (bool) $state['mute'] : false,
             'control_mode' => $cmdResult->simulationMode ? 'MOCK' : 'REAL',
             'driver_type' => $cmdResult->driverType,
+            'target_channel' => 'TV',
             'idempotency_key' => $idempotencyKey,
             'status' => $status,
             'result_code' => $resultCode,
@@ -354,69 +357,305 @@ class TvAlertService
             TvAlertEvent::CMD_VOLUME_DOWN,
             TvAlertEvent::CMD_VOLUME_UP,
             TvAlertEvent::CMD_MUTE_TOGGLE,
+            TvAlertEvent::CMD_MUTE,
+            TvAlertEvent::CMD_UNMUTE,
+            TvAlertEvent::CMD_SET_VOLUME,
         ];
 
         if (!in_array($upperCommand, $allowedCommands, true)) {
             throw TvControlException::invalidInput(
-                "Perintah volume '{$command}' tidak valid. Pilihan: VOLUME_DOWN, VOLUME_UP, MUTE_TOGGLE."
+                "Perintah volume '{$command}' tidak valid. Pilihan: VOLUME_DOWN, VOLUME_UP, MUTE_TOGGLE, MUTE, UNMUTE, SET_VOLUME."
             );
         }
 
         // Enforce rate-limiting protection per station
         $this->checkVolumeRateLimit($station);
 
-        $step = isset($options['step']) ? (int) $options['step'] : (int) config('hardware.tv_control.volume_step', 5);
-        $driver = $this->resolveMockOrConfiguredDriver($tv);
-        $cmdResult = $driver->sendCommand($tv, $upperCommand, ['step' => $step]);
+        // Atomic mutual exclusion lock to serialize concurrent hardware commands on the same station
+        $lock = Cache::lock("tv_vol_mutex:{$station->id}", 5);
+        if (!$lock->get()) {
+            throw TvControlException::rateLimited($station->nama);
+        }
 
-        $state = $cmdResult->simulatedState;
-        $simulatedVolume = isset($state['volume']) ? (int) $state['volume'] : 30;
-        $simulatedMuted = isset($state['mute']) ? (bool) $state['mute'] : false;
+        try {
+            // Enforce soft volume limit if enabled on physical device
+            if ($tv && $tv->auto_volume_limit_enabled) {
+                $maxLimit = (int) ($tv->max_volume_limit ?? 50);
 
-        $status = $cmdResult->success ? TvAlertEvent::STATUS_PENDING : TvAlertEvent::STATUS_FAILED;
-        $resultCode = $cmdResult->resultCode;
-        $errorMessage = $cmdResult->success ? null : $cmdResult->message;
+                if ($upperCommand === TvAlertEvent::CMD_SET_VOLUME) {
+                    $requestedTarget = isset($options['target_volume']) ? (int) $options['target_volume'] : (isset($options['volume']) ? (int) $options['volume'] : 30);
+                    if ($requestedTarget > $maxLimit) {
+                        throw TvControlException::invalidInput("Perintah ditolak: target volume ({$requestedTarget}%) melampaui batas volume maksimum stasiun ({$maxLimit}%).");
+                    }
+                }
 
-        $event = TvAlertEvent::create([
-            'station_id' => $station->id,
-            'station_name' => $station->nama,
-            'transaction_id' => $activeTx->id_transaksi,
-            'physical_device_id' => $tv->id,
-            'station_device_mapping_id' => $mapping->id,
-            'session_generation' => $generation,
-            'actor_user_id' => $actor->id,
-            'actor_role' => strtoupper($actor->role ?? 'ADMIN'),
-            'event_type' => TvAlertEvent::TYPE_VOLUME_CONTROL,
-            'command' => $upperCommand,
-            'message_preset' => null,
-            'message_title' => "Simulasi Audio TV ({$upperCommand})",
-            'message_body' => $cmdResult->message,
-            'display_duration_seconds' => 3,
-            'simulated_volume' => $simulatedVolume,
-            'simulated_muted' => $simulatedMuted,
-            'control_mode' => $cmdResult->simulationMode ? 'MOCK' : 'REAL',
-            'driver_type' => $cmdResult->driverType,
-            'idempotency_key' => 'vol_cmd_st_' . $station->id . '_' . strtolower($upperCommand) . '_' . uniqid('', true),
-            'status' => $status,
-            'result_code' => $resultCode,
-            'error_message' => $errorMessage,
-            'scheduled_at' => Carbon::now(),
+                if ($upperCommand === TvAlertEvent::CMD_VOLUME_UP) {
+                    if ($tv->current_volume !== null && $tv->current_volume >= $maxLimit) {
+                        throw TvControlException::invalidInput("Perintah ditolak: batas volume maksimum ({$maxLimit}%) telah tercapai pada stasiun ini.");
+                    }
+                }
+            }
+
+            $driverPayload = [];
+            if ($upperCommand === TvAlertEvent::CMD_SET_VOLUME) {
+                $targetVol = isset($options['target_volume']) ? (int) $options['target_volume'] : (isset($options['volume']) ? (int) $options['volume'] : 30);
+                $targetVol = max(0, min(100, $targetVol));
+                $driverPayload['target_volume'] = $targetVol;
+                $driverPayload['volume'] = $targetVol;
+            } else {
+                $step = isset($options['step']) ? (int) $options['step'] : (int) config('hardware.tv_control.volume_step', 5);
+                $driverPayload['step'] = $step;
+            }
+
+            $driver = $this->resolveMockOrConfiguredDriver($tv);
+            $cmdResult = $driver->sendCommand($tv, $upperCommand, $driverPayload);
+
+            $isRealMode = ($cmdResult->driverType === SamsungTvDriver::DRIVER_TYPE)
+                || (config('hardware.driver') === 'real' && !$cmdResult->simulationMode);
+
+            $state = $cmdResult->simulatedState ?? [];
+            $simulatedVolume = isset($state['volume']) ? (int) $state['volume'] : 30;
+            $simulatedMuted = isset($state['mute']) ? (bool) $state['mute'] : false;
+
+            $status = $cmdResult->success
+                ? ($isRealMode ? TvAlertEvent::STATUS_COMMAND_SENT : TvAlertEvent::STATUS_PENDING)
+                : TvAlertEvent::STATUS_FAILED;
+            $executionStatus = $cmdResult->success
+                ? ($isRealMode ? TvAlertEvent::STATUS_COMMAND_SENT : null)
+                : ($cmdResult->resultCode === 'CAPABILITY_UNSUPPORTED' ? TvAlertEvent::STATUS_UNSUPPORTED : TvAlertEvent::STATUS_FAILED);
+            $resultCode = $cmdResult->resultCode;
+            $errorMessage = $cmdResult->success ? null : $cmdResult->message;
+
+            $messageTitle = $isRealMode
+                ? "Kontrol Audio TV ({$upperCommand})"
+                : "Simulasi Audio TV ({$upperCommand})";
+
+            $event = TvAlertEvent::create([
+                'station_id' => $station->id,
+                'station_name' => $station->nama,
+                'transaction_id' => $activeTx->id_transaksi,
+                'physical_device_id' => $tv->id,
+                'station_device_mapping_id' => $mapping->id,
+                'session_generation' => $generation,
+                'actor_user_id' => $actor->id,
+                'actor_role' => strtoupper($actor->role ?? 'ADMIN'),
+                'event_type' => TvAlertEvent::TYPE_VOLUME_CONTROL,
+                'command' => $upperCommand,
+                'message_preset' => null,
+                'message_title' => $messageTitle,
+                'message_body' => $cmdResult->message,
+                'display_duration_seconds' => 3,
+                'simulated_volume' => $simulatedVolume,
+                'simulated_muted' => $simulatedMuted,
+                'control_mode' => $isRealMode ? 'REAL' : 'MOCK',
+                'driver_type' => $cmdResult->driverType,
+                'idempotency_key' => 'vol_cmd_st_' . $station->id . '_' . strtolower($upperCommand) . '_' . uniqid('', true),
+                'status' => $status,
+                'execution_status' => $executionStatus,
+                'result_code' => $resultCode,
+                'error_message' => $errorMessage,
+                'scheduled_at' => Carbon::now(),
+                'delivered_at' => $isRealMode && $cmdResult->success ? Carbon::now() : null,
+                'acked_at' => $isRealMode && $cmdResult->success ? Carbon::now() : null,
+            ]);
+
+            if ($cmdResult->success && $tv) {
+                if (!$isRealMode) {
+                    $tv->update([
+                        'current_volume' => $simulatedVolume,
+                        'is_muted' => $simulatedMuted,
+                        'last_volume_verified_at' => Carbon::now(),
+                    ]);
+                } else {
+                    $telemetry = $cmdResult->telemetry ?? [];
+                    if (!empty($telemetry['physical_state_verified'])) {
+                        $tv->update([
+                            'current_volume' => $telemetry['volume'] ?? $tv->current_volume,
+                            'is_muted' => $telemetry['mute'] ?? $tv->is_muted,
+                            'last_volume_verified_at' => Carbon::now(),
+                        ]);
+                    }
+                }
+            }
+
+            $actualVolume = $isRealMode ? ($tv ? $tv->current_volume : null) : $simulatedVolume;
+
+            return [
+                'success' => $cmdResult->success,
+                'event' => $event,
+                'command_result' => $cmdResult,
+                'control_mode' => $isRealMode ? 'REAL' : 'MOCK',
+                'execution_status' => $cmdResult->success ? 'COMMAND_SENT' : 'FAILED',
+                'volume' => $actualVolume,
+                'actual_volume' => $actualVolume,
+                'actual_volume_display' => ($actualVolume !== null) ? "{$actualVolume}/100" : 'Tidak tersedia',
+                'mute' => $isRealMode ? (bool) ($tv ? $tv->is_muted : false) : $simulatedMuted,
+                'simulated_state' => $isRealMode ? null : [
+                    'volume' => $simulatedVolume,
+                    'mute' => $simulatedMuted,
+                    'power' => (string) ($state['power'] ?? 'ON'),
+                    'simulated' => true,
+                ],
+                'message' => $cmdResult->message,
+            ];
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Alias for sendVolumeCommand.
+     */
+    public function controlVolume(Device $station, User $actor, string $command, array $options = []): array
+    {
+        return $this->sendVolumeCommand($station, $actor, $command, $options);
+    }
+
+    /**
+     * Update Maximum Volume Settings for a station's mapped Samsung Smart TV.
+     * Accessible by Admin or Owner.
+     *
+     * @param Device $station
+     * @param User $actor
+     * @param array $payload
+     * @return array
+     * @throws TvControlException
+     */
+    public function updateVolumeLimitSettings(Device $station, User $actor, array $payload): array
+    {
+        $userRole = strtolower($actor->role ?? '');
+        if (!in_array($userRole, ['admin', 'owner'], true)) {
+            throw TvControlException::forbidden('Hanya Admin atau Owner yang berwenang mengubah batas volume TV.');
+        }
+
+        $station->loadMissing(['playstations', 'playstation']);
+        if ($station->getStationCategory() !== Playstation::CATEGORY_PLAYSTATION) {
+            throw TvControlException::invalidCategory($station->nama);
+        }
+
+        $mapping = $station->activeDisplayTv()->with('physicalDevice')->first();
+        $tv = $mapping ? $mapping->physicalDevice : null;
+
+        if (
+            !$mapping
+            || !$tv
+            || !$tv->is_active
+            || $tv->category !== PhysicalDevice::CATEGORY_SMART_TV
+            || $tv->brand !== PhysicalDevice::BRAND_SAMSUNG
+        ) {
+            throw TvControlException::noActiveTvMapping($station->nama);
+        }
+
+        $enabled = isset($payload['enabled'])
+            ? filter_var($payload['enabled'], FILTER_VALIDATE_BOOLEAN)
+            : (isset($payload['auto_volume_limit_enabled']) ? filter_var($payload['auto_volume_limit_enabled'], FILTER_VALIDATE_BOOLEAN) : false);
+
+        $maxVolume = isset($payload['max_volume'])
+            ? (int) $payload['max_volume']
+            : (isset($payload['max_volume_limit']) ? (int) $payload['max_volume_limit'] : 50);
+        $maxVolume = max(0, min(100, $maxVolume));
+
+        $tv->update([
+            'auto_volume_limit_enabled' => $enabled,
+            'max_volume_limit' => $maxVolume,
+            'auto_volume_limit_updated_by_user_id' => $actor->id,
         ]);
 
+        $enforceNow = !empty($payload['enforce_now']);
+        $enforcedTriggered = false;
+
+        if ($enforceNow) {
+            $currentVol = $tv->current_volume;
+            if ($currentVol === null) {
+                $tvState = $this->getStationSimulatedTvState($station);
+                $currentVol = isset($tvState['volume']) ? (int) $tvState['volume'] : null;
+            }
+
+            if ($currentVol !== null && $currentVol > $maxVolume) {
+                // If station is currently in use, dispatch real/simulated SET_VOLUME command
+                if ($station->status === 'Digunakan') {
+                    try {
+                        $this->sendVolumeCommand($station, $actor, TvAlertEvent::CMD_SET_VOLUME, ['target_volume' => $maxVolume]);
+                    } catch (\Throwable $e) {
+                        // Non-blocking fallback
+                    }
+                } else {
+                    $tv->update([
+                        'current_volume' => $maxVolume,
+                        'volume_enforcement_status' => 'ENFORCED',
+                        'last_volume_verified_at' => Carbon::now(),
+                    ]);
+                }
+
+                $this->recordVolumeEnforcement($station, [
+                    'previous_volume' => $currentVol,
+                    'enforced_volume' => $maxVolume,
+                    'max_limit' => $maxVolume,
+                    'enforcement_source' => TvVolumeEnforcementLog::SOURCE_ADMIN_ENFORCE,
+                    'status' => TvVolumeEnforcementLog::STATUS_ENFORCED,
+                    'details' => "Volume otomatis diturunkan dari {$currentVol} ke {$maxVolume} via Enforce Now (Admin/Owner).",
+                ]);
+
+                $enforcedTriggered = true;
+            }
+        }
+
+        $tv->refresh();
+
         return [
-            'success' => $cmdResult->success,
-            'event' => $event,
-            'command_result' => $cmdResult,
-            'volume' => $simulatedVolume,
-            'mute' => $simulatedMuted,
-            'simulated_state' => [
-                'volume' => $simulatedVolume,
-                'mute' => $simulatedMuted,
-                'power' => (string) ($state['power'] ?? 'ON'),
-                'simulated' => true,
-            ],
-            'message' => $cmdResult->message,
+            'station_id' => $station->id,
+            'station_name' => $station->nama,
+            'physical_device_id' => $tv->id,
+            'auto_volume_limit_enabled' => (bool) $tv->auto_volume_limit_enabled,
+            'max_volume_limit' => (int) $tv->max_volume_limit,
+            'current_volume' => $tv->current_volume !== null ? (int) $tv->current_volume : null,
+            'is_muted' => (bool) $tv->is_muted,
+            'volume_enforcement_status' => (string) ($tv->volume_enforcement_status ?? 'WITHIN_LIMIT'),
+            'enforced' => $enforcedTriggered,
+            'message' => "Batas volume TV untuk {$station->nama} berhasil diatur ke {$maxVolume}% (" . ($enabled ? 'Aktif' : 'Nonaktif') . ').',
         ];
+    }
+
+    /**
+     * Record a volume enforcement log event and update physical device status.
+     *
+     * @param Device $station
+     * @param array $payload
+     * @return TvVolumeEnforcementLog
+     */
+    public function recordVolumeEnforcement(Device $station, array $payload): TvVolumeEnforcementLog
+    {
+        $mapping = $station->activeDisplayTv()->with('physicalDevice')->first();
+        $tv = $mapping ? $mapping->physicalDevice : null;
+        $physicalDeviceId = $tv ? (int) $tv->id : (int) ($payload['physical_device_id'] ?? 0);
+
+        $previousVolume = (int) ($payload['previous_volume'] ?? 0);
+        $enforcedVolume = (int) ($payload['enforced_volume'] ?? 0);
+        $maxLimit = (int) ($payload['max_limit'] ?? ($tv ? $tv->max_volume_limit : 50));
+        $enforcementSource = (string) ($payload['enforcement_source'] ?? TvVolumeEnforcementLog::SOURCE_TIZEN_AGENT);
+        $status = (string) ($payload['status'] ?? TvVolumeEnforcementLog::STATUS_ENFORCED);
+        $details = isset($payload['details']) ? (string) $payload['details'] : null;
+
+        $log = TvVolumeEnforcementLog::create([
+            'station_id' => $station->id,
+            'physical_device_id' => $physicalDeviceId,
+            'previous_volume' => $previousVolume,
+            'enforced_volume' => $enforcedVolume,
+            'max_limit' => $maxLimit,
+            'enforcement_source' => $enforcementSource,
+            'status' => $status,
+            'details' => $details,
+        ]);
+
+        if ($tv) {
+            $tv->update([
+                'volume_enforcement_status' => $status === TvVolumeEnforcementLog::STATUS_ENFORCED ? 'ENFORCED' : 'WITHIN_LIMIT',
+                'current_volume' => $enforcedVolume,
+                'last_volume_verified_at' => Carbon::now(),
+            ]);
+        }
+
+        return $log;
     }
 
     /**
@@ -463,8 +702,11 @@ class TvAlertService
 
             if ($tx) {
                 if (
-                    $tx->billing_status === Transaction::BILLING_EXPIRED_PENDING_ACTION
-                    || ($tx->expires_at && $now->greaterThanOrEqualTo($tx->expires_at))
+                    $pendingEvent->event_type !== TvAlertEvent::TYPE_BILLING_EXPIRED
+                    && (
+                        $tx->billing_status === Transaction::BILLING_EXPIRED_PENDING_ACTION
+                        || ($tx->expires_at && $now->greaterThanOrEqualTo($tx->expires_at))
+                    )
                 ) {
                     $pendingEvent->update([
                         'status' => TvAlertEvent::STATUS_EXPIRED,
@@ -472,6 +714,20 @@ class TvAlertService
                         'cancelled_at' => $now,
                     ]);
                     $expiredCount++;
+                    continue;
+                }
+
+                if (
+                    $pendingEvent->event_type === TvAlertEvent::TYPE_BILLING_EXPIRED
+                    && $tx->expires_at
+                    && $now->lessThan($tx->expires_at)
+                ) {
+                    $pendingEvent->update([
+                        'status' => TvAlertEvent::STATUS_CANCELLED,
+                        'error_message' => 'Session extended after expiration',
+                        'cancelled_at' => $now,
+                    ]);
+                    $cancelledCount++;
                     continue;
                 }
 
@@ -532,24 +788,130 @@ class TvAlertService
                 continue;
             }
 
-            $mapping = $station->activeDisplayTv()->with('physicalDevice')->first();
-            $tv = $mapping ? $mapping->physicalDevice : null;
+            // 1. Check if station has active Game Console mapping (PS3/PS4 HEN)
+            $consoleMapping = $station->activeGameConsole()->with('physicalDevice')->first();
+            $consoleDevice = ($consoleMapping && $consoleMapping->physicalDevice && $consoleMapping->physicalDevice->is_active)
+                ? $consoleMapping->physicalDevice
+                : null;
 
-            if (
-                !$mapping
-                || !$tv
-                || !$tv->is_active
-                || $tv->category !== PhysicalDevice::CATEGORY_SMART_TV
-                || $tv->brand !== PhysicalDevice::BRAND_SAMSUNG
-            ) {
+            // 2. Check if station has active Samsung Smart TV mapping
+            $mapping = $station->activeDisplayTv()->with('physicalDevice')->first();
+            $tv = ($mapping && $mapping->physicalDevice && $mapping->physicalDevice->is_active)
+                ? $mapping->physicalDevice
+                : null;
+
+            if (!$consoleDevice && (!$tv || $tv->category !== PhysicalDevice::CATEGORY_SMART_TV || $tv->brand !== PhysicalDevice::BRAND_SAMSUNG)) {
                 continue;
             }
 
             $remainingSeconds = $now->diffInSeconds($tx->expires_at, false);
 
             if ($remainingSeconds <= 0) {
-                // Already expired — mark any pending alerts for this transaction as EXPIRED
+                // Already expired — mark any pending alerts for this transaction (except TYPE_BILLING_EXPIRED) as EXPIRED
                 $expiredCount += $this->cancelPendingAlertsForTransaction($tx, TvAlertEvent::STATUS_EXPIRED, 'Session expired');
+
+                $generation = (int) ($station->session_generation ?: ($tx->session_generation ?: 1));
+                $idempotencyKey = "auto_alert_expired_tx_{$tx->id_transaksi}_gen_{$generation}";
+
+                if (TvAlertEvent::where('idempotency_key', $idempotencyKey)->exists()) {
+                    continue;
+                }
+
+                $presets = TvAlertEvent::getPresetMessages();
+                $expiredPreset = $presets[TvAlertEvent::PRESET_TIME_EXPIRED] ?? [
+                    'title' => 'WAKTU BERMAIN TELAH HABIS!',
+                    'body' => 'Waktu bermain telah habis. Silakan hubungi kasir.',
+                ];
+                $title = $expiredPreset['title'];
+                $body = $expiredPreset['body'];
+
+                // Single-channel rule: prioritize Console if mapped, otherwise TV
+                if ($consoleDevice) {
+                    $driver = $this->driverManager->getDriverForDevice($consoleDevice);
+                    $cmdResult = $driver->sendCommand($consoleDevice, 'SHOW_ALERT', [
+                        'title' => $title,
+                        'message' => $body,
+                        'duration_seconds' => 8,
+                    ]);
+
+                    $isPs4Outbound = (strpos(strtoupper((string) $consoleDevice->model), 'PS4') !== false || strpos(strtoupper((string) $consoleDevice->driver_type), 'PS4') !== false);
+
+                    $status = TvAlertEvent::STATUS_FAILED;
+                    if ($cmdResult->success) {
+                        if ($isPs4Outbound) {
+                            $status = TvAlertEvent::STATUS_PENDING;
+                        } elseif ($cmdResult->simulationMode && $cmdResult->resultCode !== 'HTTP_ACCEPTED' && $cmdResult->resultCode !== 'ACCEPTED') {
+                            $status = TvAlertEvent::STATUS_SENT_TO_SIMULATOR;
+                        } else {
+                            $status = TvAlertEvent::STATUS_ACCEPTED;
+                        }
+                    }
+
+                    $event = TvAlertEvent::create([
+                        'station_id' => $station->id,
+                        'station_name' => $station->nama,
+                        'transaction_id' => $tx->id_transaksi,
+                        'physical_device_id' => $consoleDevice->id,
+                        'station_device_mapping_id' => $consoleMapping->id,
+                        'session_generation' => $generation,
+                        'actor_user_id' => null,
+                        'actor_role' => 'SYSTEM',
+                        'event_type' => TvAlertEvent::TYPE_BILLING_EXPIRED,
+                        'command' => TvAlertEvent::CMD_SHOW_ALERT,
+                        'message_preset' => TvAlertEvent::PRESET_TIME_EXPIRED,
+                        'message_title' => $title,
+                        'message_body' => $body,
+                        'display_duration_seconds' => 8,
+                        'simulated_volume' => 30,
+                        'simulated_muted' => false,
+                        'control_mode' => $cmdResult->simulationMode ? 'MOCK' : 'REAL',
+                        'driver_type' => $cmdResult->driverType,
+                        'target_channel' => 'CONSOLE',
+                        'idempotency_key' => $idempotencyKey,
+                        'status' => $status,
+                        'execution_status' => $cmdResult->success ? TvAlertEvent::STATUS_COMMAND_EXECUTED : TvAlertEvent::STATUS_FAILED,
+                        'result_code' => $cmdResult->resultCode,
+                        'error_message' => $cmdResult->success ? null : $cmdResult->message,
+                        'scheduled_at' => $now,
+                        'delivered_at' => ($status === TvAlertEvent::STATUS_ACCEPTED || $cmdResult->success) ? $now : null,
+                        'acked_at' => ($status === TvAlertEvent::STATUS_ACCEPTED || $cmdResult->success) ? $now : null,
+                    ]);
+                } else {
+                    $state = $this->simulationManager->getSimulatedState($tv->id, [
+                        'volume' => (int) config('hardware.tv_control.default_volume', 30),
+                        'mute' => false,
+                        'power' => 'ON',
+                    ]);
+
+                    $event = TvAlertEvent::create([
+                        'station_id' => $station->id,
+                        'station_name' => $station->nama,
+                        'transaction_id' => $tx->id_transaksi,
+                        'physical_device_id' => $tv->id,
+                        'station_device_mapping_id' => $mapping->id,
+                        'session_generation' => $generation,
+                        'actor_user_id' => null,
+                        'actor_role' => 'SYSTEM',
+                        'event_type' => TvAlertEvent::TYPE_BILLING_EXPIRED,
+                        'command' => TvAlertEvent::CMD_SHOW_ALERT,
+                        'message_preset' => TvAlertEvent::PRESET_TIME_EXPIRED,
+                        'message_title' => $title,
+                        'message_body' => $body,
+                        'display_duration_seconds' => 8,
+                        'simulated_volume' => isset($state['volume']) ? (int) $state['volume'] : 30,
+                        'simulated_muted' => isset($state['mute']) ? (bool) $state['mute'] : false,
+                        'control_mode' => 'MOCK',
+                        'driver_type' => MockSamsungTvDriver::DRIVER_TYPE,
+                        'target_channel' => 'TV',
+                        'idempotency_key' => $idempotencyKey,
+                        'status' => TvAlertEvent::STATUS_PENDING,
+                        'result_code' => 'QUEUED_FOR_CONSUMER',
+                        'error_message' => null,
+                        'scheduled_at' => $now,
+                    ]);
+                }
+
+                $createdEvents[] = $event;
                 continue;
             }
 
@@ -565,37 +927,78 @@ class TvAlertService
                 $title = 'WAKTU BERMAIN TERSISA 10 MENIT!';
                 $body = "Sisa waktu bermain sekitar {$remainingMinutes} menit. Silakan hubungi kasir untuk memperpanjang waktu bermain.";
 
-                $state = $this->simulationManager->getSimulatedState($tv->id, [
-                    'volume' => (int) config('hardware.tv_control.default_volume', 30),
-                    'mute' => false,
-                    'power' => 'ON',
-                ]);
+                // Single-channel rule: prioritize Console if mapped, otherwise TV
+                if ($consoleDevice) {
+                    $driver = $this->driverManager->getDriverForDevice($consoleDevice);
+                    $cmdResult = $driver->sendCommand($consoleDevice, 'SHOW_ALERT', [
+                        'title' => $title,
+                        'message' => $body,
+                        'duration_seconds' => 8,
+                    ]);
 
-                $event = TvAlertEvent::create([
-                    'station_id' => $station->id,
-                    'station_name' => $station->nama,
-                    'transaction_id' => $tx->id_transaksi,
-                    'physical_device_id' => $tv->id,
-                    'station_device_mapping_id' => $mapping->id,
-                    'session_generation' => $generation,
-                    'actor_user_id' => null,
-                    'actor_role' => 'SYSTEM',
-                    'event_type' => TvAlertEvent::TYPE_BILLING_ENDING_SOON,
-                    'command' => TvAlertEvent::CMD_SHOW_ALERT,
-                    'message_preset' => TvAlertEvent::PRESET_REMAINING_10_MIN,
-                    'message_title' => $title,
-                    'message_body' => $body,
-                    'display_duration_seconds' => 8,
-                    'simulated_volume' => isset($state['volume']) ? (int) $state['volume'] : 30,
-                    'simulated_muted' => isset($state['mute']) ? (bool) $state['mute'] : false,
-                    'control_mode' => 'MOCK',
-                    'driver_type' => MockSamsungTvDriver::DRIVER_TYPE,
-                    'idempotency_key' => $idempotencyKey,
-                    'status' => TvAlertEvent::STATUS_PENDING,
-                    'result_code' => 'QUEUED_FOR_CONSUMER',
-                    'error_message' => null,
-                    'scheduled_at' => $now,
-                ]);
+                    $event = TvAlertEvent::create([
+                        'station_id' => $station->id,
+                        'station_name' => $station->nama,
+                        'transaction_id' => $tx->id_transaksi,
+                        'physical_device_id' => $consoleDevice->id,
+                        'station_device_mapping_id' => $consoleMapping->id,
+                        'session_generation' => $generation,
+                        'actor_user_id' => null,
+                        'actor_role' => 'SYSTEM',
+                        'event_type' => TvAlertEvent::TYPE_BILLING_ENDING_SOON,
+                        'command' => TvAlertEvent::CMD_SHOW_ALERT,
+                        'message_preset' => TvAlertEvent::PRESET_REMAINING_10_MIN,
+                        'message_title' => $title,
+                        'message_body' => $body,
+                        'display_duration_seconds' => 8,
+                        'simulated_volume' => 30,
+                        'simulated_muted' => false,
+                        'control_mode' => $cmdResult->simulationMode ? 'MOCK' : 'REAL',
+                        'driver_type' => $cmdResult->driverType,
+                        'target_channel' => 'CONSOLE',
+                        'idempotency_key' => $idempotencyKey,
+                        'status' => $cmdResult->success ? TvAlertEvent::STATUS_SENT_TO_SIMULATOR : TvAlertEvent::STATUS_FAILED,
+                        'execution_status' => $cmdResult->success ? TvAlertEvent::STATUS_COMMAND_EXECUTED : TvAlertEvent::STATUS_FAILED,
+                        'result_code' => $cmdResult->resultCode,
+                        'error_message' => $cmdResult->success ? null : $cmdResult->message,
+                        'scheduled_at' => $now,
+                        'delivered_at' => $cmdResult->success ? $now : null,
+                        'acked_at' => $cmdResult->success ? $now : null,
+                    ]);
+                } else {
+                    $state = $this->simulationManager->getSimulatedState($tv->id, [
+                        'volume' => (int) config('hardware.tv_control.default_volume', 30),
+                        'mute' => false,
+                        'power' => 'ON',
+                    ]);
+
+                    $event = TvAlertEvent::create([
+                        'station_id' => $station->id,
+                        'station_name' => $station->nama,
+                        'transaction_id' => $tx->id_transaksi,
+                        'physical_device_id' => $tv->id,
+                        'station_device_mapping_id' => $mapping->id,
+                        'session_generation' => $generation,
+                        'actor_user_id' => null,
+                        'actor_role' => 'SYSTEM',
+                        'event_type' => TvAlertEvent::TYPE_BILLING_ENDING_SOON,
+                        'command' => TvAlertEvent::CMD_SHOW_ALERT,
+                        'message_preset' => TvAlertEvent::PRESET_REMAINING_10_MIN,
+                        'message_title' => $title,
+                        'message_body' => $body,
+                        'display_duration_seconds' => 8,
+                        'simulated_volume' => isset($state['volume']) ? (int) $state['volume'] : 30,
+                        'simulated_muted' => isset($state['mute']) ? (bool) $state['mute'] : false,
+                        'control_mode' => 'MOCK',
+                        'driver_type' => MockSamsungTvDriver::DRIVER_TYPE,
+                        'target_channel' => 'TV',
+                        'idempotency_key' => $idempotencyKey,
+                        'status' => TvAlertEvent::STATUS_PENDING,
+                        'result_code' => 'QUEUED_FOR_CONSUMER',
+                        'error_message' => null,
+                        'scheduled_at' => $now,
+                    ]);
+                }
 
                 $createdEvents[] = $event;
             }
@@ -631,14 +1034,19 @@ class TvAlertService
             return 0;
         }
 
-        return TvAlertEvent::where('transaction_id', $tx->id_transaksi)
-            ->where('status', TvAlertEvent::STATUS_PENDING)
-            ->update([
-                'status' => $newStatus,
-                'error_message' => $reason ?? "Transitioned to {$newStatus}",
-                'cancelled_at' => Carbon::now(),
-                'updated_at' => Carbon::now(),
-            ]);
+        $query = TvAlertEvent::where('transaction_id', $tx->id_transaksi)
+            ->where('status', TvAlertEvent::STATUS_PENDING);
+
+        if ($newStatus === TvAlertEvent::STATUS_EXPIRED) {
+            $query->where('event_type', '!=', TvAlertEvent::TYPE_BILLING_EXPIRED);
+        }
+
+        return $query->update([
+            'status' => $newStatus,
+            'error_message' => $reason ?? "Transitioned to {$newStatus}",
+            'cancelled_at' => Carbon::now(),
+            'updated_at' => Carbon::now(),
+        ]);
     }
 
     /**
@@ -676,6 +1084,22 @@ class TvAlertService
         // Record consumer heartbeat
         Cache::put(self::HEARTBEAT_CACHE_PREFIX . $station->id, $now->toIso8601String(), self::HEARTBEAT_TTL_SECONDS);
 
+        $mapping = StationDeviceMapping::where('station_id', $station->id)
+            ->where('mapping_status', StationDeviceMapping::STATUS_ACTIVE)
+            ->where('mapping_role', StationDeviceMapping::ROLE_DISPLAY_TV)
+            ->with('physicalDevice')
+            ->first();
+        $tv = $mapping ? $mapping->physicalDevice : null;
+
+        $volumeLimitConfig = [
+            'enabled' => $tv ? (bool) $tv->auto_volume_limit_enabled : false,
+            'max_limit' => $tv ? (int) ($tv->max_volume_limit ?? 50) : 50,
+            'current_volume' => $tv ? ($tv->current_volume !== null ? (int) $tv->current_volume : null) : null,
+            'is_muted' => $tv ? (bool) $tv->is_muted : false,
+            'last_verified_at' => $tv && $tv->last_volume_verified_at ? $tv->last_volume_verified_at->toIso8601String() : null,
+            'enforcement_status' => $tv ? (string) ($tv->volume_enforcement_status ?? 'WITHIN_LIMIT') : 'WITHIN_LIMIT',
+        ];
+
         if (!self::hasTvControlSchema()) {
             return [
                 'station_id' => $station->id,
@@ -684,6 +1108,7 @@ class TvAlertService
                 'session_generation' => (int) ($station->session_generation ?: 1),
                 'events' => collect(),
                 'tv_state' => $this->getStationSimulatedTvState($station),
+                'volume_limit_config' => $volumeLimitConfig,
                 'polled_at' => $now->toIso8601String(),
             ];
         }
@@ -783,6 +1208,7 @@ class TvAlertService
             'session_generation' => $currentStationGen,
             'events' => $validEvents,
             'tv_state' => $this->getStationSimulatedTvState($station),
+            'volume_limit_config' => $volumeLimitConfig,
             'polled_at' => $now->toIso8601String(),
         ];
     }
@@ -824,9 +1250,65 @@ class TvAlertService
         // Record consumer heartbeat
         Cache::put(self::HEARTBEAT_CACHE_PREFIX . $consumerStation->id, $now->toIso8601String(), self::HEARTBEAT_TTL_SECONDS);
 
-        // Idempotent success if already delivered/acked
+        $rawExecutionStatus = $ackPayload['execution_status'] ?? null;
+        $validExecutionStatuses = [
+            TvAlertEvent::STATUS_COMMAND_RECEIVED,
+            TvAlertEvent::STATUS_COMMAND_EXECUTED,
+            TvAlertEvent::STATUS_STATE_VERIFIED,
+            TvAlertEvent::STATUS_UNSUPPORTED,
+            TvAlertEvent::STATUS_FAILED,
+        ];
+
+        if ($rawExecutionStatus !== null && in_array(strtoupper(trim((string) $rawExecutionStatus)), $validExecutionStatuses, true)) {
+            $executionStatus = strtoupper(trim((string) $rawExecutionStatus));
+        } else {
+            $executionStatus = TvAlertEvent::STATUS_COMMAND_EXECUTED;
+        }
+
+        $realVolume = (isset($ackPayload['real_volume']) && is_numeric($ackPayload['real_volume']))
+            ? max(0, min(100, (int) $ackPayload['real_volume']))
+            : null;
+
+        $realMuted = isset($ackPayload['real_muted'])
+            ? filter_var($ackPayload['real_muted'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+            : null;
+
+        $hardwareErrorCode = !empty($ackPayload['hardware_error_code'])
+            ? substr((string) $ackPayload['hardware_error_code'], 0, 64)
+            : null;
+
+        $hardwareErrorMessage = !empty($ackPayload['hardware_error_message'])
+            ? (string) $ackPayload['hardware_error_message']
+            : null;
+
+        // Idempotent success or progressive state update if already delivered/acked
         if (in_array($event->status, [TvAlertEvent::STATUS_DELIVERED_TO_APP, TvAlertEvent::STATUS_ACKED_BY_SIMULATOR], true)) {
-            return $event;
+            $updateData = [];
+            if ($rawExecutionStatus !== null) {
+                $updateData['execution_status'] = $executionStatus;
+                if ($executionStatus === TvAlertEvent::STATUS_FAILED) {
+                    $updateData['status'] = TvAlertEvent::STATUS_FAILED;
+                    $updateData['result_code'] = $hardwareErrorCode ?? 'FAILED';
+                } elseif ($executionStatus === TvAlertEvent::STATUS_UNSUPPORTED) {
+                    $updateData['result_code'] = 'UNSUPPORTED_ON_TARGET';
+                }
+            }
+            if ($realVolume !== null) {
+                $updateData['real_volume'] = $realVolume;
+            }
+            if ($realMuted !== null) {
+                $updateData['real_muted'] = $realMuted;
+            }
+            if ($hardwareErrorCode !== null) {
+                $updateData['hardware_error_code'] = $hardwareErrorCode;
+            }
+            if ($hardwareErrorMessage !== null) {
+                $updateData['hardware_error_message'] = $hardwareErrorMessage;
+            }
+            if (!empty($updateData)) {
+                $event->update($updateData);
+            }
+            return $event->fresh();
         }
 
         // Reject if already terminal
@@ -888,9 +1370,24 @@ class TvAlertService
             throw TvControlException::conflict('Stasiun sudah tidak digunakan. ACK ditolak.');
         }
 
+        $status = TvAlertEvent::STATUS_DELIVERED_TO_APP;
+        $resultCode = $ackPayload['result_code'] ?? 'ACKED_BY_SIMULATOR';
+
+        if ($executionStatus === TvAlertEvent::STATUS_FAILED) {
+            $status = TvAlertEvent::STATUS_FAILED;
+            $resultCode = $hardwareErrorCode ?? 'FAILED';
+        } elseif ($executionStatus === TvAlertEvent::STATUS_UNSUPPORTED) {
+            $resultCode = 'UNSUPPORTED_ON_TARGET';
+        }
+
         $event->update([
-            'status' => TvAlertEvent::STATUS_DELIVERED_TO_APP,
-            'result_code' => 'ACKED_BY_SIMULATOR',
+            'status' => $status,
+            'execution_status' => $executionStatus,
+            'result_code' => $resultCode,
+            'real_volume' => $realVolume,
+            'real_muted' => $realMuted,
+            'hardware_error_code' => $hardwareErrorCode,
+            'hardware_error_message' => $hardwareErrorMessage,
             'delivered_at' => $event->delivered_at ?? $now,
             'acked_at' => $now,
         ]);
@@ -963,6 +1460,13 @@ class TvAlertService
 
         $latestEvent = $events->first();
 
+        $lanHostIp = $this->getLanHostIp();
+        $lanBaseUrl = $this->getLanBaseUrl();
+        $devToken = "dev_tv_station_{$station->id}";
+        $lanApiUrl = "{$lanBaseUrl}/api/tv-agent/events?station_id={$station->id}&token={$devToken}";
+
+        $isRealDriver = config('hardware.driver') === 'real';
+
         return [
             'station_id' => $station->id,
             'station_name' => $station->nama,
@@ -987,14 +1491,112 @@ class TvAlertService
                 'pairing_status' => $tv->pairing_status,
                 'is_active' => $tv->is_active,
             ] : null,
-            'control_mode' => 'MOCK',
-            'simulator_online' => $this->isSimulatorOnline($station->id),
+            'control_mode' => $isRealDriver ? 'REAL' : 'MOCK',
+            'simulator_online' => $isRealDriver ? ($tv && $tv->connection_status === 'ONLINE') : $this->isSimulatorOnline($station->id),
+            'direct_transport' => $isRealDriver,
             'consumer_token' => $this->generateConsumerToken($station->id, $tv ? $tv->id : 0),
-            'dev_token' => "dev_tv_station_{$station->id}",
-            'tv_state' => $this->getStationSimulatedTvState($station),
+            'dev_token' => $devToken,
+            'lan_host_ip' => $lanHostIp,
+            'lan_base_url' => $lanBaseUrl,
+            'lan_api_url' => $lanApiUrl,
+            'tv_state' => $isRealDriver ? [
+                'device_id' => $tv ? $tv->id : null,
+                'device_name' => $tv ? $tv->name : null,
+                'power' => ($tv && $tv->connection_status === 'ONLINE') ? 'ON' : 'OFF',
+                'volume' => $tv ? $tv->current_volume : null,
+                'mute' => $tv ? (bool) $tv->is_muted : false,
+                'simulated' => false,
+                'physical_state_verified' => false,
+            ] : $this->getStationSimulatedTvState($station),
             'latest_event' => $latestEvent,
             'history' => $events,
         ];
+    }
+
+    /**
+     * Get LAN host IP for direct TV agent/consumer access.
+     * Configurable via TV_AGENT_HOST_IP or derived from APP_URL / SERVER_ADDR.
+     */
+    public function getLanHostIp(): string
+    {
+        $envIp = env('TV_AGENT_HOST_IP');
+        if (!empty($envIp)) {
+            return (string) $envIp;
+        }
+
+        // In automated testing environment, retain default deterministic IP unless overridden
+        if (app()->environment('testing')) {
+            return '192.168.200.240';
+        }
+
+        $appUrl = (string) config('app.url');
+        if (!empty($appUrl)) {
+            $host = parse_url($appUrl, PHP_URL_HOST);
+            if (!empty($host) && filter_var($host, FILTER_VALIDATE_IP) && $host !== '127.0.0.1' && $host !== '0.0.0.0') {
+                return (string) $host;
+            }
+        }
+
+        if (request() && request()->server('SERVER_ADDR')) {
+            $serverAddr = (string) request()->server('SERVER_ADDR');
+            if ($serverAddr !== '127.0.0.1' && $serverAddr !== '::1') {
+                return $serverAddr;
+            }
+        }
+
+        // Dynamically detect local network IPv4 interface (non-loopback, non-link-local)
+        if (function_exists('net_get_interfaces')) {
+            $interfaces = @net_get_interfaces();
+            if (is_array($interfaces)) {
+                foreach ($interfaces as $name => $info) {
+                    if (!empty($info['unicast'])) {
+                        foreach ($info['unicast'] as $entry) {
+                            $addr = $entry['address'] ?? '';
+                            if (filter_var($addr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                                if ($addr !== '127.0.0.1' && !str_starts_with($addr, '169.254.')) {
+                                    return (string) $addr;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return '192.168.200.240';
+    }
+
+    /**
+     * Get LAN port for TV agent access.
+     */
+    public function getLanPort(): int
+    {
+        $envPort = env('TV_AGENT_PORT');
+        if (!empty($envPort)) {
+            return (int) $envPort;
+        }
+
+        if (request() && request()->server('SERVER_PORT')) {
+            return (int) request()->server('SERVER_PORT');
+        }
+
+        return 8000;
+    }
+
+    /**
+     * Get full LAN base URL (e.g., http://192.168.200.240:8000).
+     */
+    public function getLanBaseUrl(): string
+    {
+        $ip = $this->getLanHostIp();
+        $port = $this->getLanPort();
+        $scheme = (request() && request()->isSecure()) ? 'https' : 'http';
+
+        if (($port === 80 && $scheme === 'http') || ($port === 443 && $scheme === 'https')) {
+            return "{$scheme}://{$ip}";
+        }
+
+        return "{$scheme}://{$ip}:{$port}";
     }
 
     /**

@@ -41,8 +41,15 @@ class AutomationStatusService
             ];
         }
 
+        $now = Carbon::now();
         $pendingIntent = AutomationIntent::where('station_id', $station->id)
-            ->whereIn('status', [AutomationIntent::STATUS_PENDING, AutomationIntent::STATUS_PROCESSING, AutomationIntent::STATUS_RETRY_PENDING])
+            ->where(function ($query) use ($now) {
+                $query->where('status', AutomationIntent::STATUS_PROCESSING)
+                    ->orWhere(function ($sub) use ($now) {
+                        $sub->whereIn('status', [AutomationIntent::STATUS_PENDING, AutomationIntent::STATUS_RETRY_PENDING])
+                            ->where('scheduled_at', '<=', $now);
+                    });
+            })
             ->latest('id')
             ->first();
 
@@ -81,6 +88,7 @@ class AutomationStatusService
             'hardware_state' => $currentState,
             'hardware_badge' => $badge,
             'device_role' => $activeMapping->mapping_role,
+            'connection_status' => $activeMapping->physicalDevice->connection_status ?? 'UNVERIFIED',
             'last_verified_at' => $station->last_hardware_verified_at ? $station->last_hardware_verified_at->toDateTimeString() : null,
             'pending_intent' => $pendingIntent ? [
                 'id' => $pendingIntent->id,
@@ -98,6 +106,18 @@ class AutomationStatusService
     public function formatBadge(string $stateCode): array
     {
         return match ($stateCode) {
+            'STATE_ON' => [
+                'code' => 'STATE_ON',
+                'label' => 'Menyala',
+                'color_class' => 'badge-success',
+                'icon' => 'fas fa-power-off',
+            ],
+            'STATE_OFF' => [
+                'code' => 'STATE_OFF',
+                'label' => 'Mati (Standby)',
+                'color_class' => 'badge-secondary',
+                'icon' => 'far fa-circle',
+            ],
             'SIMULATED_ON', 'RELAY_ON_VERIFIED' => [
                 'code' => $stateCode,
                 'label' => $stateCode === 'SIMULATED_ON' ? 'Simulasi Relay ON' : 'Relay ON (Terverifikasi)',

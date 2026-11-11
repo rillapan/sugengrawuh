@@ -125,6 +125,14 @@ Route::middleware(['auth', 'check_role:admin,owner'])->group(function () {
     // Station Hardware Manual Power Control (Admin + Owner)
     Route::post('/admin/stations/{station}/hardware/power', [App\Http\Controllers\Admin\StationPowerController::class, 'controlPower'])->name('admin.stations.hardware.power');
     Route::get('/admin/stations/{station}/hardware/status', [App\Http\Controllers\Admin\StationPowerController::class, 'status'])->name('admin.stations.hardware.status');
+
+    // TV Maximum Volume Limit Settings (Admin + Owner)
+    Route::post('/admin/stations/{station}/tv-volume-limit', [App\Http\Controllers\Admin\TvControlController::class, 'updateVolumeLimit'])->name('admin.stations.tv-volume-limit.store')->whereNumber('station');
+
+    // SR-CONSOLE-ALERT-001: Admin & Owner PlayStation Console Notification Endpoints
+    Route::post('/admin/stations/{station}/console-notifications', [App\Http\Controllers\Admin\ConsoleNotificationController::class, 'sendNotification'])->name('admin.stations.console-notifications.store')->whereNumber('station');
+    Route::get('/admin/stations/{station}/console-notifications', [App\Http\Controllers\Admin\ConsoleNotificationController::class, 'history'])->name('admin.stations.console-notifications.index')->whereNumber('station');
+    Route::get('/admin/stations/{station}/console-status', [App\Http\Controllers\Admin\ConsoleNotificationController::class, 'status'])->name('admin.stations.console-status')->whereNumber('station');
 });
 
 // Admin Only Routes
@@ -241,6 +249,7 @@ Route::middleware(['auth', 'check_role:admin'])->group(function () {
 
     // SR-TV-INTEGRATION-001: Admin Samsung TV Alert & Volume Control + TV Simulator Lab
     Route::post('/admin/stations/{station}/tv-alerts', [App\Http\Controllers\Admin\TvControlController::class, 'sendAlert'])->name('admin.stations.tv-alerts.store')->whereNumber('station');
+    Route::post('/admin/stations/{station}/notifications', [App\Http\Controllers\Admin\TvControlController::class, 'dispatchNotification'])->name('admin.stations.notifications.store')->whereNumber('station');
     Route::post('/admin/stations/{station}/tv-volume', [App\Http\Controllers\Admin\TvControlController::class, 'sendVolume'])->name('admin.stations.tv-volume.store')->whereNumber('station');
     Route::get('/admin/stations/{station}/tv-control-status', [App\Http\Controllers\Admin\TvControlController::class, 'status'])->name('admin.stations.tv-control.status')->whereNumber('station');
     Route::get('/admin/tv-lab', [App\Http\Controllers\Admin\TvControlController::class, 'labIndex'])->name('admin.tv-lab.index');

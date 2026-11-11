@@ -570,6 +570,7 @@
                                                         @php
                                                             $connStatus = $activeMapping->physicalDevice->connection_status ?? 'UNVERIFIED';
                                                         @endphp
+                                                        <span id="conn-badge-{{ $device->id }}">
                                                         @if($connStatus === 'ONLINE')
                                                             <span class="stitch-badge-online"><i class="fa fa-circle text-white mr-1 small"></i>ONLINE</span>
                                                         @elseif($connStatus === 'OFFLINE')
@@ -577,6 +578,7 @@
                                                         @else
                                                             <span class="badge badge-warning text-dark px-2 py-0.5"><i class="fa fa-question-circle mr-1"></i>UNVERIFIED</span>
                                                         @endif
+                                                        </span>
                                                         <span class="stitch-badge-role">{{ $activeMapping->mapping_role }}</span>
                                                     </div>
 
@@ -686,9 +688,15 @@
                                                 <i class="fas fa-external-link-alt mr-1"></i>TV Lab
                                             </a>
                                         </div>
-                                        <span class="badge badge-warning text-dark d-block mb-2 py-1 text-wrap">
-                                            <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGIRIM PERINTAH FISIK TANPA VERIFIKASI
-                                        </span>
+                                        @if (config('hardware.driver') === 'real')
+                                            <span class="badge badge-success text-white d-block mb-2 py-1 text-wrap" id="tv-mode-banner-{{ $device->id }}">
+                                                <i class="fas fa-satellite-dish mr-1"></i>REAL HARDWARE — WEBSOCKET TV TERHUBUNG
+                                            </span>
+                                        @else
+                                            <span class="badge badge-warning text-dark d-block mb-2 py-1 text-wrap" id="tv-mode-banner-{{ $device->id }}">
+                                                <i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGIRIM PERINTAH FISIK TANPA VERIFIKASI
+                                            </span>
+                                        @endif
 
                                         <div class="small mb-2">
                                             <div class="d-flex justify-content-between">
@@ -727,42 +735,61 @@
                                                 <span class="text-muted">Koneksi & Status TV:</span>
                                                 <span>
                                                     <span class="badge badge-secondary" id="tv-conn-status-{{ $device->id }}">{{ $tvPhysical->connection_status ?? 'UNVERIFIED' }}</span>
-                                                    <span class="badge badge-info" id="tv-mode-{{ $device->id }}">MOCK</span>
-                                                    <span class="badge {{ $initSimOnline ? 'badge-success' : 'badge-secondary' }}" id="tv-sim-conn-{{ $device->id }}">
-                                                        {{ $initSimOnline ? 'CONNECTED' : 'WAITING_CONSUMER' }}
-                                                    </span>
+                                                    <span class="badge {{ config('hardware.driver') === 'real' ? 'badge-success' : 'badge-info' }}" id="tv-mode-{{ $device->id }}">{{ config('hardware.driver') === 'real' ? 'REAL' : 'SIMULATED' }}</span>
+                                                    @if (config('hardware.driver') !== 'real')
+                                                        <span class="badge {{ $initSimOnline ? 'badge-success' : 'badge-secondary' }}" id="tv-sim-conn-{{ $device->id }}">
+                                                            {{ $initSimOnline ? 'CONNECTED' : 'WAITING_CONSUMER' }}
+                                                        </span>
+                                                    @endif
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
-                                                <span class="text-muted">Status Audio (Sim):</span>
+                                                <span class="text-muted">Status Audio:</span>
                                                 <span>
-                                                    <span class="badge badge-primary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $initVol }}/100</span>
-                                                    <span class="badge {{ $initMute ? 'badge-danger' : 'badge-success' }}" id="tv-mute-badge-{{ $device->id }}">
-                                                        {{ $initMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)' }}
-                                                    </span>
+                                                    @if (config('hardware.driver') === 'real')
+                                                        <span class="badge badge-secondary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $tvPhysical && $tvPhysical->current_volume !== null ? $tvPhysical->current_volume . '/100' : 'Tidak tersedia' }}</span>
+                                                        <span class="badge {{ $initMute ? 'badge-warning text-dark' : 'badge-secondary' }}" id="tv-mute-badge-{{ $device->id }}">
+                                                            {{ $initMute ? 'MUTE (TOGGLED)' : 'AUDIO' }}
+                                                        </span>
+                                                    @else
+                                                        <span class="badge badge-primary" id="tv-vol-badge-{{ $device->id }}">Vol: {{ $initVol }}/100</span>
+                                                        <span class="badge {{ $initMute ? 'badge-danger' : 'badge-success' }}" id="tv-mute-badge-{{ $device->id }}">
+                                                            {{ $initMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)' }}
+                                                        </span>
+                                                    @endif
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
                                                 <span class="text-muted">Batas Volume Maks:</span>
                                                 <span class="badge {{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? 'badge-success' : 'badge-secondary' }}" id="tv-vol-limit-badge-{{ $device->id }}">
-                                                    {{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? 'BATAS: ' . ($tvPhysical->max_volume_limit ?? 50) . '%' : 'NONAKTIF' }}
+                                                    {{ $tvPhysical && $tvPhysical->auto_volume_limit_enabled ? 'BATAS: ' . ($tvPhysical->max_volume_limit ?? 50) . '% (Soft Limit)' : 'NONAKTIF' }}
                                                 </span>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
                                                 <span class="text-muted">Status Event Terakhir:</span>
-                                                <span class="badge badge-secondary" id="tv-last-event-badge-{{ $device->id }}">
-                                                    {{ $initLatestEvent ? $initLatestEvent->status : 'BELUM ADA EVENT' }}
+                                                @php
+                                                    $initEventStatus = $initLatestEvent ? $initLatestEvent->status : null;
+                                                    if (config('hardware.driver') === 'real' && $initEventStatus === 'SENT_TO_SIMULATOR') {
+                                                        $initEventStatus = 'COMMAND_SENT';
+                                                    }
+                                                @endphp
+                                                <span class="badge {{ $initEventStatus === 'COMMAND_SENT' ? 'badge-success' : ($initEventStatus === 'FAILED' ? 'badge-danger' : 'badge-secondary') }}" id="tv-last-event-badge-{{ $device->id }}">
+                                                    {{ $initEventStatus ?: 'BELUM ADA EVENT' }}
                                                 </span>
                                             </div>
                                         </div>
 
                                         <!-- SR-TV-VOLUME: Volume Slider & Numerical Input -->
+                                        @php
+                                            $isRealDriver = config('hardware.driver') === 'real';
+                                            $isSetVolumeDisabled = (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') || $isRealDriver;
+                                        @endphp
                                         <div class="p-2 mb-2 bg-light border rounded">
                                             <div class="d-flex justify-content-between align-items-center mb-1">
                                                 <small class="font-weight-bold text-dark"><i class="fas fa-volume-up text-primary mr-1"></i>Kontrol Volume</small>
                                                 <span>
                                                     <span class="badge badge-primary mr-1" id="tv-target-vol-badge-{{ $device->id }}">Target: {{ $initVol }}/100</span>
-                                                    <span class="badge badge-secondary" id="tv-actual-vol-badge-{{ $device->id }}">Aktual: {{ $tvPhysical && $tvPhysical->current_volume !== null ? $tvPhysical->current_volume . '/100' : 'UNVERIFIED' }}</span>
+                                                    <span class="badge badge-secondary" id="tv-actual-vol-badge-{{ $device->id }}">Aktual: {{ $tvPhysical && $tvPhysical->current_volume !== null ? $tvPhysical->current_volume . '/100' : 'Tidak tersedia' }}</span>
                                                 </span>
                                             </div>
                                             <div class="input-group input-group-sm mb-1">
@@ -770,26 +797,32 @@
                                                        id="tv-vol-slider-{{ $device->id }}"
                                                        data-station-id="{{ $device->id }}"
                                                        min="0" max="100" value="{{ $initVol }}"
-                                                       {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                       {{ $isSetVolumeDisabled ? 'disabled' : '' }}>
                                                 <input type="number" class="form-control form-control-sm text-center tv-vol-number"
                                                        id="tv-vol-number-{{ $device->id }}"
                                                        data-station-id="{{ $device->id }}"
                                                        min="0" max="100" value="{{ $initVol }}"
                                                        style="max-width: 60px;"
-                                                       {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}>
+                                                       {{ $isSetVolumeDisabled ? 'disabled' : '' }}>
                                                 <div class="input-group-append">
                                                     <button type="button" class="btn btn-sm btn-primary btn-tv-set-volume"
+                                                            id="btn-tv-set-volume-{{ $device->id }}"
                                                             data-station-id="{{ $device->id }}"
                                                             data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                                            {{ (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') ? 'disabled' : '' }}
-                                                            title="Terapkan angka volume">
+                                                            {{ $isSetVolumeDisabled ? 'disabled' : '' }}
+                                                            title="{{ $isRealDriver ? 'Set volume absolut dinonaktifkan pada Samsung TV fisik (hanya mendukung tombol relatif)' : 'Terapkan angka volume' }}">
                                                         <i class="fas fa-check"></i> Set
                                                     </button>
                                                 </div>
                                             </div>
+                                            @if ($isRealDriver)
+                                                <small class="text-muted d-block mt-1" id="tv-set-unsupported-note-{{ $device->id }}">
+                                                    <i class="fas fa-info-circle mr-1 text-info"></i>Set Volume numerik dinonaktifkan: Samsung TV hanya mendukung tombol relatif (+5, -5, Mute).
+                                                </small>
+                                            @endif
                                             <div class="d-flex justify-content-between align-items-center mt-1">
                                                 <small class="text-muted">Status Eksekusi:</small>
-                                                <span class="badge badge-info" id="tv-exec-status-badge-{{ $device->id }}">SIMULASI</span>
+                                                <span class="badge {{ $isRealDriver ? 'badge-success' : 'badge-info' }}" id="tv-exec-status-badge-{{ $device->id }}">{{ $isRealDriver ? 'REAL (Siap)' : 'SIMULATED' }}</span>
                                             </div>
                                         </div>
 
@@ -1283,8 +1316,8 @@
                     if (timerTd) {
                         timerTd.innerHTML = '<span class="text-danger fw-bold">00:00:00 (Habis)</span>';
                     }
-                    // Note: In Gate G2, backend background worker evaluates expiration.
-                    // Frontend countdown reaching zero does NOT alter database state directly.
+                    // Trigger immediate server heartbeat so TV turn-off and status transition happen with zero delay
+                    syncDeviceTimersWithServer();
                     return;
                 }
                 
@@ -1338,18 +1371,25 @@
             .then(res => res.json())
             .then(data => {
                 if (data && data.devices) {
+                    let needsReload = false;
                     data.devices.forEach(dev => {
                         const statusTd = document.getElementById('status-' + dev.id);
                         if (statusTd) {
                             if (dev.status === 'Tersedia' && !statusTd.innerHTML.includes('Tersedia')) {
-                                statusTd.innerHTML = '<i class="fa fa-circle text-success" aria-hidden="true"></i> Tersedia';
+                                statusTd.innerHTML = '<span class="text-muted small font-weight-medium">Status:</span> <span class="stitch-status-dot stitch-dot-available"></span> <span class="font-weight-bold text-dark small">Tersedia</span>';
                                 const timerTd = document.getElementById('timer-' + dev.id);
                                 if (timerTd) {
                                     timerTd.textContent = '-';
                                 }
+                                needsReload = true;
                             }
                         }
                     });
+                    // If a station that was in-use has completed and become Tersedia,
+                    // automatically refresh the view if no modal is actively open
+                    if (needsReload && !document.querySelector('.modal.show')) {
+                        window.location.reload();
+                    }
                 }
             })
             .catch(err => {
@@ -1716,6 +1756,21 @@
                                 }
                             }
 
+                            // Sync connection status badge (ONLINE/OFFLINE) — reflects live DB value
+                            var connStatus = res.data.connection_status;
+                            if (connStatus) {
+                                var connBadge = document.getElementById('conn-badge-' + deviceId);
+                                if (connBadge) {
+                                    if (connStatus === 'ONLINE') {
+                                        connBadge.innerHTML = '<span class="stitch-badge-online"><i class="fa fa-circle text-white mr-1 small"></i>ONLINE</span>';
+                                    } else if (connStatus === 'OFFLINE') {
+                                        connBadge.innerHTML = '<span class="stitch-badge-offline"><i class="fa fa-circle text-white mr-1 small"></i>OFFLINE</span>';
+                                    } else {
+                                        connBadge.innerHTML = '<span class="badge badge-warning text-dark px-2 py-0.5"><i class="fa fa-question-circle mr-1"></i>UNVERIFIED</span>';
+                                    }
+                                }
+                            }
+
                             // Sync power button status text if not currently processing
                             var hwState = res.data.hardware_state;
                             if (hwState) {
@@ -1844,7 +1899,11 @@
                         $btn.attr('data-current-state', reported);
 
                         var stationName = $btn.data('station-name') || ('Station #' + stationId);
-                        showFeedbackAlert('success', 'Power ' + stationName + ' berhasil diubah ke ' + reported + ' (' + (res.driver_type || 'Driver') + ')');
+                        if (res.result_code === 'ACK_WAKEUP') {
+                            showFeedbackAlert('warning', 'Perintah ON dikirim ke ' + stationName + '. TV akan menyala dalam beberapa detik. ' + (res.message || ''));
+                        } else {
+                            showFeedbackAlert('success', 'Power ' + stationName + ' berhasil diubah ke ' + reported + ' (' + (res.driver_type || 'Driver') + ')');
+                        }
 
                         // Sync automation badge if available
                         var $relayBadge = $('#automation-badge-' + stationId);
@@ -1896,6 +1955,8 @@
             function getEventBadgeClass(status) {
                 switch (status) {
                     case 'PENDING': return 'badge-warning text-dark';
+                    case 'COMMAND_SENT': return 'badge-success';
+                    case 'UNSUPPORTED': return 'badge-warning text-dark';
                     case 'DELIVERED_TO_APP': return 'badge-success';
                     case 'ACKED_BY_SIMULATOR': return 'badge-success';
                     case 'EXPIRED': return 'badge-secondary';
@@ -1934,16 +1995,60 @@
 
             function renderStationTvControlState(stationId, data) {
                 if (!data) return;
+                var isReal = data.control_mode === 'REAL';
+
+                var modeBanner = document.getElementById('tv-mode-banner-' + stationId);
+                if (modeBanner) {
+                    modeBanner.className = isReal ? 'badge badge-success text-white d-block mb-2 py-1 text-wrap' : 'badge badge-warning text-dark d-block mb-2 py-1 text-wrap';
+                    modeBanner.innerHTML = isReal
+                        ? '<i class="fas fa-satellite-dish mr-1"></i>REAL HARDWARE — WEBSOCKET TV TERHUBUNG'
+                        : '<i class="fas fa-exclamation-triangle mr-1"></i>SIMULASI — TIDAK MENGIRIM PERINTAH FISIK TANPA VERIFIKASI';
+                }
+
+                var modeBadge = document.getElementById('tv-mode-' + stationId);
+                if (modeBadge) {
+                    modeBadge.className = isReal ? 'badge badge-success' : 'badge badge-info';
+                    modeBadge.textContent = isReal ? 'REAL' : 'SIMULATED';
+                }
+
                 var volBadge = document.getElementById('tv-vol-badge-' + stationId);
                 if (volBadge) {
-                    var vol = (data.tv_state && typeof data.tv_state.volume !== 'undefined') ? data.tv_state.volume : data.simulated_volume;
-                    volBadge.textContent = 'Vol: ' + (typeof vol !== 'undefined' ? vol : 30) + '/100';
+                    if (isReal) {
+                        var volVal = (data.volume_limit_config && data.volume_limit_config.current_volume !== null && typeof data.volume_limit_config.current_volume !== 'undefined')
+                            ? 'Vol: ' + data.volume_limit_config.current_volume + '/100'
+                            : 'Vol: Tidak tersedia';
+                        volBadge.textContent = volVal;
+                        volBadge.className = 'badge badge-secondary';
+                    } else {
+                        var vol = (data.tv_state && typeof data.tv_state.volume !== 'undefined') ? data.tv_state.volume : data.simulated_volume;
+                        volBadge.textContent = 'Vol: ' + (typeof vol !== 'undefined' ? vol : 30) + '/100';
+                        volBadge.className = 'badge badge-primary';
+                    }
                 }
 
                 var targetVolBadge = document.getElementById('tv-target-vol-badge-' + stationId);
                 var sliderEl = document.getElementById('tv-vol-slider-' + stationId);
                 var numberEl = document.getElementById('tv-vol-number-' + stationId);
-                var currentVolVal = (data.tv_state && typeof data.tv_state.volume !== 'undefined') ? data.tv_state.volume : (data.simulated_volume || 30);
+                var setBtn = document.getElementById('btn-tv-set-volume-' + stationId);
+                var setNote = document.getElementById('tv-set-unsupported-note-' + stationId);
+
+                // Absolute Set Volume disable logic on Real TV
+                if (isReal) {
+                    if (sliderEl) sliderEl.disabled = true;
+                    if (numberEl) numberEl.disabled = true;
+                    if (setBtn) {
+                        setBtn.disabled = true;
+                        setBtn.title = 'Set volume numerik dinonaktifkan: Samsung TV fisik hanya mendukung tombol relatif';
+                    }
+                    if (setNote) setNote.style.display = '';
+                } else {
+                    if (sliderEl && !sliderEl.getAttribute('data-is-busy')) sliderEl.disabled = false;
+                    if (numberEl && !numberEl.getAttribute('data-is-busy')) numberEl.disabled = false;
+                    if (setBtn && !setBtn.getAttribute('data-is-busy')) setBtn.disabled = false;
+                    if (setNote) setNote.style.display = 'none';
+                }
+
+                var currentVolVal = (data.tv_state && typeof data.tv_state.volume !== 'undefined' && data.tv_state.volume !== null) ? data.tv_state.volume : (data.simulated_volume || 30);
                 if (targetVolBadge) targetVolBadge.textContent = 'Target: ' + currentVolVal + '/100';
                 if (sliderEl && document.activeElement !== sliderEl) sliderEl.value = currentVolVal;
                 if (numberEl && document.activeElement !== numberEl) numberEl.value = currentVolVal;
@@ -1952,14 +2057,42 @@
                 if (actualVolBadge) {
                     var actVol = (data.volume_limit_config && data.volume_limit_config.current_volume !== null && typeof data.volume_limit_config.current_volume !== 'undefined')
                         ? data.volume_limit_config.current_volume + '/100'
-                        : 'UNVERIFIED';
+                        : 'Tidak tersedia';
                     actualVolBadge.textContent = 'Aktual: ' + actVol;
+                    actualVolBadge.className = (actVol === 'Tidak tersedia') ? 'badge badge-secondary' : 'badge badge-success';
                 }
 
                 var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
-                if (execBadge) {
-                    execBadge.className = 'badge badge-info';
-                    execBadge.textContent = 'SIMULASI';
+                if (execBadge && !execBadge.getAttribute('data-is-busy')) {
+                    if (isReal) {
+                        if (data.latest_event) {
+                            var evSt = data.latest_event.status;
+                            var exSt = data.latest_event.execution_status;
+                            var resCode = data.latest_event.result_code;
+                            if (evSt === 'FAILED' || exSt === 'FAILED') {
+                                execBadge.className = 'badge badge-danger';
+                                execBadge.textContent = 'FAILED';
+                            } else if (resCode === 'CAPABILITY_UNSUPPORTED' || exSt === 'UNSUPPORTED') {
+                                execBadge.className = 'badge badge-warning text-dark';
+                                execBadge.textContent = 'UNSUPPORTED';
+                            } else if (evSt === 'COMMAND_SENT' || exSt === 'COMMAND_SENT' || exSt === 'COMMAND_EXECUTED') {
+                                execBadge.className = 'badge badge-success';
+                                execBadge.textContent = 'COMMAND_SENT';
+                            } else if (evSt === 'PENDING') {
+                                execBadge.className = 'badge badge-warning text-dark';
+                                execBadge.textContent = 'PENDING';
+                            } else {
+                                execBadge.className = 'badge badge-success';
+                                execBadge.textContent = 'REAL (Siap)';
+                            }
+                        } else {
+                            execBadge.className = 'badge badge-success';
+                            execBadge.textContent = 'REAL (Siap)';
+                        }
+                    } else {
+                        execBadge.className = 'badge badge-info';
+                        execBadge.textContent = 'SIMULASI';
+                    }
                 }
 
                 var consoleNameEl = document.getElementById('console-name-' + stationId);
@@ -1980,16 +2113,26 @@
 
                 var muteBadge = document.getElementById('tv-mute-badge-' + stationId);
                 if (muteBadge) {
-                    var isMute = (data.tv_state && typeof data.tv_state.mute !== 'undefined') ? data.tv_state.mute : data.simulated_muted;
-                    muteBadge.className = 'badge ' + (isMute ? 'badge-danger' : 'badge-success');
-                    muteBadge.textContent = isMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)';
+                    if (isReal) {
+                        muteBadge.className = 'badge badge-secondary';
+                        muteBadge.textContent = 'AUDIO';
+                    } else {
+                        var isMute = (data.tv_state && typeof data.tv_state.mute !== 'undefined') ? data.tv_state.mute : data.simulated_muted;
+                        muteBadge.className = 'badge ' + (isMute ? 'badge-danger' : 'badge-success');
+                        muteBadge.textContent = isMute ? 'MUTE (SIM)' : 'UNMUTE (SIM)';
+                    }
                 }
 
                 var simConn = document.getElementById('tv-sim-conn-' + stationId);
                 if (simConn) {
-                    var isOnline = !!data.simulator_online;
-                    simConn.className = 'badge ' + (isOnline ? 'badge-success' : 'badge-secondary');
-                    simConn.textContent = isOnline ? 'CONNECTED' : 'WAITING_CONSUMER';
+                    if (isReal) {
+                        simConn.style.display = 'none';
+                    } else {
+                        simConn.style.display = '';
+                        var isOnline = !!data.simulator_online;
+                        simConn.className = 'badge ' + (isOnline ? 'badge-success' : 'badge-secondary');
+                        simConn.textContent = isOnline ? 'CONNECTED' : 'WAITING_CONSUMER';
+                    }
                 }
 
                 if (data.volume_limit_config) {
@@ -1997,7 +2140,7 @@
                     if (limitBadge) {
                         if (data.volume_limit_config.enabled) {
                             limitBadge.className = 'badge badge-success';
-                            limitBadge.textContent = 'BATAS: ' + (data.volume_limit_config.max_limit || 50) + '%';
+                            limitBadge.textContent = 'BATAS: ' + (data.volume_limit_config.max_limit || 50) + '% (Soft Limit)';
                         } else {
                             limitBadge.className = 'badge badge-secondary';
                             limitBadge.textContent = 'NONAKTIF';
@@ -2009,6 +2152,7 @@
                 if (lastEvBadge) {
                     if (data.latest_event && data.latest_event.status) {
                         var st = data.latest_event.status;
+                        if (isReal && st === 'SENT_TO_SIMULATOR') st = 'COMMAND_SENT';
                         lastEvBadge.className = 'badge ' + getEventBadgeClass(st);
                         lastEvBadge.textContent = st;
                     } else {
@@ -2022,6 +2166,7 @@
                 var tbody = document.getElementById('tv-history-table-body');
                 if (!tbody) return;
                 tbody.innerHTML = '';
+                var isReal = data.control_mode === 'REAL';
 
                 if (data.consumer_config) {
                     var cfgSt = document.getElementById('tv-cfg-station-id');
@@ -2079,19 +2224,29 @@
                     tr.appendChild(tdMsg);
 
                     var tdVol = document.createElement('td');
-                    tdVol.textContent = (typeof ev.simulated_volume !== 'undefined' ? ev.simulated_volume : 30) + '/100 ' + (ev.simulated_muted ? '(MUTE)' : '');
+                    if (isReal) {
+                        tdVol.textContent = (ev.real_volume !== null && typeof ev.real_volume !== 'undefined') ? (ev.real_volume + '/100') : 'Tidak tersedia';
+                    } else {
+                        tdVol.textContent = (typeof ev.simulated_volume !== 'undefined' ? ev.simulated_volume : 30) + '/100 ' + (ev.simulated_muted ? '(MUTE)' : '');
+                    }
                     tr.appendChild(tdVol);
 
                     var tdStatus = document.createElement('td');
                     var badgeSpan = document.createElement('span');
-                    badgeSpan.className = 'badge ' + getEventBadgeClass(ev.status);
-                    badgeSpan.textContent = ev.status;
+                    var stText = ev.status;
+                    if (isReal && stText === 'SENT_TO_SIMULATOR') stText = 'COMMAND_SENT';
+                    badgeSpan.className = 'badge ' + getEventBadgeClass(stText);
+                    badgeSpan.textContent = stText;
                     tdStatus.appendChild(badgeSpan);
                     tr.appendChild(tdStatus);
 
                     tbody.appendChild(tr);
                 });
             }
+
+            var stationLastEventId = {};
+            var fastPollCountdown = 0;
+            var pollTimer = null;
 
             function pollTvControlPanels() {
                 document.querySelectorAll('.tv-control-panel').forEach(function(panel) {
@@ -2108,6 +2263,14 @@
                     .then(function(r) { return r.json(); })
                     .then(function(res) {
                         if (res && res.success && res.data) {
+                            var ev = res.data.latest_event;
+                            if (ev && ev.id) {
+                                if (stationLastEventId[stationId] && ev.id < stationLastEventId[stationId]) {
+                                    // Out of order old response, drop to prevent UI rollback
+                                    return;
+                                }
+                                stationLastEventId[stationId] = ev.id;
+                            }
                             renderStationTvControlState(stationId, res.data);
                             if (activeHistoryStationId && String(activeHistoryStationId) === String(stationId)) {
                                 renderHistoryTable(res.data);
@@ -2116,6 +2279,21 @@
                     })
                     .catch(function() {});
                 });
+            }
+
+            function scheduleNextPoll() {
+                var delay = fastPollCountdown > 0 ? 1200 : 2500;
+                if (fastPollCountdown > 0) fastPollCountdown--;
+                if (pollTimer) clearTimeout(pollTimer);
+                pollTimer = setTimeout(function() {
+                    pollTvControlPanels();
+                    scheduleNextPoll();
+                }, delay);
+            }
+
+            function triggerFastPolling() {
+                fastPollCountdown = 5; // 5 cycles at 1.2s (~6 seconds of fast polling)
+                scheduleNextPoll();
             }
 
             document.addEventListener('DOMContentLoaded', function() {
@@ -2244,14 +2422,27 @@
 
                     var stationId = btn.getAttribute('data-station-id');
                     var volumeUrl = btn.getAttribute('data-volume-url');
+                    var panel = btn.closest('.tv-control-panel');
                     var numInput = document.getElementById('tv-vol-number-' + stationId);
                     var targetVol = parseInt(numInput ? numInput.value : '30', 10);
                     var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
+                    var modeBadge = document.getElementById('tv-mode-' + stationId);
+                    var isRealStation = modeBadge && modeBadge.textContent === 'REAL';
 
-                    btn.disabled = true;
+                    if (isRealStation) {
+                        showFeedbackAlert('warning', 'Pengaturan numerik presisi (SET_VOLUME) tidak didukung oleh protokol WebSocket Samsung TV fisik. Gunakan tombol +5, -5, atau Mute.');
+                        return;
+                    }
+
+                    var allStationBtns = panel ? panel.querySelectorAll('.btn-tv-volume-cmd, .btn-tv-set-volume') : [btn];
+                    allStationBtns.forEach(function(b) { b.disabled = true; b.setAttribute('data-is-busy', 'true'); });
+                    var origHtml = btn.innerHTML;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
                     if (execBadge) {
                         execBadge.className = 'badge badge-warning text-dark';
                         execBadge.textContent = 'PENDING';
+                        execBadge.setAttribute('data-is-busy', 'true');
                     }
 
                     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
@@ -2272,22 +2463,30 @@
                     .then(function(res) {
                         if (res.ok && res.body && res.body.success && res.body.data) {
                             var d = res.body.data;
+                            var isReal = d.control_mode === 'REAL';
+                            if (d.id || d.event_id) stationLastEventId[stationId] = d.id || d.event_id;
+
                             var volBadge = document.getElementById('tv-vol-badge-' + stationId);
-                            if (volBadge) volBadge.textContent = 'Vol: ' + d.volume + '/100';
-                            var targetBadge = document.getElementById('tv-target-vol-badge-' + stationId);
-                            if (targetBadge) targetBadge.textContent = 'Target: ' + d.volume + '/100';
-                            if (execBadge) {
-                                execBadge.className = 'badge badge-success';
-                                execBadge.textContent = 'SIMULASI (SET ' + d.volume + ')';
+                            if (volBadge) {
+                                volBadge.textContent = 'Vol: ' + (isReal ? (d.actual_volume !== null && typeof d.actual_volume !== 'undefined' ? d.actual_volume + '/100' : 'Tidak tersedia') : d.volume + '/100');
                             }
-                            showFeedbackAlert('success', 'Volume berhasil disetel ke ' + d.volume + '/100 (Simulasi)');
+                            var targetBadge = document.getElementById('tv-target-vol-badge-' + stationId);
+                            if (targetBadge && d.volume) targetBadge.textContent = 'Target: ' + d.volume + '/100';
+                            if (execBadge) {
+                                execBadge.className = isReal ? 'badge badge-success' : 'badge badge-info';
+                                execBadge.textContent = isReal ? 'COMMAND_SENT' : ('SIMULASI (SET ' + d.volume + ')');
+                            }
+                            showFeedbackAlert('success', (isReal ? '[REAL TV] ' : '[SIMULASI] ') + (res.body.message || 'Volume berhasil disetel.'));
+                            triggerFastPolling();
                         } else {
                             if (execBadge) {
-                                execBadge.className = 'badge badge-danger';
-                                execBadge.textContent = 'FAILED';
+                                var isUnsup = res.body && (res.body.error_code === 'CAPABILITY_UNSUPPORTED' || res.body.error_code === 'UNSUPPORTED_CAPABILITY');
+                                execBadge.className = isUnsup ? 'badge badge-warning text-dark' : 'badge badge-danger';
+                                execBadge.textContent = isUnsup ? 'UNSUPPORTED' : 'FAILED';
                             }
                             var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal menyetel volume.';
                             showFeedbackAlert('warning', errMsg);
+                            triggerFastPolling();
                         }
                     })
                     .catch(function() {
@@ -2298,7 +2497,16 @@
                         showFeedbackAlert('danger', 'Gagal menghubungi server untuk menyetel volume.');
                     })
                     .finally(function() {
-                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                        if (execBadge) execBadge.removeAttribute('data-is-busy');
+                        allStationBtns.forEach(function(b) {
+                            b.removeAttribute('data-is-busy');
+                            if (b.classList.contains('btn-tv-set-volume') && isRealStation) {
+                                b.disabled = true;
+                            } else {
+                                b.disabled = false;
+                            }
+                        });
                     });
                 });
 
@@ -2310,9 +2518,24 @@
                     var stationId = btn.getAttribute('data-station-id');
                     var command = btn.getAttribute('data-command');
                     var volumeUrl = btn.getAttribute('data-volume-url');
+                    var panel = btn.closest('.tv-control-panel');
+                    var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
+                    var modeBadge = document.getElementById('tv-mode-' + stationId);
+                    var isRealStation = modeBadge && modeBadge.textContent === 'REAL';
+
                     if (!volumeUrl || !command) return;
 
-                    btn.disabled = true;
+                    var allStationBtns = panel ? panel.querySelectorAll('.btn-tv-volume-cmd, .btn-tv-set-volume') : [btn];
+                    allStationBtns.forEach(function(b) { b.disabled = true; b.setAttribute('data-is-busy', 'true'); });
+                    var origHtml = btn.innerHTML;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+                    if (execBadge) {
+                        execBadge.className = 'badge badge-warning text-dark';
+                        execBadge.textContent = 'PENDING';
+                        execBadge.setAttribute('data-is-busy', 'true');
+                    }
+
                     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
 
                     fetch(volumeUrl, {
@@ -2333,28 +2556,64 @@
                     .then(function(res) {
                         if (res.ok && res.body && res.body.success && res.body.data) {
                             var d = res.body.data;
+                            var isReal = d.control_mode === 'REAL';
+                            if (d.id || d.event_id) stationLastEventId[stationId] = d.id || d.event_id;
+
                             var volBadge = document.getElementById('tv-vol-badge-' + stationId);
-                            if (volBadge) volBadge.textContent = 'Vol: ' + d.volume + '/100';
+                            if (volBadge) {
+                                volBadge.textContent = 'Vol: ' + (isReal ? (d.actual_volume !== null && typeof d.actual_volume !== 'undefined' ? d.actual_volume + '/100' : 'Tidak tersedia') : d.volume + '/100');
+                            }
                             var muteBadge = document.getElementById('tv-mute-badge-' + stationId);
                             if (muteBadge) {
-                                muteBadge.className = 'badge ' + (d.mute ? 'badge-danger' : 'badge-success');
-                                muteBadge.textContent = d.mute ? 'MUTE (SIM)' : 'UNMUTE (SIM)';
+                                if (isReal) {
+                                    muteBadge.className = 'badge badge-warning text-dark';
+                                    muteBadge.textContent = 'MUTE (TOGGLED)';
+                                } else {
+                                    muteBadge.className = 'badge ' + (d.mute ? 'badge-danger' : 'badge-success');
+                                    muteBadge.textContent = d.mute ? 'MUTE (SIM)' : 'UNMUTE (SIM)';
+                                }
+                            }
+                            if (execBadge) {
+                                execBadge.className = isReal ? 'badge badge-success' : 'badge badge-info';
+                                execBadge.textContent = isReal ? 'COMMAND_SENT' : 'SIMULASI';
                             }
                             var lastEv = document.getElementById('tv-last-event-badge-' + stationId);
                             if (lastEv && d.status) {
-                                lastEv.className = 'badge ' + getEventBadgeClass(d.status);
-                                lastEv.textContent = d.status;
+                                var stText = isReal ? (d.execution_status || 'COMMAND_SENT') : d.status;
+                                lastEv.className = 'badge ' + getEventBadgeClass(stText);
+                                lastEv.textContent = stText;
                             }
+                            showFeedbackAlert('success', (isReal ? '[REAL TV] ' : '[SIMULASI] ') + (res.body.message || 'Perintah berhasil dikirim.'));
+                            triggerFastPolling();
                         } else {
+                            if (execBadge) {
+                                var isUnsup = res.body && (res.body.error_code === 'CAPABILITY_UNSUPPORTED' || res.body.error_code === 'UNSUPPORTED_CAPABILITY');
+                                execBadge.className = isUnsup ? 'badge badge-warning text-dark' : 'badge badge-danger';
+                                execBadge.textContent = isUnsup ? 'UNSUPPORTED' : 'FAILED';
+                            }
                             var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal mengirim perintah volume.';
                             showFeedbackAlert('warning', errMsg);
+                            triggerFastPolling();
                         }
                     })
                     .catch(function() {
+                        if (execBadge) {
+                            execBadge.className = 'badge badge-danger';
+                            execBadge.textContent = 'FAILED';
+                        }
                         showFeedbackAlert('danger', 'Gagal menghubungi server untuk perintah volume.');
                     })
                     .finally(function() {
-                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                        if (execBadge) execBadge.removeAttribute('data-is-busy');
+                        allStationBtns.forEach(function(b) {
+                            b.removeAttribute('data-is-busy');
+                            if (b.classList.contains('btn-tv-set-volume') && isRealStation) {
+                                b.disabled = true;
+                            } else {
+                                b.disabled = false;
+                            }
+                        });
                     });
                 });
 
@@ -2509,9 +2768,9 @@
                     });
                 }
 
-                // Poll TV control status every 2.5 seconds
+                // Initialize adaptive status polling (1.2s when active, 2.5s steady-state)
                 pollTvControlPanels();
-                setInterval(pollTvControlPanels, 2500);
+                scheduleNextPoll();
             });
         })();
         @endif

@@ -51,6 +51,7 @@ class StationHardwareMappingController extends Controller
         $historyMappings = collect();
         $availableTvs = collect();
         $availableRelays = collect();
+        $availableConsoles = collect();
 
         if ($selectedStation) {
             $activeMappings = $this->service->getActiveMapping($selectedStation->id);
@@ -70,6 +71,12 @@ class StationHardwareMappingController extends Controller
                 ->where('brand', PhysicalDevice::BRAND_SHELLY)
                 ->orderBy('name')
                 ->get();
+
+            $availableConsoles = PhysicalDevice::active()
+                ->unmapped()
+                ->where('category', PhysicalDevice::CATEGORY_GAME_CONSOLE)
+                ->orderBy('name')
+                ->get();
         }
 
         return view('admin.hardware.mappings', [
@@ -81,6 +88,7 @@ class StationHardwareMappingController extends Controller
             'historyMappings' => $historyMappings,
             'availableTvs' => $availableTvs,
             'availableRelays' => $availableRelays,
+            'availableConsoles' => $availableConsoles,
         ]);
     }
 

@@ -144,7 +144,8 @@ class AutomationIntentService
     ): AutomationIntent {
         $activeRelay = $station->activeLightRelay()->first();
         $activeTv = $station->activeDisplayTv()->first();
-        $activeMapping = $activeRelay ?? $activeTv;
+        $activeConsole = $station->activeGameConsole()->first();
+        $activeMapping = $activeRelay ?? $activeTv ?? $activeConsole;
 
         $generation = (int) ($station->session_generation ?? 1);
 

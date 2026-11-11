@@ -25,12 +25,17 @@ class StorePhysicalDeviceRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:100'],
-            'category' => ['required', 'string', 'in:SMART_TV,SMART_RELAY'],
-            'brand' => ['required', 'string', 'in:SAMSUNG,SHELLY'],
+            'category' => ['required', 'string', 'in:SMART_TV,SMART_RELAY,GAME_CONSOLE'],
+            'brand' => ['required', 'string', 'in:SAMSUNG,SHELLY,SONY,PLAYSTATION'],
             'model' => ['nullable', 'string', 'max:50'],
-            'mac_address' => ['required', 'string', 'max:20'],
+            'mac_address' => ['nullable', 'required_unless:category,GAME_CONSOLE', 'string', 'max:20'],
             'ip_address' => ['required', 'string', 'max:45'],
             'device_identifier' => ['nullable', 'string', 'max:100'],
+            'firmware_version' => ['nullable', 'string', 'max:50'],
+            'homebrew_type' => ['nullable', 'string', 'max:50'],
+            'homebrew_version' => ['nullable', 'string', 'max:50'],
+            'driver_type' => ['nullable', 'string', 'max:50'],
+            'transport_config' => ['nullable', 'array'],
         ];
     }
 
@@ -42,8 +47,8 @@ class StorePhysicalDeviceRequest extends FormRequest
     public function messages()
     {
         return [
-            'brand.in' => 'Merek yang didukung hanya SAMSUNG (Smart TV) atau SHELLY (Smart Relay). Merek COOCAA atau lainnya tidak diizinkan.',
-            'category.in' => 'Kategori harus SMART_TV atau SMART_RELAY.',
+            'brand.in' => 'Merek yang didukung: SAMSUNG (Smart TV), SHELLY (Smart Relay), atau SONY / PLAYSTATION (Game Console).',
+            'category.in' => 'Kategori harus SMART_TV, SMART_RELAY, atau GAME_CONSOLE.',
         ];
     }
 }

@@ -69,6 +69,23 @@ class DeviceStatusManagementService
         $device->pairing_payload = $token;
         $device->pairing_status = PhysicalDevice::PAIRING_PAIRED;
         $device->last_seen_at = now();
+
+        // Populate standard verified capabilities for paired hardware if not already set
+        if (empty($device->verified_capabilities)) {
+            $device->verified_capabilities = match (true) {
+                $device->category === PhysicalDevice::CATEGORY_SMART_TV && $device->brand === PhysicalDevice::BRAND_SAMSUNG => [
+                    'GET_STATUS', 'POWER_ON', 'STANDBY', 'MUTE', 'UNMUTE', 'VOLUME_UP', 'VOLUME_DOWN'
+                ],
+                $device->category === PhysicalDevice::CATEGORY_SMART_RELAY && $device->brand === PhysicalDevice::BRAND_SHELLY => [
+                    'SWITCH_ON', 'SWITCH_OFF', 'GET_STATUS'
+                ],
+                $device->category === PhysicalDevice::CATEGORY_GAME_CONSOLE => [
+                    'SHOW_NOTIFICATION'
+                ],
+                default => $device->verified_capabilities,
+            };
+        }
+
         return $device->save();
     }
 

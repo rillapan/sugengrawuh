@@ -178,7 +178,8 @@ class HardwareDiagnosticsController extends Controller
                 $driver = $this->createFakeDriver($device, $scenario);
             }
 
-            $result = $driver->pair($device, ['password' => $password]);
+            $forceNew = $request->boolean('force_new', false);
+            $result = $driver->pair($device, ['password' => $password, 'force_new' => $forceNew]);
             $this->logDiagnosticEvent($deviceId, 'PAIR', $result->toArray(), $mode);
 
             return response()->json([
