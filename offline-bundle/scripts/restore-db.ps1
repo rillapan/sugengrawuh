@@ -11,13 +11,14 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$BackupFile,
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [switch]$SkipPreRestoreBackup
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Ensure-SRDirectories -InstallDir $InstallDir
 
 if (-not (Test-Path -LiteralPath $BackupFile)) {
@@ -112,4 +113,3 @@ try {
     }
 }
 exit 0
-

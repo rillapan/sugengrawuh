@@ -230,12 +230,23 @@ Route::middleware(['auth', 'check_role:admin'])->group(function () {
         Route::post('/reset', [App\Http\Controllers\Admin\HardwareSimulatorController::class, 'reset'])->name('reset');
     });
 
-    // G4-B: Hardware Diagnostics Routes (Admin Only)
+    // G3: Hardware Setup & Onboarding Wizard (Admin Only)
+    Route::prefix('/admin/hardware/setup')->name('admin.hardware.setup.')->group(function () {
+        Route::get('/', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'index'])->name('index');
+        Route::get('/network-info', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'networkInfo'])->name('network-info');
+        Route::post('/check-gateway', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'checkGateway'])->name('check-gateway');
+        Route::post('/discover', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'discover'])->name('discover');
+        Route::get('/summary', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'summary'])->name('summary');
+        Route::post('/finish', [App\Http\Controllers\Admin\HardwareSetupWizardController::class, 'finish'])->name('finish');
+    });
+
+    // G4-B & G2: Hardware Diagnostics Routes (Admin Only)
     Route::prefix('/admin/hardware/diagnostics')->name('admin.hardware.diagnostics.')->group(function () {
         Route::get('/', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'index'])->name('index');
         Route::get('/devices', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'devices'])->name('devices');
         Route::post('/probe', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'probe'])->name('probe');
         Route::post('/pair', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'pair'])->name('pair');
+        Route::post('/approve-physical', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'approvePhysicalControl'])->name('approve-physical');
         Route::post('/command', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'sendCommand'])->name('command');
         Route::get('/status/{id}', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'getStatus'])->name('status');
         Route::get('/events/{id}', [App\Http\Controllers\Admin\HardwareDiagnosticsController::class, 'getEvents'])->name('events');

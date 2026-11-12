@@ -3,27 +3,39 @@
 .SYNOPSIS
     Sugeng Rawuh Billing & POS - Stage E Cashier Startup, Health Check & Recovery GUI Launcher
 .DESCRIPTION
-    Invoked by the Desktop Shortcut ("Sugeng Rawuh Billing & POS").
-    Fast path: If http://localhost:8008/api/health is already healthy, opens the browser immediately.
+    Invoked by Desktop Shortcuts ("Sugeng Rawuh Billing & POS" and "Sugeng Rawuh - Hardware Setup & Test Center").
+    Note on Windows Home (Windows 11 Home / 10 Home): Docker Desktop requires an interactive Windows user login
+    session; this launcher automatically starts Docker Desktop within the active cashier login session if needed.
+    Fast path: If http://localhost:8008/api/health is already healthy, ensures WOL helper & network info are synced
+    and opens the browser immediately to $appUrl$TargetPath.
     Recovery path: Displays a clean Windows Forms progress window while starting WOL Helper,
     Docker Desktop, Sugeng Rawuh containers (db, app, web, daemon, scheduler), reconciling billing
     sessions after power loss/reboot, and then opening the browser once /api/health returns 200 OK.
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
+    [string]$TargetPath = "",
     [switch]$Headless
 )
 
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Ensure-SRDirectories -InstallDir $InstallDir
 
 $envProdPath = Join-Path $InstallDir ".env.production"
 $appPort = Get-SREnvValue -EnvFilePath $envProdPath -Key "APP_PORT" -DefaultValue "8008"
 $appUrl = "http://localhost:$appPort"
 $healthUrl = "$appUrl/api/health"
+$targetUrl = if ([string]::IsNullOrWhiteSpace($TargetPath)) {
+    $appUrl
+} elseif ($TargetPath.StartsWith("/")) {
+    "$appUrl$TargetPath"
+} else {
+    "$appUrl/$TargetPath"
+}
 
 function Test-SRAppHealth {
     param([string]$Url, [int]$TimeoutSec = 2)
@@ -50,12 +62,55 @@ function Ensure-WolHelperRunning {
     }
 }
 
-# FAST PATH: If server is already up & healthy, ensure WOL helper is running and open browser immediately!
+function Sync-LauncherNetworkInfo {
+    try {
+        $phys = @(
+            Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object {
+                $null -ne $_.IPv4Address -and
+                $null -ne $_.NetAdapter -and
+                $_.NetAdapter.Status -eq "Up" -and
+                $_.InterfaceAlias -notmatch "vEthernet|WSL|Docker|Loopback|VMware|VirtualBox|Bluetooth|Tailscale|ZeroTier"
+            }
+        )
+        if ($phys.Count -gt 0) {
+            $active = $phys[0]
+            $curIp = [string]$active.IPv4Address[0].IPAddress
+            $prevInfo = Get-SRNetworkInfo -InstallDir $InstallDir
+            $prevIp = if ($null -ne $prevInfo -and -not [string]::IsNullOrWhiteSpace([string]$prevInfo.IPv4Address)) { [string]$prevInfo.IPv4Address } else { "" }
+
+            if ([string]::IsNullOrWhiteSpace($prevIp) -or $prevIp -ne $curIp) {
+                $networkScript = Join-Path $PSScriptRoot "configure-network.ps1"
+                if ((Test-SRAdmin) -and (Test-Path -LiteralPath $networkScript)) {
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $networkScript -InstallDir $InstallDir | Out-Null
+                } else {
+                    $rawMac = ([string]$active.NetAdapter.MacAddress -replace '-', ':').ToUpperInvariant()
+                    $gw = if ($null -ne $active.IPv4DefaultGateway) { [string]$active.IPv4DefaultGateway.NextHop } else { "-" }
+                    Save-SRNetworkInfo `
+                        -InstallDir $InstallDir `
+                        -InterfaceAlias $active.InterfaceAlias `
+                        -InterfaceIndex $active.InterfaceIndex `
+                        -IPv4Address $curIp `
+                        -PrefixLength ([int]$active.IPv4Address[0].PrefixLength) `
+                        -DefaultGateway $gw `
+                        -MacAddress $rawMac `
+                        -DhcpEnabled $true `
+                        -IpChanged (-not [string]::IsNullOrWhiteSpace($prevIp) -and $prevIp -ne $curIp) `
+                        -PreviousIPv4Address $prevIp `
+                        -AppPort ([int]$appPort) `
+                        -WolPort 18009 | Out-Null
+                }
+            }
+        }
+    } catch {}
+}
+
+# FAST PATH: If server is already up & healthy, ensure WOL helper is running, sync network info, and open browser immediately!
 if (Test-SRAppHealth -Url $healthUrl -TimeoutSec 2) {
     Ensure-WolHelperRunning
-    Write-SRLog -Level "INFO" -Message "Fast-path launcher: Server sudah siap, membuka browser $appUrl" -InstallDir $InstallDir
+    Sync-LauncherNetworkInfo
+    Write-SRLog -Level "INFO" -Message "Fast-path launcher: Server sudah siap, membuka browser $targetUrl" -InstallDir $InstallDir
     if (-not $Headless) {
-        Start-Process $appUrl
+        Start-Process $targetUrl
     }
     exit 0
 }
@@ -123,12 +178,13 @@ function Update-LauncherUi {
 }
 
 try {
-    # Step 1: Ensure Physical-LAN Wake-on-LAN Helper is running on port 18009
-    Update-LauncherUi -StatusText "Menjalankan layanan Wake-on-LAN Helper (Port 18009)..." -Percent 15
+    # Step 1: Ensure Physical-LAN Wake-on-LAN Helper is running on port 18009 & sync network info
+    Update-LauncherUi -StatusText "Menjalankan layanan Wake-on-LAN Helper (Port 18009) & memeriksa IP LAN..." -Percent 15
     Ensure-WolHelperRunning
+    Sync-LauncherNetworkInfo
 
-    # Step 2: Check Docker Engine readiness; start Docker Desktop if not running
-    Update-LauncherUi -StatusText "Memeriksa status Docker Engine..." -Percent 25
+    # Step 2: Check Docker Engine readiness; start Docker Desktop in user login session if not running
+    Update-LauncherUi -StatusText "Memeriksa status Docker Engine (sesi user Windows Home/Pro)..." -Percent 25
     $dockerReady = $false
     try {
         $null = & docker info 2>$null
@@ -138,11 +194,8 @@ try {
     } catch {}
 
     if (-not $dockerReady) {
-        $dockerDesktopExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-        if (Test-Path -LiteralPath $dockerDesktopExe) {
-            Update-LauncherUi -StatusText "Menyalakan Docker Desktop (mohon tunggu 30-90 detik)..." -Percent 30
-            Start-Process -FilePath $dockerDesktopExe -ErrorAction SilentlyContinue | Out-Null
-        }
+        Update-LauncherUi -StatusText "Menyalakan Docker Desktop (mohon tunggu 30-90 detik)..." -Percent 30
+        Start-SRDockerDesktop -InstallDir $InstallDir | Out-Null
 
         $maxWait = 180
         $waited = 0
@@ -164,7 +217,7 @@ try {
         }
 
         if (-not $dockerReady) {
-            throw "Docker Engine belum siap setelah $maxWait detik. Pastikan aplikasi Docker Desktop berjalan normal."
+            throw "Docker Engine belum siap setelah $maxWait detik. Pastikan sesi user Windows sudah login dan aplikasi Docker Desktop berjalan normal."
         }
     }
 
@@ -202,14 +255,14 @@ try {
     ) -IgnoreExitCode | Out-Null
 
     # Step 6: Open Browser & Close Status Window
-    Update-LauncherUi -StatusText "Server siap! Membuka aplikasi kasir di browser..." -Percent 100
+    Update-LauncherUi -StatusText "Server siap! Membuka aplikasi di browser..." -Percent 100
     Start-Sleep -Milliseconds 500
     if ($null -ne $form) {
         $form.Close()
         $form.Dispose()
     }
     if (-not $Headless) {
-        Start-Process $appUrl
+        Start-Process $targetUrl
     }
     exit 0
 } catch {
@@ -221,14 +274,22 @@ try {
     }
     if (-not $Headless) {
         $logFolder = Join-Path $InstallDir "data\logs"
-        $dialogMsg = "Sistem Sugeng Rawuh membutuhkan waktu lebih lama atau mengalami kendala saat menyala:`r`n`r`n$errMsg`r`n`r`nApakah Anda ingin membuka folder log diagnostik ($logFolder)?"
+        $setupServicesScript = Join-Path $PSScriptRoot "setup-services.ps1"
+        $dialogMsg = "Sistem Sugeng Rawuh membutuhkan waktu lebih lama atau mengalami kendala saat menyala:`r`n`r`n$errMsg`r`n`r`nKlik 'Yes' untuk menjalankan Repair Layanan Otomatis (setup-services.ps1 -Repair), 'No' untuk membuka folder log diagnostik ($logFolder), atau 'Cancel' untuk menutup."
         $choice = [System.Windows.Forms.MessageBox]::Show(
             $dialogMsg,
-            "Sugeng Rawuh Billing & POS - Diagnostik",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            "Sugeng Rawuh Billing & POS - Pemulihan & Diagnostik",
+            [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
             [System.Windows.Forms.MessageBoxIcon]::Warning
         )
-        if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) {
+        if ($choice -eq [System.Windows.Forms.DialogResult]::Yes -and (Test-Path -LiteralPath $setupServicesScript)) {
+            Start-Process -FilePath "powershell.exe" -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", "`"$setupServicesScript`"",
+                "-InstallDir", "`"$InstallDir`"",
+                "-Repair", "-Interactive"
+            ) -Verb RunAs
+        } elseif ($choice -eq [System.Windows.Forms.DialogResult]::No) {
             Start-Process "explorer.exe" -ArgumentList "`"$logFolder`""
         }
     }

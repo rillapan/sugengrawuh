@@ -21,6 +21,7 @@ class WindowsInstallerScriptsTest extends TestCase
             'installer/scripts/backup-db.ps1',
             'installer/scripts/restore-db.ps1',
             'installer/scripts/update-app.ps1',
+            'installer/scripts/setup-services.ps1',
             'installer/scripts/install-orchestrator.ps1',
             '.github/workflows/build-windows-installer.yml',
         ];
@@ -182,5 +183,133 @@ class WindowsInstallerScriptsTest extends TestCase
         $this->assertStringContainsString('OutputBaseFilename=SugengRawuh-Setup-v{#MyAppVersion}', $iss);
         $this->assertStringContainsString('uninsneveruninstall', $iss);
         $this->assertStringContainsString('install-orchestrator.ps1', $iss);
+    }
+
+    /** @test */
+    public function g1_all_scripts_resolve_install_dir_dynamically_and_persist_installed_location()
+    {
+        $common = file_get_contents(base_path('installer/scripts/common.ps1'));
+
+        $this->assertStringContainsString('installed-location.json', $common);
+        $this->assertStringContainsString('Save-SRInstalledLocation', $common);
+        $this->assertStringContainsString('.env.production', $common);
+        $this->assertStringContainsString('Lanjutkan Instalasi Sugeng Rawuh.lnk', $common);
+        $this->assertStringContainsString('Start-SRDockerDesktop', $common);
+        $this->assertStringContainsString('Wait-SRDockerEngine', $common);
+        $this->assertStringContainsString('AllowInteractiveRetry', $common);
+        $this->assertStringContainsString('RetryCancel', $common);
+        $this->assertStringContainsString('Save-SRNetworkInfo', $common);
+        $this->assertStringContainsString('Get-SRNetworkInfo', $common);
+        $this->assertStringContainsString('network-info.json', $common);
+
+        $scriptsRequiringDynamicInstallDir = [
+            'installer/scripts/preflight-check.ps1',
+            'installer/scripts/install-prerequisites.ps1',
+            'installer/scripts/install-app.ps1',
+            'installer/scripts/install-orchestrator.ps1',
+            'installer/scripts/configure-network.ps1',
+            'installer/scripts/wol-helper.ps1',
+            'installer/scripts/startup-launcher.ps1',
+            'installer/scripts/backup-db.ps1',
+            'installer/scripts/restore-db.ps1',
+            'installer/scripts/update-app.ps1',
+            'installer/scripts/setup-services.ps1',
+        ];
+
+        foreach ($scriptsRequiringDynamicInstallDir as $relativePath) {
+            $scriptContent = file_get_contents(base_path($relativePath));
+            $this->assertStringContainsString(
+                'Get-SRInstallDir -InstallDir $InstallDir',
+                $scriptContent,
+                "Script {$relativePath} must resolve \$InstallDir dynamically via Get-SRInstallDir"
+            );
+        }
+    }
+
+    /** @test */
+    public function g1_preflight_checks_dual_disk_space_and_separates_windows_update_reboot_from_wsl_prereq()
+    {
+        $preflight = file_get_contents(base_path('installer/scripts/preflight-check.ps1'));
+
+        // Dual-disk capacity check (target drive D: vs system drive C:)
+        $this->assertStringContainsString('$appDriveLetter', $preflight);
+        $this->assertStringContainsString('$sysDriveLetter', $preflight);
+        $this->assertStringContainsString('$appDiskFreeGB', $preflight);
+        $this->assertStringContainsString('$sysDiskFreeGB', $preflight);
+        $this->assertStringContainsString('Docker Desktop -> Settings -> Resources -> Advanced -> Disk image location', $preflight);
+        $this->assertStringContainsString('jangan memindahkan file .vhdx secara manual', $preflight);
+
+        // Separate Windows Update reboot pending from WSL2 prerequisite reboot pending
+        $this->assertStringContainsString('$windowsUpdateRebootPending', $preflight);
+        $this->assertStringContainsString('$wslRebootPending', $preflight);
+        $this->assertStringContainsString('$wslInstalled -and $dockerInstalled', $preflight);
+    }
+
+    /** @test */
+    public function g1_setup_services_prevents_duplicate_wol_listeners_and_preserves_backup_schedule_and_data_on_repair()
+    {
+        $setupServices = file_get_contents(base_path('installer/scripts/setup-services.ps1'));
+
+        // Parameters
+        $this->assertStringContainsString('[switch]$Repair', $setupServices);
+        $this->assertStringContainsString('[switch]$Interactive', $setupServices);
+        $this->assertStringContainsString('[switch]$ForceResetBackupSchedule', $setupServices);
+
+        // Single-instance WOL helper on port 18009
+        $this->assertStringContainsString('http://127.0.0.1:18009/health', $setupServices);
+        $this->assertStringContainsString('MultipleInstances IgnoreNew', $setupServices);
+        $this->assertStringContainsString('SugengRawuh-WOLHelper', $setupServices);
+
+        // Preserve existing DailyBackup schedule unless ForceResetBackupSchedule
+        $this->assertStringContainsString('Get-ScheduledTask -TaskName "SugengRawuh-DailyBackup"', $setupServices);
+        $this->assertStringContainsString('$ForceResetBackupSchedule', $setupServices);
+
+        // Shortcuts creation
+        $this->assertStringContainsString('Sugeng Rawuh Billing & POS.lnk', $setupServices);
+        $this->assertStringContainsString('Sugeng Rawuh - Hardware Setup & Test Center.lnk', $setupServices);
+        $this->assertStringContainsString('/admin/hardware/setup', $setupServices);
+        $this->assertStringContainsString('Repair Layanan Sugeng Rawuh.lnk', $setupServices);
+
+        // Repair mode safety: never destructive
+        $this->assertStringContainsString('Start-SRDockerDesktop', $setupServices);
+        $this->assertStringContainsString('Wait-SRDockerEngine', $setupServices);
+        $this->assertStringContainsString('billing:reconcile', $setupServices);
+        $this->assertStringNotContainsString('down -v', $setupServices);
+        $this->assertStringNotContainsString('migrate:fresh', $setupServices);
+        $this->assertStringNotContainsString('db:wipe', $setupServices);
+        $this->assertStringNotContainsString('db:seed', $setupServices);
+    }
+
+    /** @test */
+    public function g1_startup_launcher_and_network_scripts_handle_restart_ip_change_and_hardware_test_center_shortcut()
+    {
+        $net = file_get_contents(base_path('installer/scripts/configure-network.ps1'));
+        $wol = file_get_contents(base_path('installer/scripts/wol-helper.ps1'));
+        $launcher = file_get_contents(base_path('installer/scripts/startup-launcher.ps1'));
+        $orchestrator = file_get_contents(base_path('installer/scripts/install-orchestrator.ps1'));
+        $iss = file_get_contents(base_path('installer/SugengRawuh.iss'));
+
+        // Network script detects DHCP and IP change and saves network-info.json
+        $this->assertStringContainsString('Get-NetIPInterface', $net);
+        $this->assertStringContainsString('Get-SRNetworkInfo', $net);
+        $this->assertStringContainsString('Save-SRNetworkInfo', $net);
+        $this->assertStringContainsString('IpChanged', $net);
+
+        // WOL helper exposes GET /network-info
+        $this->assertStringContainsString('GET\s+/network-info', $wol);
+        $this->assertStringContainsString('Get-SRNetworkInfo', $wol);
+
+        // Startup launcher supports TargetPath, refreshes network info, notes Windows Home session requirement, and offers Repair
+        $this->assertStringContainsString('[string]$TargetPath = ""', $launcher);
+        $this->assertStringContainsString('setup-services.ps1', $launcher);
+        $this->assertStringContainsString('-Repair', $launcher);
+        $this->assertStringContainsString('Windows Home', $launcher);
+
+        // Orchestrator & Inno Setup support -Repair and -InnoSetupRun
+        $this->assertStringContainsString('[switch]$Repair', $orchestrator);
+        $this->assertStringContainsString('[switch]$InnoSetupRun', $orchestrator);
+        $this->assertStringContainsString('-InnoSetupRun', $iss);
+        $this->assertStringContainsString('Sugeng Rawuh - Hardware Setup & Test Center', $iss);
+        $this->assertStringContainsString('Repair Layanan Sugeng Rawuh', $iss);
     }
 }

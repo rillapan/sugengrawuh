@@ -9,7 +9,7 @@
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [string]$Reason = "manual",
     [int]$RetentionDays = 30
 )
@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Ensure-SRDirectories -InstallDir $InstallDir
 
 $envProdPath = Join-Path $InstallDir ".env.production"

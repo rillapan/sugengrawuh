@@ -41,15 +41,18 @@ class SamsungTvDriver implements HardwareDriverInterface
     protected SamsungTransportInterface $transport;
     protected ?DeviceStatusManagementService $statusService;
     protected bool $isRealVerifiedMode = false;
+    protected bool $isAuthorizedPairingMode = false;
 
     public function __construct(
         SamsungTransportInterface $transport,
         ?DeviceStatusManagementService $statusService = null,
-        bool $isRealVerifiedMode = false
+        bool $isRealVerifiedMode = false,
+        bool $isAuthorizedPairingMode = false
     ) {
         $this->transport = $transport;
         $this->statusService = $statusService ?? new DeviceStatusManagementService();
         $this->isRealVerifiedMode = $isRealVerifiedMode;
+        $this->isAuthorizedPairingMode = $isAuthorizedPairingMode;
     }
 
     public function getDriverType(): string
@@ -137,6 +140,7 @@ class SamsungTvDriver implements HardwareDriverInterface
 
         // Re-use existing token by default; pass force_new=true to discard it and request fresh pairing.
         $forceNew = $options['force_new'] ?? false;
+        $isAuthorizedPairing = (bool) ($options['authorized_pairing'] ?? $this->isAuthorizedPairingMode);
         $tokenToUse = $forceNew ? null : $device->pairing_payload;
 
         $response = $this->transport->openWebSocket($device->ip_address, $port, $appName, $tokenToUse, $timeoutMs);
@@ -160,7 +164,12 @@ class SamsungTvDriver implements HardwareDriverInterface
         }
 
         if ($response['status'] === 'AUTH_REJECTED') {
-            $this->statusService->recordPairingFailure($device, $this->isRealVerifiedMode);
+            $this->statusService->recordPairingFailure(
+                $device,
+                'Otorisasi pairing ditolak pada layar Samsung TV (ms.channel.unauthorized)',
+                $this->isRealVerifiedMode,
+                $isAuthorizedPairing
+            );
 
             return HardwareCommandResult::createRejected(
                 $device->id,
@@ -184,7 +193,7 @@ class SamsungTvDriver implements HardwareDriverInterface
 
         $token = $response['token'] ?? null;
         if (!empty($token)) {
-            $this->statusService->recordSuccessfulPairing($device, $token, $this->isRealVerifiedMode);
+            $this->statusService->recordSuccessfulPairing($device, $token, $this->isRealVerifiedMode, $isAuthorizedPairing);
         }
         // No token received — do not set PAIRING_PAIRED without evidence of successful authentication.
 
@@ -581,6 +590,11 @@ class SamsungTvDriver implements HardwareDriverInterface
         $cleanMac = str_replace([':', '-', '.'], '', $macAddress);
         if (strlen($cleanMac) !== 12 || !ctype_xdigit($cleanMac)) {
             return false;
+        }
+
+        // Safety guard: Never send physical UDP Wake-on-LAN broadcast packets when using a fake/mocked transport
+        if (!($this->transport instanceof \App\Services\Hardware\Transports\SamsungWebSocketTransport)) {
+            return true;
         }
 
         $packet = str_repeat(chr(0xFF), 6) . str_repeat(pack('H*', $cleanMac), 16);

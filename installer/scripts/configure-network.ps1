@@ -4,13 +4,14 @@
     Sugeng Rawuh Billing & POS - Stage D.D Network Discovery, MikroTik DHCP Reservation Guide & Windows Firewall
 .DESCRIPTION
     Detects physical LAN adapters (filtering out WSL/Docker/Hyper-V virtual adapters), supports multi-NIC selection,
+    detects DHCP status and IP changes across restarts (saving structured data\network-info.json),
     strictly distinguishes Cashier PC IP from Samsung Smart TV / PlayStation IPs, generates copy-pasteable
     MikroTik RouterOS CLI & WinBox DHCP Static Lease instructions, and configures Windows Defender Firewall
     strictly scoped to Private/LAN subnets (TCP 8008 for LAN, TCP 18009 for localhost/Docker WOL helper).
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [int]$AppPort = 8008,
     [int]$WolPort = 18009,
     [switch]$Interactive
@@ -19,10 +20,11 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Assert-SRAdmin -ScriptPath $MyInvocation.MyCommand.Path -ScriptArgs @("-InstallDir", $InstallDir, "-AppPort", $AppPort)
 Ensure-SRDirectories -InstallDir $InstallDir
 
-Write-SRLog -Level "INFO" -Message "=== Memulai Konfigurasi Jaringan LAN, MikroTik & Firewall (Stage D.D) ===" -InstallDir $InstallDir
+Write-SRLog -Level "INFO" -Message "=== Memulai Konfigurasi Jaringan LAN, MikroTik & Firewall (Stage D.D) pada $InstallDir ===" -InstallDir $InstallDir
 
 $envProdPath = Join-Path $InstallDir ".env.production"
 if (Test-Path -LiteralPath $envProdPath) {
@@ -44,6 +46,7 @@ $physicalConfigs = @(
 )
 
 $selectedAdapterInfo = $null
+$dhcpEnabled = $true
 
 if ($physicalConfigs.Count -eq 0) {
     Write-SRLog -Level "WARN" -Message "Tidak ditemukan adaptor jaringan fisik yang aktif. Menggunakan fallback localhost (127.0.0.1)." -InstallDir $InstallDir
@@ -90,6 +93,13 @@ if ($physicalConfigs.Count -eq 0) {
     $prefixLen = [int]$chosenConfig.IPv4Address[0].PrefixLength
     $gateway = if ($null -ne $chosenConfig.IPv4DefaultGateway) { [string]$chosenConfig.IPv4DefaultGateway.NextHop } else { "-" }
 
+    try {
+        $ipIface = Get-NetIPInterface -InterfaceIndex $chosenConfig.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if ($null -ne $ipIface) {
+            $dhcpEnabled = ($ipIface.Dhcp -eq "Enabled")
+        }
+    } catch {}
+
     $selectedAdapterInfo = [pscustomobject]@{
         InterfaceAlias = $chosenConfig.InterfaceAlias
         InterfaceIndex = $chosenConfig.InterfaceIndex
@@ -110,6 +120,29 @@ if ($physicalConfigs.Count -eq 0) {
         Write-SRLog -Level "WARN" -Message "Tidak dapat mengubah kategori profil jaringan secara otomatis: $($_.Exception.Message)" -InstallDir $InstallDir
     }
 }
+
+# Detect IP Change vs Previous network-info.json & Persist Structured Network Metadata
+$previousNetInfo = Get-SRNetworkInfo -InstallDir $InstallDir
+$previousIp = if ($null -ne $previousNetInfo -and -not [string]::IsNullOrWhiteSpace([string]$previousNetInfo.IPv4Address)) { [string]$previousNetInfo.IPv4Address } else { "" }
+$ipChanged = (-not [string]::IsNullOrWhiteSpace($previousIp)) -and ($previousIp -ne $selectedAdapterInfo.IPv4Address)
+
+if ($ipChanged) {
+    Write-SRLog -Level "WARN" -Message "PERINGATAN: IPv4 PC Kasir berubah dari $previousIp menjadi $($selectedAdapterInfo.IPv4Address)! Segera kunci Static DHCP Lease di Router MikroTik." -InstallDir $InstallDir
+}
+
+Save-SRNetworkInfo `
+    -InstallDir $InstallDir `
+    -InterfaceAlias $selectedAdapterInfo.InterfaceAlias `
+    -InterfaceIndex $selectedAdapterInfo.InterfaceIndex `
+    -IPv4Address $selectedAdapterInfo.IPv4Address `
+    -PrefixLength $selectedAdapterInfo.PrefixLength `
+    -DefaultGateway $selectedAdapterInfo.DefaultGateway `
+    -MacAddress $selectedAdapterInfo.MacAddress `
+    -DhcpEnabled $dhcpEnabled `
+    -IpChanged $ipChanged `
+    -PreviousIPv4Address $previousIp `
+    -AppPort $AppPort `
+    -WolPort $WolPort | Out-Null
 
 # 2. Configure Windows Defender Firewall Rules (Strictly Scoped to Private/LocalSubnet & RFC 1918 LAN)
 $lanRemoteAddresses = @("LocalSubnet", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")
@@ -157,6 +190,8 @@ $pcIp  = $selectedAdapterInfo.IPv4Address
 $pcMac = $selectedAdapterInfo.MacAddress
 $pcGw  = $selectedAdapterInfo.DefaultGateway
 $pcNic = $selectedAdapterInfo.InterfaceAlias
+$dhcpStatusText = if ($dhcpEnabled) { "DHCP Dinamis (Disarankan dikunci Static Lease di MikroTik)" } else { "IP Statis" }
+$ipChangeNotice = if ($ipChanged) { "`r`n   [PERHATIAN] IP PC Kasir baru saja berubah dari $previousIp ke $pcIp!" } else { "" }
 
 $networkGuideContent = @"
 ================================================================================
@@ -168,11 +203,13 @@ $networkGuideContent = @"
    -----------------------------------------------------------------------------
    Adaptor Jaringan Aktif : $pcNic
    IPv4 Address PC Kasir  : $pcIp (Prefix /$($selectedAdapterInfo.PrefixLength))
+   Mode Alamat IP         : $dhcpStatusText
    MAC Address PC Kasir   : $pcMac
-   Default Gateway (Router): $pcGw
+   Default Gateway (Router): $pcGw$ipChangeNotice
 
    URL Akses di PC Kasir  : http://localhost:$AppPort
    URL Akses LAN (HP/Tab) : http://${pcIp}:$AppPort
+   Hardware Test Center   : http://localhost:$AppPort/admin/hardware/diagnostics
 
    [PENTING - JANGAN TERTUKAR!]
    IP $pcIp di atas adalah IP PC KASIR (Server Aplikasi), BUKAN IP Samsung Smart TV
@@ -215,6 +252,5 @@ Set-Content -LiteralPath $guideFilePath -Value $networkGuideContent -Encoding UT
 
 Write-Host ""
 Write-Host $networkGuideContent -ForegroundColor Green
-Write-SRLog -Level "SUCCESS" -Message "Informasi jaringan & panduan MikroTik disimpan di: $guideFilePath" -InstallDir $InstallDir
+Write-SRLog -Level "SUCCESS" -Message "Informasi jaringan & panduan MikroTik disimpan di: $guideFilePath dan data\network-info.json" -InstallDir $InstallDir
 exit 0
-

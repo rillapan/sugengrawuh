@@ -58,4 +58,22 @@ class HardwareSafetyException extends Exception
     {
         return new self("CAPABILITY UNVERIFIED: Perintah '{$command}' belum terverifikasi untuk model perangkat '{$model}'.", 422);
     }
+
+    public static function nonReadOnlyDiagnosticCommand(string $command): self
+    {
+        return new self("SAFETY GUARD: Perintah '{$command}' bukan merupakan perintah diagnostik read-only (hanya PROBE dan GET_STATUS yang diizinkan pada jalur read-only).", 403);
+    }
+
+    public static function invalidPhysicalControlApproval(
+        int $deviceId,
+        string $command,
+        string $reason = 'Token persetujuan server (approval_token) tidak valid, sudah digunakan, kedaluwarsa, atau tidak cocok.'
+    ): self {
+        return new self("SAFETY GUARD: Uji kontrol fisik '{$command}' pada perangkat ID {$deviceId} ditolak. {$reason}", 403);
+    }
+
+    public static function invalidPhysicalControlCommand(string $command): self
+    {
+        return new self("SAFETY GUARD: Perintah '{$command}' bukan merupakan perintah uji kontrol fisik yang diizinkan.", 422);
+    }
 }

@@ -83,6 +83,14 @@
             Hardware IoT
         </div>
 
+        @if(auth()->user()->isAdmin())
+            <li class="nav-item {{ isset($active) && $active === 'hardware-setup' ? 'active' : '' }}">
+                <a class="nav-link text-primary font-weight-bold" href="{{ route('admin.hardware.setup.index') }}">
+                    <i class="fas fa-magic text-primary"></i>
+                    <span>Setup & Onboarding</span></a>
+            </li>
+        @endif
+
         <li class="nav-item {{ isset($active) && $active === 'hardware-registry' ? 'active' : '' }}">
             <a class="nav-link" href="{{ route('admin.hardware.registry') }}">
                 <i class="fas fa-microchip"></i>

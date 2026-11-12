@@ -3,18 +3,18 @@
 .SYNOPSIS
     Sugeng Rawuh Billing & POS - Stage D.A Preflight System Inspection
 .DESCRIPTION
-    Inspects Windows build, CPU architecture, RAM, disk space, BIOS Virtualization (Intel VT-x / AMD-V),
-    WSL2 status, Docker Desktop installation & engine readiness, port 8008 availability, LAN connectivity,
-    and detects FRESH_INSTALL vs UPGRADE_OR_REPAIR mode.
+    Inspects Windows build, CPU architecture, RAM, dual-drive disk space (Application target drive D:\ vs System drive C:\),
+    BIOS Virtualization (Intel VT-x / AMD-V), WSL2 status, Docker Desktop installation & engine readiness,
+    port 8008 availability, LAN connectivity, and detects FRESH_INSTALL vs UPGRADE_OR_REPAIR mode.
     Exit codes:
       0  = Ready to install application
       10 = Prerequisites needed (WSL2 / Docker Desktop installation required)
-      20 = System reboot pending
+      20 = System reboot pending for WSL2 / prerequisite activation
       1  = Hardware / OS / BIOS requirement not met (blocking)
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [int]$AppPort = 8008,
     [switch]$JsonOutput
 )
@@ -22,12 +22,15 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Ensure-SRDirectories -InstallDir $InstallDir
-Write-SRLog -Level "INFO" -Message "=== Memulai Pemeriksaan Sistem (Preflight Check Stage D.A) ===" -InstallDir $InstallDir
+Write-SRLog -Level "INFO" -Message "=== Memulai Pemeriksaan Sistem (Preflight Check Stage D.A) pada $InstallDir ===" -InstallDir $InstallDir
 
 $blockers = New-Object System.Collections.Generic.List[string]
 $warnings = New-Object System.Collections.Generic.List[string]
 $prereqsNeeded = New-Object System.Collections.Generic.List[string]
+$windowsUpdateRebootPending = $false
+$wslRebootPending = $false
 $rebootPending = $false
 
 # 1. Detect Existing Installation (FRESH_INSTALL vs UPGRADE_OR_REPAIR)
@@ -80,16 +83,44 @@ if ($totalRamGB -lt 3.8) {
     Write-SRLog -Level "SUCCESS" -Message "RAM fisik mencukupi: $totalRamGB GB" -InstallDir $InstallDir
 }
 
-# 5. Check Free Disk Space (>= 10 GB for fresh install, >= 4 GB for upgrade/repair)
-$driveLetter = (Split-Path -Qualifier $InstallDir).TrimEnd(':')
-$disk = Get-PSDrive -Name $driveLetter -ErrorAction SilentlyContinue
-$freeDiskGB = if ($null -ne $disk) { [math]::Round($disk.Free / 1GB, 2) } else { 0 }
-$minDiskGB = if ($installMode -eq "FRESH_INSTALL") { 10 } else { 4 }
+# 5. Dual-Disk Capacity Check (Application Drive vs System Drive C:\ for WSL2/Docker vhdx)
+$rawAppQualifier = Split-Path -Qualifier $InstallDir
+$appDriveLetter = if (-not [string]::IsNullOrWhiteSpace($rawAppQualifier)) { $rawAppQualifier.TrimEnd(':').ToUpperInvariant() } else { "C" }
+$rawSysDrive = if (-not [string]::IsNullOrWhiteSpace($env:SystemDrive)) { $env:SystemDrive } else { "C:" }
+$sysDriveLetter = $rawSysDrive.TrimEnd(':').ToUpperInvariant()
 
-if ($freeDiskGB -lt $minDiskGB) {
-    $blockers.Add("Ruang penyimpanan bebas pada drive ${driveLetter}: hanya $freeDiskGB GB. Minimal $minDiskGB GB diperlukan untuk mode $installMode.")
+$appDisk = Get-PSDrive -Name $appDriveLetter -ErrorAction SilentlyContinue
+$appDiskFreeGB = if ($null -ne $appDisk) { [math]::Round($appDisk.Free / 1GB, 2) } else { 0 }
+$freeDiskGB = $appDiskFreeGB
+
+$sysDisk = Get-PSDrive -Name $sysDriveLetter -ErrorAction SilentlyContinue
+$sysDiskFreeGB = if ($null -ne $sysDisk) { [math]::Round($sysDisk.Free / 1GB, 2) } else { $appDiskFreeGB }
+
+if ($appDriveLetter -eq $sysDriveLetter) {
+    $minDiskGB = if ($installMode -eq "FRESH_INSTALL") { 10 } else { 4 }
+    if ($appDiskFreeGB -lt $minDiskGB) {
+        $blockers.Add("Ruang penyimpanan bebas pada drive ${appDriveLetter}: hanya $appDiskFreeGB GB. Minimal $minDiskGB GB diperlukan untuk mode $installMode.")
+    } else {
+        Write-SRLog -Level "SUCCESS" -Message "Ruang disk bebas pada drive ${appDriveLetter}: $appDiskFreeGB GB (Minimal $minDiskGB GB)" -InstallDir $InstallDir
+    }
 } else {
-    Write-SRLog -Level "SUCCESS" -Message "Ruang disk bebas pada drive ${driveLetter}: $freeDiskGB GB (Minimal $minDiskGB GB)" -InstallDir $InstallDir
+    # Installing to a secondary drive (e.g., D:\SugengRawuh when C:\ is small)
+    $minAppDiskGB = if ($installMode -eq "FRESH_INSTALL") { 4 } else { 2 }
+    if ($appDiskFreeGB -lt $minAppDiskGB) {
+        $blockers.Add("Ruang penyimpanan bebas pada drive target aplikasi ${appDriveLetter}: hanya $appDiskFreeGB GB. Minimal $minAppDiskGB GB diperlukan untuk mode $installMode.")
+    } else {
+        Write-SRLog -Level "SUCCESS" -Message "Ruang disk bebas pada drive target aplikasi ${appDriveLetter}: $appDiskFreeGB GB (Minimal $minAppDiskGB GB)" -InstallDir $InstallDir
+    }
+
+    if ($sysDiskFreeGB -lt 3 -and $installMode -eq "FRESH_INSTALL") {
+        $blockers.Add("Ruang bebas pada drive sistem ${sysDriveLetter}: sangat kritis ($sysDiskFreeGB GB). Minimal 3 GB diperlukan pada ${sysDriveLetter}: untuk komponen dasar WSL2/Docker Desktop sebelum lokasi disk image dipindahkan ke ${appDriveLetter}:.")
+    } elseif ($sysDiskFreeGB -lt 8) {
+        $vhdxGuidance = "Ruang bebas drive sistem C: terbatas ($sysDiskFreeGB GB). Anda dapat memindahkan lokasi data Docker Desktop secara resmi melalui: Docker Desktop -> Settings -> Resources -> Advanced -> Disk image location ke drive ${appDriveLetter}: (jangan memindahkan file .vhdx secara manual)."
+        $warnings.Add($vhdxGuidance)
+        Write-SRLog -Level "WARN" -Message $vhdxGuidance -InstallDir $InstallDir
+    } else {
+        Write-SRLog -Level "SUCCESS" -Message "Ruang disk bebas pada drive sistem ${sysDriveLetter}: $sysDiskFreeGB GB." -InstallDir $InstallDir
+    }
 }
 
 # 6. Check CPU Virtualization Support & BIOS/UEFI Activation
@@ -120,14 +151,14 @@ Langkah Mengaktifkan Virtualisasi di BIOS/UEFI:
     Write-SRLog -Level "SUCCESS" -Message "Virtualisasi CPU (BIOS/UEFI / Hypervisor) aktif." -InstallDir $InstallDir
 }
 
-# 7. Check Pending Windows Reboot
+# 7. Check Pending Windows Reboot (Separate Windows Update Reboot Pending from WSL2 Prerequisite Reboot Pending)
 $pendingRebootPaths = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
 )
 foreach ($rp in $pendingRebootPaths) {
     if (Test-Path -LiteralPath $rp) {
-        $rebootPending = $true
+        $windowsUpdateRebootPending = $true
     }
 }
 
@@ -149,7 +180,15 @@ if (Test-SRAdmin) {
         if (($null -ne $featWsl -and $featWsl.State -ne "Enabled") -or ($null -ne $featVmp -and $featVmp.State -ne "Enabled")) {
             $wslInstalled = $false
         }
+        if (($null -ne $featWsl -and $featWsl.RestartNeeded) -or ($null -ne $featVmp -and $featVmp.RestartNeeded)) {
+            $wslRebootPending = $true
+        }
     } catch {}
+}
+
+$savedInstallState = Get-SRInstallState
+if ($null -ne $savedInstallState -and $savedInstallState.Stage -match "REBOOT" -and -not $wslInstalled) {
+    $wslRebootPending = $true
 }
 
 if (-not $wslInstalled) {
@@ -181,6 +220,18 @@ if (-not $dockerInstalled) {
         Write-SRLog -Level "WARN" -Message "Docker Engine daemon belum merespons." -InstallDir $InstallDir
     }
 }
+
+# Smart Reboot Pending Evaluation:
+# If WSL2 and Docker Desktop are already installed, do NOT halt installation with exit code 20 solely due to a background Windows Update flag.
+if ($windowsUpdateRebootPending) {
+    if ($wslInstalled -and $dockerInstalled) {
+        $warnings.Add("Terdeteksi status Windows Update Reboot Pending di latar belakang, namun WSL2 & Docker Desktop sudah aktif sehingga instalasi dapat dilanjutkan tanpa restart paksa.")
+        Write-SRLog -Level "WARN" -Message "Windows Update RebootPending terdeteksi, namun dilewati karena WSL2 & Docker Desktop sudah siap." -InstallDir $InstallDir
+    } else {
+        $wslRebootPending = $true
+    }
+}
+$rebootPending = $wslRebootPending
 
 # 10. Check Application Port Availability (Default 8008)
 $portListeners = @(Get-NetTCPConnection -LocalPort $AppPort -State Listen -ErrorAction SilentlyContinue)
@@ -231,31 +282,38 @@ $statusLabel = "READY"
 if ($blockers.Count -gt 0) {
     $exitCode = 1
     $statusLabel = "BLOCKED"
-} elseif ($prereqsNeeded.Count -gt 0) {
-    $exitCode = 10
-    $statusLabel = "PREREQUISITES_NEEDED"
 } elseif ($rebootPending) {
     $exitCode = 20
     $statusLabel = "REBOOT_PENDING"
+} elseif ($prereqsNeeded.Count -gt 0) {
+    $exitCode = 10
+    $statusLabel = "PREREQUISITES_NEEDED"
 }
 
 $summary = [ordered]@{
-    Status               = $statusLabel
-    ExitCode             = $exitCode
-    InstallMode          = $installMode
-    WindowsCaption       = $osCaption
-    WindowsBuild         = $buildNumber
-    Architecture         = $arch
-    TotalRamGB           = $totalRamGB
-    FreeDiskGB           = $freeDiskGB
-    VirtualizationActive = ($hypervisorPresent -or $virtFirmwareEnabled)
-    Wsl2Ready            = $wslInstalled
-    DockerInstalled      = $dockerInstalled
-    DockerRunning        = $dockerRunning
-    AppPort              = $AppPort
-    PrereqsNeeded        = $prereqsNeeded
-    Warnings             = $warnings
-    Blockers             = $blockers
+    Status                     = $statusLabel
+    ExitCode                   = $exitCode
+    InstallDir                 = $InstallDir
+    InstallMode                = $installMode
+    WindowsCaption             = $osCaption
+    WindowsBuild               = $buildNumber
+    Architecture               = $arch
+    TotalRamGB                 = $totalRamGB
+    AppDriveLetter             = $appDriveLetter
+    AppDiskFreeGB              = $appDiskFreeGB
+    SysDriveLetter             = $sysDriveLetter
+    SysDiskFreeGB              = $sysDiskFreeGB
+    FreeDiskGB                 = $freeDiskGB
+    VirtualizationActive       = ($hypervisorPresent -or $virtFirmwareEnabled)
+    Wsl2Ready                  = $wslInstalled
+    DockerInstalled            = $dockerInstalled
+    DockerRunning              = $dockerRunning
+    WindowsUpdateRebootPending = $windowsUpdateRebootPending
+    WslRebootPending           = $wslRebootPending
+    AppPort                    = $AppPort
+    PrereqsNeeded              = $prereqsNeeded
+    Warnings                   = $warnings
+    Blockers                   = $blockers
 }
 
 if ($JsonOutput) {
@@ -265,6 +323,10 @@ if ($JsonOutput) {
     Write-Host "==============================================================" -ForegroundColor Cyan
     Write-Host " RINGKASAN PREFLIGHT CHECK - SUGENG RAWUH BILLING & POS" -ForegroundColor Cyan
     Write-Host "==============================================================" -ForegroundColor Cyan
+    Write-Host " Lokasi Instalasi   : $InstallDir (Drive ${appDriveLetter}: $appDiskFreeGB GB bebas)"
+    if ($appDriveLetter -ne $sysDriveLetter) {
+        Write-Host " Drive Sistem (${sysDriveLetter}:)  : $sysDiskFreeGB GB bebas"
+    }
     Write-Host " Mode Instalasi     : $installMode"
     Write-Host " Sistem Operasi     : $osCaption (Build $buildNumber, $arch)"
     Write-Host " Memori RAM         : $totalRamGB GB"
@@ -277,4 +339,3 @@ if ($JsonOutput) {
 }
 
 exit $exitCode
-

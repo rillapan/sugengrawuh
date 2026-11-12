@@ -116,4 +116,37 @@ class HardwareDiagnosticsFrontendTest extends TestCase
         $response->assertDontSee('Hardware Diagnostics');
         $response->assertDontSee(route('admin.hardware.diagnostics.index'));
     }
+
+    /** @test */
+    public function diagnostics_blade_view_renders_g2_three_operational_sections_and_seven_canonical_statuses()
+    {
+        $response = $this->actingAs($this->admin)->get('/admin/hardware/diagnostics');
+
+        $response->assertStatus(200);
+
+        // 3 distinct operational sections
+        $response->assertSee('Read-Only Diagnostics');
+        $response->assertSee('Device Pairing');
+        $response->assertSee('Physical Control Test');
+
+        // Explicit notice that pairing does not auto-enable physical automation
+        $response->assertSee('tidak secara otomatis mengaktifkan');
+
+        // 2-step server-side physical control approval UI
+        $response->assertSee('approve-physical');
+        $response->assertSee('Request Server Approval Token');
+
+        // 7 Canonical diagnostic status badges
+        $response->assertSee('Connected');
+        $response->assertSee('Disconnected');
+        $response->assertSee('Authentication Required');
+        $response->assertSee('Pairing Required');
+        $response->assertSee('Driver Unsupported');
+        $response->assertSee('Timeout');
+        $response->assertSee('Configuration Error');
+
+        // Explanation & Remediation panels
+        $response->assertSee('Penyebab');
+        $response->assertSee('Langkah Perbaikan');
+    }
 }

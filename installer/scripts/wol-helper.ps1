@@ -7,16 +7,18 @@
     validating source IP (localhost / Docker bridge) and X-WOL-Token header against
     HARDWARE_WOL_HELPER_TOKEN in .env.production, constructing the 102-byte IEEE 802.3
     Magic Packet, and broadcasting UDP ports 9 & 7 out of every active physical LAN NIC.
+    Also exposes GET /health and GET /network-info for Hardware Setup & Test Center diagnostics.
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [int]$Port = 18009
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Ensure-SRDirectories -InstallDir $InstallDir
 
 function Write-WolLog {
@@ -154,7 +156,7 @@ function Send-HttpResponse {
         [string]$StatusText = "OK",
         [hashtable]$BodyObj
     )
-    $json = $BodyObj | ConvertTo-Json -Compress
+    $json = $BodyObj | ConvertTo-Json -Depth 5 -Compress
     $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $header = "HTTP/1.1 $StatusCode $StatusText`r`nContent-Type: application/json; charset=utf-8`r`nContent-Length: $($bodyBytes.Length)`r`nConnection: close`r`n`r`n"
     $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($header)
@@ -172,7 +174,7 @@ if ($null -ne $existingListener) {
 
 $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
 $listener.Start()
-Write-WolLog -Level "SUCCESS" -Message "Sugeng Rawuh WOL Helper aktif mendengarkan pada 0.0.0.0:$Port (/wol)..."
+Write-WolLog -Level "SUCCESS" -Message "Sugeng Rawuh WOL Helper aktif mendengarkan pada 0.0.0.0:$Port (/wol, /health, /network-info)..."
 
 try {
     while ($true) {
@@ -206,7 +208,24 @@ try {
             $requestLine = $headerLines[0]
 
             if ($requestLine -match '^GET\s+/health') {
-                Send-HttpResponse -Stream $stream -StatusCode 200 -StatusText "OK" -BodyObj @{ success = $true; status = "ok" }
+                Send-HttpResponse -Stream $stream -StatusCode 200 -StatusText "OK" -BodyObj @{
+                    success     = $true
+                    status      = "ok"
+                    port        = $Port
+                    install_dir = $InstallDir
+                }
+                continue
+            }
+
+            if ($requestLine -match '^GET\s+/network-info') {
+                $netInfo = Get-SRNetworkInfo -InstallDir $InstallDir
+                Send-HttpResponse -Stream $stream -StatusCode 200 -StatusText "OK" -BodyObj @{
+                    success      = $true
+                    status       = "ok"
+                    wol_port     = $Port
+                    install_dir  = $InstallDir
+                    network_info = $netInfo
+                }
                 continue
             }
 
@@ -260,4 +279,3 @@ try {
 } finally {
     $listener.Stop()
 }
-

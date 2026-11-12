@@ -6,21 +6,23 @@
     Performs an automated pre-update database backup, preserves .env.production and sr_mysql_data,
     loads the updated Docker image archive, recreates application containers, runs incremental
     migrations (php artisan migrate --force) and billing reconciliation (php artisan billing:reconcile),
-    and verifies /api/health.
+    refreshes scheduled services & shortcuts via setup-services.ps1, and verifies /api/health.
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [string]$ImageArchive = ""
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Assert-SRAdmin -ScriptPath $MyInvocation.MyCommand.Path -ScriptArgs @("-InstallDir", $InstallDir)
 Ensure-SRDirectories -InstallDir $InstallDir
+Save-SRInstalledLocation -InstallDir $InstallDir
 
-Write-SRLog -Level "INFO" -Message "=== Memulai Pembaruan Aplikasi Sugeng Rawuh (Zero Data Loss Update) ===" -InstallDir $InstallDir
+Write-SRLog -Level "INFO" -Message "=== Memulai Pembaruan Aplikasi Sugeng Rawuh (Zero Data Loss Update) pada $InstallDir ===" -InstallDir $InstallDir
 
 $envProdPath = Join-Path $InstallDir ".env.production"
 if (-not (Test-Path -LiteralPath $envProdPath)) {
@@ -81,6 +83,11 @@ if (-not $healthy) {
     throw "Endpoint kesehatan $healthUrl belum merespons OK pasca-update."
 }
 
+# 6. Refresh Scheduled Services & Shortcuts (Preserving existing DailyBackup schedule)
+$setupServicesScript = Join-Path $PSScriptRoot "setup-services.ps1"
+if (Test-Path -LiteralPath $setupServicesScript) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setupServicesScript -InstallDir $InstallDir
+}
+
 Write-SRLog -Level "SUCCESS" -Message "=== Pembaruan Aplikasi Sugeng Rawuh Selesai Tanpa Kehilangan Data ===" -InstallDir $InstallDir
 exit 0
-

@@ -4,38 +4,58 @@
     Sugeng Rawuh Billing & POS - Master Installation Orchestrator & Reboot-Resume Controller
 .DESCRIPTION
     Orchestrates Stage D.A (preflight-check.ps1), Stage D.B (install-prerequisites.ps1),
-    Stage D.C (install-app.ps1), Stage D.D/E (configure-network.ps1 & wol-helper.ps1),
-    and Stage E (startup-launcher.ps1). Supports multi-reboot continuation via Windows RunOnce
-    and C:\ProgramData\SugengRawuh\install-state.json.
+    Stage D.C (install-app.ps1), Stage D.D/E (configure-network.ps1 & setup-services.ps1),
+    and Stage E (startup-launcher.ps1). Supports multi-reboot continuation via Windows RunOnce,
+    Desktop rescue shortcut ("Lanjutkan Instalasi Sugeng Rawuh.lnk"), and C:\ProgramData\SugengRawuh\install-state.json.
+    Also supports non-destructive service repair via -Repair and clean Inno Setup exit handling via -InnoSetupRun.
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [switch]$Resume,
-    [switch]$Silent
+    [switch]$Silent,
+    [switch]$Repair,
+    [switch]$InnoSetupRun
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
+
 $forwardArgs = @("-InstallDir", $InstallDir)
 if ($Resume) { $forwardArgs += "-Resume" }
 if ($Silent) { $forwardArgs += "-Silent" }
+if ($Repair) { $forwardArgs += "-Repair" }
+if ($InnoSetupRun) { $forwardArgs += "-InnoSetupRun" }
 
 Assert-SRAdmin -ScriptPath $MyInvocation.MyCommand.Path -ScriptArgs $forwardArgs
 Ensure-SRDirectories -InstallDir $InstallDir
+Save-SRInstalledLocation -InstallDir $InstallDir
 
-if ($Resume) {
-    Write-SRLog -Level "INFO" -Message "=== Melanjutkan Instalasi Sugeng Rawuh Pasca-Reboot (RunOnce Resume) ===" -InstallDir $InstallDir
-} else {
-    Write-SRLog -Level "INFO" -Message "=== Memulai Orkestrasi Instalasi Sugeng Rawuh Billing & POS ===" -InstallDir $InstallDir
+$preflightScript     = Join-Path $PSScriptRoot "preflight-check.ps1"
+$prereqScript        = Join-Path $PSScriptRoot "install-prerequisites.ps1"
+$installAppScript    = Join-Path $PSScriptRoot "install-app.ps1"
+$networkScript       = Join-Path $PSScriptRoot "configure-network.ps1"
+$setupServicesScript = Join-Path $PSScriptRoot "setup-services.ps1"
+$launcherScript      = Join-Path $PSScriptRoot "startup-launcher.ps1"
+
+# Repair Mode Delegation
+if ($Repair) {
+    Write-SRLog -Level "INFO" -Message "=== Menjalankan Mode Repair Layanan Sugeng Rawuh pada $InstallDir ===" -InstallDir $InstallDir
+    $repairArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $setupServicesScript, "-InstallDir", $InstallDir, "-Repair")
+    if (-not $Silent) {
+        $repairArgs += "-Interactive"
+    }
+    & powershell.exe @repairArgs
+    exit $LASTEXITCODE
 }
 
-$preflightScript  = Join-Path $PSScriptRoot "preflight-check.ps1"
-$prereqScript     = Join-Path $PSScriptRoot "install-prerequisites.ps1"
-$installAppScript = Join-Path $PSScriptRoot "install-app.ps1"
-$networkScript    = Join-Path $PSScriptRoot "configure-network.ps1"
-$launcherScript   = Join-Path $PSScriptRoot "startup-launcher.ps1"
+if ($Resume) {
+    Write-SRLog -Level "INFO" -Message "=== Melanjutkan Instalasi Sugeng Rawuh Pasca-Reboot (RunOnce Resume) pada $InstallDir ===" -InstallDir $InstallDir
+} else {
+    Write-SRLog -Level "INFO" -Message "=== Memulai Orkestrasi Instalasi Sugeng Rawuh Billing & POS pada $InstallDir ===" -InstallDir $InstallDir
+}
 
 # 1. Stage D.A: Preflight System Check
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $preflightScript -InstallDir $InstallDir
@@ -52,12 +72,13 @@ if ($preflightExit -eq 10 -or $preflightExit -eq 20) {
     $prereqExit = $LASTEXITCODE
 
     if ($prereqExit -eq 20) {
-        Write-SRLog -Level "WARN" -Message "Restart Windows diperlukan. RunOnce telah didaftarkan agar instalasi berlanjut otomatis setelah restart." -InstallDir $InstallDir
+        Register-SRRunOnceResume -InstallDir $InstallDir
+        Write-SRLog -Level "WARN" -Message "Restart Windows diperlukan. RunOnce & shortcut 'Lanjutkan Instalasi Sugeng Rawuh' telah didaftarkan agar instalasi berlanjut setelah restart." -InstallDir $InstallDir
         if (-not $Silent) {
             try {
                 Add-Type -AssemblyName System.Windows.Forms
                 $ans = [System.Windows.Forms.MessageBox]::Show(
-                    "Komponen WSL2 / Docker Desktop telah diaktifkan dan membutuhkan Restart Windows.`r`n`r`nInstalasi Sugeng Rawuh akan dilanjutkan secara OTOMATIS setelah PC Kasir menyala kembali.`r`n`r`nRestart PC Kasir sekarang?",
+                    "Komponen WSL2 / Docker Desktop telah diaktifkan dan membutuhkan Restart Windows.`r`n`r`nInstalasi Sugeng Rawuh pada '$InstallDir' akan dilanjutkan secara OTOMATIS setelah PC Kasir menyala kembali (atau klik shortcut 'Lanjutkan Instalasi Sugeng Rawuh' di Desktop).`r`n`r`nRestart PC Kasir sekarang?",
                     "Sugeng Rawuh Billing & POS - Restart Diperlukan",
                     [System.Windows.Forms.MessageBoxButtons]::YesNo,
                     [System.Windows.Forms.MessageBoxIcon]::Information
@@ -66,6 +87,9 @@ if ($preflightExit -eq 10 -or $preflightExit -eq 20) {
                     & shutdown.exe /r /t 5 /c "Sugeng Rawuh POS: Restart untuk menyelesaikan aktivasi WSL2/Docker."
                 }
             } catch {}
+        }
+        if ($InnoSetupRun) {
+            exit 0
         }
         exit 20
     } elseif ($prereqExit -ne 0) {
@@ -93,8 +117,9 @@ if ($LASTEXITCODE -ne 0) {
     Write-SRLog -Level "WARN" -Message "Konfigurasi jaringan selesai dengan catatan (Exit Code: $LASTEXITCODE)." -InstallDir $InstallDir
 }
 
-# 5. Clean up install state & RunOnce hook upon successful completion
+# 5. Clean up install state, RunOnce hook & Desktop rescue shortcut upon successful completion
 Clear-SRInstallState
+Save-SRInstalledLocation -InstallDir $InstallDir
 Write-SRLog -Level "SUCCESS" -Message "=== Seluruh Tahap Instalasi Sugeng Rawuh Selesai dengan Sukses! ===" -InstallDir $InstallDir
 
 # 6. Stage E: Launch Cashier Startup & Open Browser
@@ -102,4 +127,3 @@ if (-not $Silent) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcherScript -InstallDir $InstallDir
 }
 exit 0
-

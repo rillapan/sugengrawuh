@@ -5,25 +5,27 @@
 .DESCRIPTION
     Enables WSL2 & VirtualMachinePlatform Windows features (without installing an unnecessary Ubuntu distro),
     installs WSL2 kernel update and Docker Desktop if bundled in installer\prereqs\, registers RunOnce
-    reboot-resume hook, and configures Docker Desktop auto-start on login.
+    + Desktop rescue shortcut reboot-resume hook, and configures Docker Desktop auto-start on user login.
     Exit codes:
       0  = All prerequisites installed and ready
-      20 = Reboot required (RunOnce registered to resume automatically after restart)
+      20 = Reboot required (RunOnce + Desktop rescue shortcut registered to resume after restart)
       1  = Prerequisite binary missing or installation failed
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [switch]$AutoReboot
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Assert-SRAdmin -ScriptPath $MyInvocation.MyCommand.Path -ScriptArgs @("-InstallDir", $InstallDir)
 Ensure-SRDirectories -InstallDir $InstallDir
+Save-SRInstalledLocation -InstallDir $InstallDir
 
-Write-SRLog -Level "INFO" -Message "=== Memulai Instalasi Prasyarat (Stage D.B: WSL2 & Docker Desktop) ===" -InstallDir $InstallDir
+Write-SRLog -Level "INFO" -Message "=== Memulai Instalasi Prasyarat (Stage D.B: WSL2 & Docker Desktop) pada $InstallDir ===" -InstallDir $InstallDir
 
 $existingState = Get-SRInstallState
 $rebootCount = if ($null -ne $existingState -and $null -ne $existingState.RebootCount) { [int]$existingState.RebootCount } else { 0 }
@@ -133,14 +135,15 @@ Silakan lakukan salah satu langkah berikut:
     Write-SRLog -Level "SUCCESS" -Message "Docker Desktop sudah terinstal di sistem." -InstallDir $InstallDir
 }
 
-# 4. Configure Docker Desktop Auto-Start on Windows Login
+# 4. Configure Docker Desktop Auto-Start on Interactive Windows Login
+# Note: On Windows 11 Home / 10 Home, Docker Desktop requires an interactive user login session.
 if (Test-Path -LiteralPath $dockerDesktopExe) {
     $hkcuRunPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     if (-not (Test-Path -LiteralPath $hkcuRunPath)) {
         New-Item -Path $hkcuRunPath -Force | Out-Null
     }
     Set-ItemProperty -Path $hkcuRunPath -Name "Docker Desktop" -Value "`"$dockerDesktopExe`"" -Type String -Force
-    Write-SRLog -Level "SUCCESS" -Message "Docker Desktop dikonfigurasi untuk berjalan otomatis saat login Windows." -InstallDir $InstallDir
+    Write-SRLog -Level "SUCCESS" -Message "Docker Desktop dikonfigurasi untuk berjalan otomatis saat sesi user login Windows (Windows Home membutuhkan sesi login interaktif)." -InstallDir $InstallDir
 }
 
 # 5. Handle Reboot Requirement & RunOnce Resume
@@ -148,7 +151,7 @@ if ($restartNeeded) {
     Save-SRInstallState -Stage "PREREQ_REBOOT_PENDING" -InstallDir $InstallDir -Mode $installMode -RebootCount ($rebootCount + 1)
     Register-SRRunOnceResume -InstallDir $InstallDir
 
-    Write-SRLog -Level "WARN" -Message "Sistem membutuhkan restart Windows. Instalasi Sugeng Rawuh akan dilanjutkan secara otomatis setelah login (via RunOnce)." -InstallDir $InstallDir
+    Write-SRLog -Level "WARN" -Message "Sistem membutuhkan restart Windows. Instalasi Sugeng Rawuh akan dilanjutkan secara otomatis setelah login (via RunOnce atau shortcut 'Lanjutkan Instalasi Sugeng Rawuh' di Desktop)." -InstallDir $InstallDir
 
     if ($AutoReboot) {
         Write-SRLog -Level "INFO" -Message "Melakukan restart Windows otomatis dalam 10 detik..." -InstallDir $InstallDir
@@ -160,4 +163,3 @@ if ($restartNeeded) {
 Save-SRInstallState -Stage "PREREQ_COMPLETED" -InstallDir $InstallDir -Mode $installMode -RebootCount $rebootCount
 Write-SRLog -Level "SUCCESS" -Message "Semua prasyarat sistem (WSL2 & Docker Desktop) telah siap." -InstallDir $InstallDir
 exit 0
-

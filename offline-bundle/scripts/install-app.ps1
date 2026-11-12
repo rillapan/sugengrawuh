@@ -3,63 +3,40 @@
 .SYNOPSIS
     Sugeng Rawuh Billing & POS - Stage D.C Application Installation & Container Provisioning
 .DESCRIPTION
-    Starts Docker Engine if needed, verifies SHA-256 offline bundle checksums, loads offline Docker images,
-    generates or preserves .env.production safely (never overwriting existing APP_KEY, DB_PASSWORD, or sr_mysql_data),
-    enforces HARDWARE_REAL_EXECUTION_ENABLED=false and CONSOLE_REAL_EXECUTION_ENABLED=false on fresh install,
-    starts MySQL & application containers, verifies /api/health, and registers WOL helper, daily backup, and Desktop shortcut.
+    Starts Docker Engine if needed (with interactive retry support on 8 GB RAM PCs), verifies SHA-256
+    offline bundle checksums, loads offline Docker images, generates or preserves .env.production safely
+    (never overwriting existing APP_KEY, DB_PASSWORD, or sr_mysql_data), enforces
+    HARDWARE_REAL_EXECUTION_ENABLED=false and CONSOLE_REAL_EXECUTION_ENABLED=false on fresh install,
+    starts MySQL & application containers, verifies /api/health, and invokes setup-services.ps1 to
+    register SugengRawuh-WOLHelper, SugengRawuh-DailyBackup, and Desktop/Start Menu shortcuts.
 #>
 
 param(
-    [string]$InstallDir = "C:\SugengRawuh",
+    [string]$InstallDir = "",
     [int]$DockerWaitSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "common.ps1")
 
+$InstallDir = Get-SRInstallDir -InstallDir $InstallDir
 Assert-SRAdmin -ScriptPath $MyInvocation.MyCommand.Path -ScriptArgs @("-InstallDir", $InstallDir)
 Ensure-SRDirectories -InstallDir $InstallDir
+Save-SRInstalledLocation -InstallDir $InstallDir
 
-Write-SRLog -Level "INFO" -Message "=== Memulai Instalasi Aplikasi Sugeng Rawuh (Stage D.C) ===" -InstallDir $InstallDir
+Write-SRLog -Level "INFO" -Message "=== Memulai Instalasi Aplikasi Sugeng Rawuh (Stage D.C) pada $InstallDir ===" -InstallDir $InstallDir
 
-# 1. Ensure Docker Engine is Running
-$dockerReady = $false
-try {
-    $null = & docker info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        $dockerReady = $true
-    }
-} catch {}
+# 1. Ensure Docker Engine is Running (using session-aware Start-SRDockerDesktop & Wait-SRDockerEngine)
+$started = Start-SRDockerDesktop -InstallDir $InstallDir
+if (-not $started) {
+    Write-SRLog -Level "ERROR" -Message "Docker Desktop tidak ditemukan atau gagal dijalankan. Jalankan install-prerequisites.ps1 terlebih dahulu." -InstallDir $InstallDir
+    exit 1
+}
 
+$dockerReady = Wait-SRDockerEngine -InstallDir $InstallDir -MaxWaitSeconds $DockerWaitSeconds -AllowInteractiveRetry
 if (-not $dockerReady) {
-    $dockerDesktopExe = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    if (Test-Path -LiteralPath $dockerDesktopExe) {
-        Write-SRLog -Level "INFO" -Message "Menjalankan Docker Desktop dan menunggu Docker Engine siap (maksimal $DockerWaitSeconds detik)..." -InstallDir $InstallDir
-        Start-Process -FilePath $dockerDesktopExe -ErrorAction SilentlyContinue | Out-Null
-    } else {
-        Write-SRLog -Level "ERROR" -Message "Docker Desktop tidak ditemukan di $dockerDesktopExe. Jalankan install-prerequisites.ps1 terlebih dahulu." -InstallDir $InstallDir
-        exit 1
-    }
-
-    $elapsed = 0
-    $interval = 5
-    while ($elapsed -lt $DockerWaitSeconds) {
-        Start-Sleep -Seconds $interval
-        $elapsed += $interval
-        try {
-            $null = & docker info 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $dockerReady = $true
-                break
-            }
-        } catch {}
-        Write-SRLog -Level "INFO" -Message "Menunggu Docker Engine siap... ($elapsed / $DockerWaitSeconds detik)" -InstallDir $InstallDir
-    }
-
-    if (-not $dockerReady) {
-        Write-SRLog -Level "ERROR" -Message "Docker Engine belum siap setelah $DockerWaitSeconds detik. Pastikan Docker Desktop berjalan dan WSL2 aktif." -InstallDir $InstallDir
-        exit 1
-    }
+    Write-SRLog -Level "ERROR" -Message "Docker Engine belum siap setelah $DockerWaitSeconds detik. Pastikan sesi user sudah login ke Windows dan Docker Desktop berjalan." -InstallDir $InstallDir
+    exit 1
 }
 Write-SRLog -Level "SUCCESS" -Message "Docker Engine siap digunakan." -InstallDir $InstallDir
 
@@ -206,55 +183,11 @@ if (-not $appHealthy) {
 }
 Write-SRLog -Level "SUCCESS" -Message "Endpoint kesehatan aplikasi ($healthUrl) merespons OK (Database Connected)." -InstallDir $InstallDir
 
-# 8. Register Windows Scheduled Tasks (WOL Helper & Daily Database Backup) and Desktop Shortcut
-$wolScriptPath = Join-Path $PSScriptRoot "wol-helper.ps1"
-$launcherScriptPath = Join-Path $PSScriptRoot "startup-launcher.ps1"
-
-# 8a. Start & Register WOL Helper (TCP port 18009)
-if (Test-Path -LiteralPath $wolScriptPath) {
-    try {
-        $wolAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$wolScriptPath`" -InstallDir `"$InstallDir`""
-        $wolTrigger = New-ScheduledTaskTrigger -AtLogOn
-        $wolSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-        Register-ScheduledTask -TaskName "SugengRawuh-WOLHelper" -Action $wolAction -Trigger $wolTrigger -Settings $wolSettings -Description "Sugeng Rawuh Physical LAN Wake-on-LAN Helper (Port 18009)" -Force | Out-Null
-        Start-ScheduledTask -TaskName "SugengRawuh-WOLHelper" -ErrorAction SilentlyContinue
-        Write-SRLog -Level "SUCCESS" -Message "Layanan SugengRawuh-WOLHelper terdaftar dan dijalankan di latar belakang." -InstallDir $InstallDir
-    } catch {
-        Write-SRLog -Level "WARN" -Message "Gagal mendaftarkan Scheduled Task WOLHelper, menjalankan proses langsung: $($_.Exception.Message)" -InstallDir $InstallDir
-        Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$wolScriptPath`"", "-InstallDir", "`"$InstallDir`"") -WindowStyle Hidden
-    }
-}
-
-# 8b. Register Daily Automated Database Backup at 03:30 WIB
-if (Test-Path -LiteralPath $backupScriptPath) {
-    try {
-        $backupAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$backupScriptPath`" -InstallDir `"$InstallDir`" -Reason `"daily-scheduled`""
-        $backupTrigger = New-ScheduledTaskTrigger -Daily -At "03:30AM"
-        $backupSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-        Register-ScheduledTask -TaskName "SugengRawuh-DailyBackup" -Action $backupAction -Trigger $backupTrigger -Settings $backupSettings -Description "Backup Database Harian Otomatis Sugeng Rawuh POS" -Force | Out-Null
-        Write-SRLog -Level "SUCCESS" -Message "Scheduled Task SugengRawuh-DailyBackup terdaftar (setiap hari pukul 03:30 WIB)." -InstallDir $InstallDir
-    } catch {
-        Write-SRLog -Level "WARN" -Message "Gagal mendaftarkan Scheduled Task DailyBackup: $($_.Exception.Message)" -InstallDir $InstallDir
-    }
-}
-
-# 8c. Create Desktop Shortcut for Cashier ("Sugeng Rawuh Billing & POS")
-try {
-    $desktopPath = [Environment]::GetFolderPath("CommonDesktopDirectory")
-    if ([string]::IsNullOrWhiteSpace($desktopPath) -or -not (Test-Path -LiteralPath $desktopPath)) {
-        $desktopPath = [Environment]::GetFolderPath("Desktop")
-    }
-    $shortcutPath = Join-Path $desktopPath "Sugeng Rawuh Billing & POS.lnk"
-    $wshShell = New-Object -ComObject WScript.Shell
-    $shortcut = $wshShell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "powershell.exe"
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherScriptPath`" -InstallDir `"$InstallDir`""
-    $shortcut.WorkingDirectory = $InstallDir
-    $shortcut.Description = "Buka Aplikasi Kasir Sugeng Rawuh Billing & POS"
-    $shortcut.Save()
-    Write-SRLog -Level "SUCCESS" -Message "Shortcut Desktop berhasil dibuat: $shortcutPath" -InstallDir $InstallDir
-} catch {
-    Write-SRLog -Level "WARN" -Message "Gagal membuat shortcut Desktop: $($_.Exception.Message)" -InstallDir $InstallDir
+# 8. Register Windows Scheduled Tasks (SugengRawuh-WOLHelper & SugengRawuh-DailyBackup) and Shortcuts via setup-services.ps1
+$setupServicesPath = Join-Path $PSScriptRoot "setup-services.ps1"
+if (Test-Path -LiteralPath $setupServicesPath) {
+    Write-SRLog -Level "INFO" -Message "Mendaftarkan layanan SugengRawuh-WOLHelper, SugengRawuh-DailyBackup, dan shortcut melalui setup-services.ps1..." -InstallDir $InstallDir
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setupServicesPath -InstallDir $InstallDir
 }
 
 Write-SRLog -Level "SUCCESS" -Message "=== Instalasi Aplikasi Sugeng Rawuh (Stage D.C) Selesai ===" -InstallDir $InstallDir

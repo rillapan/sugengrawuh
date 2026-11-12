@@ -17,7 +17,10 @@ class DiagnosticCommandRequest extends FormRequest
             'device_id' => ['required', 'integer', 'exists:physical_devices,id'],
             'command' => ['required', 'string', 'max:50'],
             'transport_mode' => ['nullable', 'string', 'in:fake,real'],
-            'scenario' => ['nullable', 'string', 'in:SUCCESS,OFFLINE,TIMEOUT,REJECTED,AUTH_REQUIRED,INVALID_JSON'],
+            'scenario' => ['nullable', 'string', 'max:50'],
+            'fake_scenario' => ['nullable', 'string', 'max:50'],
+            'approval_token' => ['nullable', 'string', 'max:128'],
+            'port' => ['nullable', 'integer', 'min:1', 'max:65535'],
         ];
     }
 
