@@ -117,13 +117,6 @@
                     <i class="fas fa-stethoscope text-info"></i>
                     <span>Hardware Diagnostics</span></a>
             </li>
-            @if(\Illuminate\Support\Facades\Route::has('admin.tv-lab.index'))
-                <li class="nav-item {{ isset($active) && $active === 'tv-lab' ? 'active' : '' }}">
-                    <a class="nav-link text-warning" href="{{ route('admin.tv-lab.index') }}">
-                        <i class="fas fa-tv text-warning"></i>
-                        <span>Samsung TV Lab</span></a>
-                </li>
-            @endif
         @endif
     @endif
 

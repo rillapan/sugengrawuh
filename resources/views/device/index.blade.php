@@ -684,9 +684,6 @@
                                             <small class="font-weight-bold text-dark text-uppercase">
                                                 <i class="fas fa-sliders-h text-primary mr-1"></i>KONTROL PERANGKAT & VOLUME
                                             </small>
-                                            <a href="{{ route('admin.tv-lab.index', ['station_id' => $device->id]) }}" target="_blank" class="badge badge-dark text-warning" title="Buka Simulator TV 16:9 untuk station ini">
-                                                <i class="fas fa-external-link-alt mr-1"></i>TV Lab
-                                            </a>
                                         </div>
                                         @if (config('hardware.driver') === 'real')
                                             <span class="badge badge-success text-white d-block mb-2 py-1 text-wrap" id="tv-mode-banner-{{ $device->id }}">
@@ -777,66 +774,16 @@
                                                     {{ $initEventStatus ?: 'BELUM ADA EVENT' }}
                                                 </span>
                                             </div>
-                                        </div>
-
-                                        <!-- SR-TV-VOLUME: Volume Slider & Numerical Input -->
-                                        @php
-                                            $isRealDriver = config('hardware.driver') === 'real';
-                                            $isSetVolumeDisabled = (!$tvPhysical || $tvPhysical->brand !== 'SAMSUNG') || $isRealDriver;
-                                        @endphp
-                                        <div class="p-2 mb-2 bg-light border rounded">
-                                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                                <small class="font-weight-bold text-dark"><i class="fas fa-volume-up text-primary mr-1"></i>Kontrol Volume</small>
-                                                <span>
-                                                    <span class="badge badge-primary mr-1" id="tv-target-vol-badge-{{ $device->id }}">Target: {{ $initVol }}/100</span>
-                                                    <span class="badge badge-secondary" id="tv-actual-vol-badge-{{ $device->id }}">Aktual: {{ $tvPhysical && $tvPhysical->current_volume !== null ? $tvPhysical->current_volume . '/100' : 'Tidak tersedia' }}</span>
-                                                </span>
-                                            </div>
-                                            <div class="input-group input-group-sm mb-1">
-                                                <input type="range" class="form-range custom-range mr-2 flex-grow-1 tv-vol-slider"
-                                                       id="tv-vol-slider-{{ $device->id }}"
-                                                       data-station-id="{{ $device->id }}"
-                                                       min="0" max="100" value="{{ $initVol }}"
-                                                       {{ $isSetVolumeDisabled ? 'disabled' : '' }}>
-                                                <input type="number" class="form-control form-control-sm text-center tv-vol-number"
-                                                       id="tv-vol-number-{{ $device->id }}"
-                                                       data-station-id="{{ $device->id }}"
-                                                       min="0" max="100" value="{{ $initVol }}"
-                                                       style="max-width: 60px;"
-                                                       {{ $isSetVolumeDisabled ? 'disabled' : '' }}>
-                                                <div class="input-group-append">
-                                                    <button type="button" class="btn btn-sm btn-primary btn-tv-set-volume"
-                                                            id="btn-tv-set-volume-{{ $device->id }}"
-                                                            data-station-id="{{ $device->id }}"
-                                                            data-volume-url="{{ route('admin.stations.tv-volume.store', ['station' => $device->id]) }}"
-                                                            {{ $isSetVolumeDisabled ? 'disabled' : '' }}
-                                                            title="{{ $isRealDriver ? 'Set volume absolut dinonaktifkan pada Samsung TV fisik (hanya mendukung tombol relatif)' : 'Terapkan angka volume' }}">
-                                                        <i class="fas fa-check"></i> Set
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            @if ($isRealDriver)
-                                                <small class="text-muted d-block mt-1" id="tv-set-unsupported-note-{{ $device->id }}">
-                                                    <i class="fas fa-info-circle mr-1 text-info"></i>Set Volume numerik dinonaktifkan: Samsung TV hanya mendukung tombol relatif (+5, -5, Mute).
-                                                </small>
-                                            @endif
                                             <div class="d-flex justify-content-between align-items-center mt-1">
-                                                <small class="text-muted">Status Eksekusi:</small>
+                                                <span class="text-muted">Status Eksekusi:</span>
+                                                @php
+                                                    $isRealDriver = config('hardware.driver') === 'real';
+                                                @endphp
                                                 <span class="badge {{ $isRealDriver ? 'badge-success' : 'badge-info' }}" id="tv-exec-status-badge-{{ $device->id }}">{{ $isRealDriver ? 'REAL (Siap)' : 'SIMULATED' }}</span>
                                             </div>
                                         </div>
 
                                         <div class="d-flex flex-wrap">
-                                            <button type="button"
-                                                    class="btn btn-xs btn-sm btn-primary mr-1 mb-1 btn-open-tv-alert-modal"
-                                                    data-station-id="{{ $device->id }}"
-                                                    data-station-name="{{ $device->nama }}"
-                                                    data-alert-url="{{ route('admin.stations.tv-alerts.store', ['station' => $device->id]) }}"
-                                                    data-notification-url="{{ route('admin.stations.notifications.store', ['station' => $device->id]) }}"
-                                                    data-has-console="{{ $consolePhysical ? '1' : '0' }}"
-                                                    data-has-tv="{{ ($tvPhysical && $tvPhysical->brand === 'SAMSUNG') ? '1' : '0' }}">
-                                                <i class="fas fa-bullhorn mr-1"></i> Kirim Pesan
-                                            </button>
                                             <button type="button"
                                                     class="btn btn-xs btn-sm btn-outline-primary mr-1 mb-1 btn-open-tv-limit-modal"
                                                     data-station-id="{{ $device->id }}"
@@ -1175,9 +1122,6 @@
                         <div class="p-2 mb-3 bg-light border rounded small">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <strong class="text-dark"><i class="fas fa-plug text-primary mr-1"></i>Parameter Koneksi Aplikasi Samsung Tizen / Simulator:</strong>
-                                <a href="#" id="tv-history-open-lab" target="_blank" class="btn btn-xs btn-sm btn-warning text-dark font-weight-bold">
-                                    <i class="fas fa-tv mr-1"></i> Buka Simulator Layar 16:9 (/admin/tv-lab)
-                                </a>
                             </div>
                             <div class="row mt-2">
                                 <div class="col-md-4 mb-1">
@@ -2026,42 +1970,6 @@
                     }
                 }
 
-                var targetVolBadge = document.getElementById('tv-target-vol-badge-' + stationId);
-                var sliderEl = document.getElementById('tv-vol-slider-' + stationId);
-                var numberEl = document.getElementById('tv-vol-number-' + stationId);
-                var setBtn = document.getElementById('btn-tv-set-volume-' + stationId);
-                var setNote = document.getElementById('tv-set-unsupported-note-' + stationId);
-
-                // Absolute Set Volume disable logic on Real TV
-                if (isReal) {
-                    if (sliderEl) sliderEl.disabled = true;
-                    if (numberEl) numberEl.disabled = true;
-                    if (setBtn) {
-                        setBtn.disabled = true;
-                        setBtn.title = 'Set volume numerik dinonaktifkan: Samsung TV fisik hanya mendukung tombol relatif';
-                    }
-                    if (setNote) setNote.style.display = '';
-                } else {
-                    if (sliderEl && !sliderEl.getAttribute('data-is-busy')) sliderEl.disabled = false;
-                    if (numberEl && !numberEl.getAttribute('data-is-busy')) numberEl.disabled = false;
-                    if (setBtn && !setBtn.getAttribute('data-is-busy')) setBtn.disabled = false;
-                    if (setNote) setNote.style.display = 'none';
-                }
-
-                var currentVolVal = (data.tv_state && typeof data.tv_state.volume !== 'undefined' && data.tv_state.volume !== null) ? data.tv_state.volume : (data.simulated_volume || 30);
-                if (targetVolBadge) targetVolBadge.textContent = 'Target: ' + currentVolVal + '/100';
-                if (sliderEl && document.activeElement !== sliderEl) sliderEl.value = currentVolVal;
-                if (numberEl && document.activeElement !== numberEl) numberEl.value = currentVolVal;
-
-                var actualVolBadge = document.getElementById('tv-actual-vol-badge-' + stationId);
-                if (actualVolBadge) {
-                    var actVol = (data.volume_limit_config && data.volume_limit_config.current_volume !== null && typeof data.volume_limit_config.current_volume !== 'undefined')
-                        ? data.volume_limit_config.current_volume + '/100'
-                        : 'Tidak tersedia';
-                    actualVolBadge.textContent = 'Aktual: ' + actVol;
-                    actualVolBadge.className = (actVol === 'Tidak tersedia') ? 'badge badge-secondary' : 'badge badge-success';
-                }
-
                 var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
                 if (execBadge && !execBadge.getAttribute('data-is-busy')) {
                     if (isReal) {
@@ -2396,121 +2304,7 @@
                     });
                 }
 
-                // Synchronize Volume Slider & Number Input
-                document.addEventListener('input', function(e) {
-                    if (e.target.classList.contains('tv-vol-slider')) {
-                        var stId = e.target.getAttribute('data-station-id');
-                        var numInput = document.getElementById('tv-vol-number-' + stId);
-                        var targetBadge = document.getElementById('tv-target-vol-badge-' + stId);
-                        if (numInput) numInput.value = e.target.value;
-                        if (targetBadge) targetBadge.textContent = 'Target: ' + e.target.value + '/100';
-                    }
-                    if (e.target.classList.contains('tv-vol-number')) {
-                        var stId = e.target.getAttribute('data-station-id');
-                        var slider = document.getElementById('tv-vol-slider-' + stId);
-                        var targetBadge = document.getElementById('tv-target-vol-badge-' + stId);
-                        var val = Math.max(0, Math.min(100, parseInt(e.target.value || '0', 10)));
-                        if (slider) slider.value = val;
-                        if (targetBadge) targetBadge.textContent = 'Target: ' + val + '/100';
-                    }
-                });
-
-                // Set Volume Direct Numerical Command (SET_VOLUME)
-                document.addEventListener('click', function(e) {
-                    var btn = e.target.closest('.btn-tv-set-volume');
-                    if (!btn || btn.disabled) return;
-
-                    var stationId = btn.getAttribute('data-station-id');
-                    var volumeUrl = btn.getAttribute('data-volume-url');
-                    var panel = btn.closest('.tv-control-panel');
-                    var numInput = document.getElementById('tv-vol-number-' + stationId);
-                    var targetVol = parseInt(numInput ? numInput.value : '30', 10);
-                    var execBadge = document.getElementById('tv-exec-status-badge-' + stationId);
-                    var modeBadge = document.getElementById('tv-mode-' + stationId);
-                    var isRealStation = modeBadge && modeBadge.textContent === 'REAL';
-
-                    if (isRealStation) {
-                        showFeedbackAlert('warning', 'Pengaturan numerik presisi (SET_VOLUME) tidak didukung oleh protokol WebSocket Samsung TV fisik. Gunakan tombol +5, -5, atau Mute.');
-                        return;
-                    }
-
-                    var allStationBtns = panel ? panel.querySelectorAll('.btn-tv-volume-cmd, .btn-tv-set-volume') : [btn];
-                    allStationBtns.forEach(function(b) { b.disabled = true; b.setAttribute('data-is-busy', 'true'); });
-                    var origHtml = btn.innerHTML;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-
-                    if (execBadge) {
-                        execBadge.className = 'badge badge-warning text-dark';
-                        execBadge.textContent = 'PENDING';
-                        execBadge.setAttribute('data-is-busy', 'true');
-                    }
-
-                    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-                    fetch(volumeUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json',
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
-                        },
-                        body: JSON.stringify({
-                            command: 'SET_VOLUME',
-                            target_volume: targetVol
-                        })
-                    })
-                    .then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b }; }); })
-                    .then(function(res) {
-                        if (res.ok && res.body && res.body.success && res.body.data) {
-                            var d = res.body.data;
-                            var isReal = d.control_mode === 'REAL';
-                            if (d.id || d.event_id) stationLastEventId[stationId] = d.id || d.event_id;
-
-                            var volBadge = document.getElementById('tv-vol-badge-' + stationId);
-                            if (volBadge) {
-                                volBadge.textContent = 'Vol: ' + (isReal ? (d.actual_volume !== null && typeof d.actual_volume !== 'undefined' ? d.actual_volume + '/100' : 'Tidak tersedia') : d.volume + '/100');
-                            }
-                            var targetBadge = document.getElementById('tv-target-vol-badge-' + stationId);
-                            if (targetBadge && d.volume) targetBadge.textContent = 'Target: ' + d.volume + '/100';
-                            if (execBadge) {
-                                execBadge.className = isReal ? 'badge badge-success' : 'badge badge-info';
-                                execBadge.textContent = isReal ? 'COMMAND_SENT' : ('SIMULASI (SET ' + d.volume + ')');
-                            }
-                            showFeedbackAlert('success', (isReal ? '[REAL TV] ' : '[SIMULASI] ') + (res.body.message || 'Volume berhasil disetel.'));
-                            triggerFastPolling();
-                        } else {
-                            if (execBadge) {
-                                var isUnsup = res.body && (res.body.error_code === 'CAPABILITY_UNSUPPORTED' || res.body.error_code === 'UNSUPPORTED_CAPABILITY');
-                                execBadge.className = isUnsup ? 'badge badge-warning text-dark' : 'badge badge-danger';
-                                execBadge.textContent = isUnsup ? 'UNSUPPORTED' : 'FAILED';
-                            }
-                            var errMsg = (res.body && res.body.message) ? res.body.message : 'Gagal menyetel volume.';
-                            showFeedbackAlert('warning', errMsg);
-                            triggerFastPolling();
-                        }
-                    })
-                    .catch(function() {
-                        if (execBadge) {
-                            execBadge.className = 'badge badge-danger';
-                            execBadge.textContent = 'FAILED';
-                        }
-                        showFeedbackAlert('danger', 'Gagal menghubungi server untuk menyetel volume.');
-                    })
-                    .finally(function() {
-                        btn.innerHTML = origHtml;
-                        if (execBadge) execBadge.removeAttribute('data-is-busy');
-                        allStationBtns.forEach(function(b) {
-                            b.removeAttribute('data-is-busy');
-                            if (b.classList.contains('btn-tv-set-volume') && isRealStation) {
-                                b.disabled = true;
-                            } else {
-                                b.disabled = false;
-                            }
-                        });
-                    });
-                });
-
-                // Volume & Mute Commands
+                // Volume & Mute Commands (-5, +5, Mute)
                 document.addEventListener('click', function(e) {
                     var btn = e.target.closest('.btn-tv-volume-cmd');
                     if (!btn || btn.disabled) return;
@@ -2525,7 +2319,7 @@
 
                     if (!volumeUrl || !command) return;
 
-                    var allStationBtns = panel ? panel.querySelectorAll('.btn-tv-volume-cmd, .btn-tv-set-volume') : [btn];
+                    var allStationBtns = panel ? panel.querySelectorAll('.btn-tv-volume-cmd') : [btn];
                     allStationBtns.forEach(function(b) { b.disabled = true; b.setAttribute('data-is-busy', 'true'); });
                     var origHtml = btn.innerHTML;
                     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -2608,11 +2402,7 @@
                         if (execBadge) execBadge.removeAttribute('data-is-busy');
                         allStationBtns.forEach(function(b) {
                             b.removeAttribute('data-is-busy');
-                            if (b.classList.contains('btn-tv-set-volume') && isRealStation) {
-                                b.disabled = true;
-                            } else {
-                                b.disabled = false;
-                            }
+                            b.disabled = false;
                         });
                     });
                 });
