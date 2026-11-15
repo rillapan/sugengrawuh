@@ -171,6 +171,59 @@
         </tfoot>
     </table>
 
+    @if(isset($standaloneInvoices) && $standaloneInvoices->isNotEmpty())
+    <table>
+        <thead></thead>
+        <tbody>
+            <tr><td colspan="8">&nbsp;</td></tr>
+            <tr>
+                <td colspan="8" style="font-weight: bold; font-size: 16px;">Detail Penjualan FnB Standalone</td>
+            </tr>
+        </tbody>
+    </table>
+    <table>
+        <thead>
+            <tr>
+                <th scope="col" style="font-weight:bold">No. Invoice</th>
+                <th scope="col" style="font-weight:bold">Stasiun / Sumber</th>
+                <th scope="col" style="font-weight:bold">Kasir</th>
+                <th scope="col" style="font-weight:bold">Item FnB</th>
+                <th scope="col" style="font-weight:bold">Subtotal</th>
+                <th scope="col" style="font-weight:bold">Diskon</th>
+                <th scope="col" style="font-weight:bold">Total Bayar</th>
+                <th scope="col" style="font-weight:bold">Tanggal Bayar</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach ($standaloneInvoices as $inv)
+                <tr>
+                    <td>{{ $inv->invoice_number }}</td>
+                    <td>
+                        @if($inv->transaction && $inv->transaction->device)
+                            {{ $inv->transaction->device->nama }}
+                            @if($inv->transaction->device->playstation)
+                                - {{ $inv->transaction->device->playstation->nama }}
+                            @endif
+                        @else
+                            Walk-in / Non-Playing
+                        @endif
+                    </td>
+                    <td>{{ $inv->cashierUser ? $inv->cashierUser->name : '-' }}</td>
+                    <td>
+                        @foreach($inv->items as $item)
+                            {{ $item->name }} ({{ $item->qty }} x Rp {{ number_format($item->unit_price_jual, 0, ',', '.') }})@if(!$loop->last), @endif
+                        @endforeach
+                    </td>
+                    <td>{{ 'Rp ' . number_format($inv->subtotal, 0, ',', '.') }}</td>
+                    <td>{{ $inv->discount > 0 ? 'Rp ' . number_format($inv->discount, 0, ',', '.') : '-' }}</td>
+                    <td>{{ 'Rp ' . number_format($inv->final_total, 0, ',', '.') }}</td>
+                    <td>{{ $inv->paid_at }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+    @endif
+
     <!-- Bootstrap core JavaScript-->
     <script src="vendor/jquery/jquery.min.js"></script>
     <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>

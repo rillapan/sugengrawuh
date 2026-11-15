@@ -317,8 +317,8 @@
                         </div>
                         <div class="col-md-4 d-flex align-items-end">
                             <div class="d-flex gap-2 w-100">
-                                <button id="bayarBtn" class="btn btn-success flex-fill" type="submit" name="action" value="bayar">Bayar</button>
-                                <button class="btn btn-primary flex-fill" type="submit" name="action" value="simpan">Simpan Transaksi</button>
+                                <button id="bayarBtn" class="btn btn-success flex-fill" type="submit" name="action" value="bayar">Bayar & Mulai Sesi</button>
+                                <button id="simpanBtn" class="btn btn-primary flex-fill" type="submit" name="action" value="simpan">Simpan Transaksi</button>
                             </div>
                         </div>
                     </div>
@@ -456,13 +456,24 @@
                 hargaLabel.textContent = isCustomPackage ? 'Total Paket' : 'Harga per Jam';
             }
 
-            // Show/hide Bayar button based on transaction type
-            if (bayarBtn) {
-                bayarBtn.style.display = (isPrepaid || isCustomPackage) ? 'block' : 'none';
-                // Adjust the width of Simpan button when Bayar is hidden
-                const simpanBtn = document.querySelector('button[value="simpan"]');
+            // Show/hide action buttons based on transaction type
+            const simpanBtn = document.getElementById('simpanBtn') || document.querySelector('button[value="simpan"]');
+            if (isPrepaid || isCustomPackage) {
+                if (bayarBtn) {
+                    bayarBtn.style.display = 'block';
+                    bayarBtn.textContent = 'Bayar & Mulai Sesi';
+                    bayarBtn.style.flex = '0 0 100%';
+                }
                 if (simpanBtn) {
-                    simpanBtn.style.flex = (isPrepaid || isCustomPackage) ? '1' : '0 0 100%';
+                    simpanBtn.style.display = 'none';
+                }
+            } else {
+                if (bayarBtn) {
+                    bayarBtn.style.display = 'none';
+                }
+                if (simpanBtn) {
+                    simpanBtn.style.display = 'block';
+                    simpanBtn.style.flex = '0 0 100%';
                 }
             }
 

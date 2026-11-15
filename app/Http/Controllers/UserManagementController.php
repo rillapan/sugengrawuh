@@ -53,6 +53,7 @@ class UserManagementController extends Controller
             'role' => 'required|in:owner,kasir,admin',
             'shift' => 'nullable|required_if:role,kasir|string|max:255',
             'work_shift_id' => 'nullable|required_if:role,kasir|exists:work_shifts,id',
+            'is_fnb_staff' => 'nullable|boolean',
         ]);
 
         User::create([
@@ -62,6 +63,7 @@ class UserManagementController extends Controller
             'role' => $validated['role'],
             'shift' => $validated['role'] === 'kasir' ? $validated['shift'] : null,
             'work_shift_id' => $validated['role'] === 'kasir' ? $validated['work_shift_id'] : null,
+            'is_fnb_staff' => $validated['role'] === 'kasir' && $request->boolean('is_fnb_staff'),
         ]);
 
         return redirect()->route('users.index')->with('success', 'User berhasil ditambahkan');
@@ -100,6 +102,7 @@ class UserManagementController extends Controller
             'role' => 'required|in:owner,kasir,admin',
             'shift' => 'nullable|required_if:role,kasir|string|max:255',
             'work_shift_id' => 'nullable|required_if:role,kasir|exists:work_shifts,id',
+            'is_fnb_staff' => 'nullable|boolean',
         ]);
 
         $data = [
@@ -108,6 +111,7 @@ class UserManagementController extends Controller
             'role' => $validated['role'],
             'shift' => $validated['role'] === 'kasir' ? $validated['shift'] : null,
             'work_shift_id' => $validated['role'] === 'kasir' ? $validated['work_shift_id'] : null,
+            'is_fnb_staff' => $validated['role'] === 'kasir' && $request->boolean('is_fnb_staff'),
         ];
 
         if ($request->filled('password')) {

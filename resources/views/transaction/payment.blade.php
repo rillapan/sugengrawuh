@@ -157,16 +157,29 @@
                                 </td>
                             </tr>
                         @endif
+                        @php
+                            $unpaidFnbOrdersTotal = $transaction->getUnpaidFnbOrderTotalAttribute();
+                            $paidFnbOrdersTotal = $transaction->getPaidFnbOrderTotalAttribute();
+                            $legacyFnbTotal = $transaction->getFnbTotalAttribute();
+                            $totalFnbToPay = $legacyFnbTotal + $unpaidFnbOrdersTotal;
+                            $psCostDisplay = max(0, $transaction->total - $totalFnbToPay);
+                        @endphp
                         @if($transaction->tipe_transaksi !== 'custom_package')
                         <tr>
                             <td><strong>Biaya Playstation:</strong></td>
-                            <td>Rp {{ number_format($transaction->total - $transaction->getFnbTotalAttribute(), 0, ',', '.') }}</td>
+                            <td>Rp {{ number_format($psCostDisplay, 0, ',', '.') }}</td>
                         </tr>
                         @endif
-                        @if($transaction->tipe_transaksi !== 'custom_package' || $transaction->transactionFnbs->isNotEmpty())
+                        @if($transaction->tipe_transaksi !== 'custom_package' || $transaction->transactionFnbs->isNotEmpty() || $unpaidFnbOrdersTotal > 0)
                         <tr>
                             <td><strong>Biaya FnB:</strong></td>
-                            <td>Rp {{ number_format($transaction->getFnbTotalAttribute(), 0, ',', '.') }}</td>
+                            <td>Rp {{ number_format($totalFnbToPay, 0, ',', '.') }}</td>
+                        </tr>
+                        @endif
+                        @if($paidFnbOrdersTotal > 0)
+                        <tr>
+                            <td><strong>FnB (Sudah Lunas):</strong></td>
+                            <td><span class="badge badge-success">Rp {{ number_format($paidFnbOrdersTotal, 0, ',', '.') }} (Lunas)</span></td>
                         </tr>
                         @endif
                         <tr id="discount-row" style="display: none;">
@@ -182,7 +195,7 @@
                 </div>
             </div>
 
-            @if($transaction->transactionFnbs->isNotEmpty())
+            @if($transaction->transactionFnbs->isNotEmpty() || ($transaction->relationLoaded('fnbOrders') ? $transaction->fnbOrders->isNotEmpty() : $transaction->fnbOrders()->exists()))
                 <hr>
                 <h6>Detail FnB</h6>
                 <div class="table-responsive">
@@ -193,6 +206,7 @@
                                 <th>Jumlah</th>
                                 <th>Harga Satuan</th>
                                 <th>Total</th>
+                                <th>Status Bayar</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -234,7 +248,29 @@
                                     <td>{{ $fnbItem->qty }}</td>
                                     <td>Rp {{ number_format($fnbItem->harga_jual, 0, ',', '.') }}</td>
                                     <td>{!! $showTotal !!}</td>
+                                    <td><span class="badge badge-warning">Tagihan Kasir</span></td>
                                 </tr>
+                            @endforeach
+
+                            @foreach($transaction->fnbOrders as $order)
+                                @foreach($order->items as $orderItem)
+                                    <tr>
+                                        <td>
+                                            {{ $orderItem->fnb->nama ?? 'F&B Item' }}
+                                            <small class="text-muted d-block">({{ $order->order_number }})</small>
+                                        </td>
+                                        <td>{{ $orderItem->qty }}</td>
+                                        <td>Rp {{ number_format($orderItem->unit_price_jual, 0, ',', '.') }}</td>
+                                        <td>Rp {{ number_format($orderItem->subtotal, 0, ',', '.') }}</td>
+                                        <td>
+                                            @if($orderItem->payment_status === 'paid' || $order->payment_status === 'paid')
+                                                <span class="badge badge-success">Sudah Dibayar</span>
+                                            @else
+                                                <span class="badge badge-warning">Belum Lunas</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
                             @endforeach
                         </tbody>
                     </table>

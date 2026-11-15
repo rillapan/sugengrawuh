@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Fnb extends Model
 {
@@ -15,8 +16,18 @@ class Fnb extends Model
         'harga_jual',
         'stok',
         'deskripsi',
+        'image',
         'price_group_id',
     ];
+
+    public function getImageUrlAttribute(): string
+    {
+        if (!empty($this->image) && Storage::disk('public')->exists($this->image)) {
+            return asset('storage/' . $this->image);
+        }
+
+        return asset('img/fnb-placeholder.svg');
+    }
 
     public function priceGroup()
     {

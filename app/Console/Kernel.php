@@ -31,6 +31,8 @@ class Kernel extends ConsoleKernel
         });
         // Daily automation pruning of expired intents and audit logs
         $schedule->command('billing:automation-prune')->dailyAt('04:00')->withoutOverlapping();
+        // Expire PENDING F&B orders older than 30 minutes without modifying stock
+        $schedule->command('fnb:expire-pending')->everyFiveMinutes()->withoutOverlapping();
     }
 
     /**

@@ -86,6 +86,14 @@
                     @enderror
                     <small class="text-muted">Klik tombol + untuk menambahkan jam kerja baru</small>
                 </div>
+                <div class="form-group" id="fnb-staff-group" style="display: none;">
+                    <div class="custom-control custom-checkbox">
+                        <input type="checkbox" class="custom-control-input" id="is_fnb_staff" name="is_fnb_staff" value="1" {{ old('is_fnb_staff') ? 'checked' : '' }}>
+                        <label class="custom-control-label" for="is_fnb_staff">
+                            Staf F&amp;B (Hanya akses Antrean &amp; Dapur F&amp;B; tidak bisa akses kasir/pembayaran/laporan)
+                        </label>
+                    </div>
+                </div>
 
                 <button type="submit" class="btn btn-primary">Simpan</button>
                 <a href="{{ route('users.index') }}" class="btn btn-secondary">Batal</a>
@@ -99,14 +107,17 @@
         const roleSelect = document.getElementById('role');
         const shiftGroup = document.getElementById('shift-group');
         const workShiftGroup = document.getElementById('work-shift-group');
+        const fnbStaffGroup = document.getElementById('fnb-staff-group');
 
         function toggleShift() {
             if (roleSelect.value === 'kasir') {
                 shiftGroup.style.display = 'block';
                 workShiftGroup.style.display = 'block';
+                fnbStaffGroup.style.display = 'block';
             } else {
                 shiftGroup.style.display = 'none';
                 workShiftGroup.style.display = 'none';
+                fnbStaffGroup.style.display = 'none';
             }
         }
 

@@ -413,10 +413,10 @@ class ServerSideBillingEngineTest extends TestCase
 
         $tx = Transaction::latest('id_transaksi')->first();
         $this->assertNotNull($tx);
-        $this->assertEquals(Transaction::BILLING_RUNNING, $tx->billing_status);
-        $this->assertEquals('Digunakan', $this->device->fresh()->status);
+        $this->assertEquals(Transaction::BILLING_IDLE, $tx->billing_status);
+        $this->assertEquals('Tersedia', $this->device->fresh()->status);
 
-        // Cashier completes payment immediately at 14:05 (session expires at 16:00)
+        // Cashier completes payment immediately at 14:05 (session expires at 16:05)
         Carbon::setTestNow($startTime->copy()->addMinutes(5));
         $payResponse = $this->actingAs($this->kasirUser)->post(route('transaction.processPayment', $tx->id_transaksi), [
             'payment_method' => 'tunai',
@@ -431,8 +431,8 @@ class ServerSideBillingEngineTest extends TestCase
         $this->device->refresh();
         $this->assertEquals('Digunakan', $this->device->status);
 
-        // Now fast forward to 16:05 (after expiration)
-        Carbon::setTestNow($startTime->copy()->addMinutes(125));
+        // Now fast forward to 16:10 (after expiration)
+        Carbon::setTestNow($startTime->copy()->addMinutes(130));
         $this->billingService->evaluateExpiration();
 
         $tx->refresh();

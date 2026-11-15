@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8f9fc"/>
+      <stop offset="100%" stop-color="#eaecf4"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="12" fill="url(#bgGrad)"/>
+  <rect x="0.5" y="0.5" width="119" height="119" rx="11.5" fill="none" stroke="#d1d3e2" stroke-width="1"/>
+  <!-- Cup with straw -->
+  <path d="M36 46 L42 88 C42.5 91.5 45.5 94 49 94 L59 94 C62.5 94 65.5 91.5 66 88 L72 46 Z" fill="#b7b9cc"/>
+  <path d="M34 46 L74 46" stroke="#858796" stroke-width="3" stroke-linecap="round"/>
+  <path d="M54 46 L62 26 L70 26" fill="none" stroke="#4e73df" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Food / Snack bowl / Burger shape -->
+  <path d="M64 68 C64 63 70 58 78 58 C86 58 92 63 92 68 Z" fill="#f6c23e"/>
+  <rect x="63" y="70" width="30" height="4" rx="2" fill="#1cc88a"/>
+  <rect x="64" y="76" width="28" height="4" rx="2" fill="#e74a3b"/>
+  <path d="M65 82 C65 86 69 88 78 88 C87 88 91 86 91 82 Z" fill="#dddfeb"/>
+</svg>

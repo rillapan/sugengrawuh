@@ -41,6 +41,10 @@
     </div>
 
     @if($startDateTime && $endDateTime)
+    @php
+        $standaloneList = $standaloneInvoices ?? collect();
+        $grandTotal = $transactions->sum('total') + $standaloneList->sum('final_total');
+    @endphp
     <!-- Transaction Report -->
     <div class="row">
         <div class="col-lg-12">
@@ -50,8 +54,8 @@
                         Data Transaksi dari {{ \Carbon\Carbon::parse($startDateTime)->format('d M Y H:i') }} hingga {{ \Carbon\Carbon::parse($endDateTime)->format('d M Y H:i') }}
                     </h6>
                     <div>
-                        <span class="badge badge-info">Total Transaksi: {{ $transactions->count() }}</span>
-                        <span class="badge badge-success">Total Pendapatan: Rp {{ number_format($transactions->sum('total'), 0, ',', '.') }}</span>
+                        <span class="badge badge-info">Total Transaksi: {{ $transactions->count() + $standaloneList->count() }}</span>
+                        <span class="badge badge-success">Total Pendapatan: Rp {{ number_format($grandTotal, 0, ',', '.') }}</span>
                     </div>
                 </div>
                 <div class="card-body">
@@ -127,6 +131,79 @@
             </div>
         </div>
     </div>
+
+    @if($standaloneList->isNotEmpty())
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 font-weight-bold text-primary">Transaksi FnB Standalone</h6>
+                    <div>
+                        <span class="badge badge-info">Jumlah Invoice: {{ $standaloneList->count() }}</span>
+                        <span class="badge badge-success">Subtotal FnB Standalone: Rp {{ number_format($standaloneList->sum('final_total'), 0, ',', '.') }}</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered" width="100%" cellspacing="0">
+                            <thead>
+                                <tr>
+                                    <th class="text-center" style="width: 50px;">NO</th>
+                                    <th>No. Invoice</th>
+                                    <th>Stasiun / Sumber</th>
+                                    <th>Kasir</th>
+                                    <th>Item FnB</th>
+                                    <th>Waktu Bayar</th>
+                                    <th class="text-right">Total</th>
+                                    <th class="text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($standaloneList as $inv)
+                                    <tr>
+                                        <td class="text-center">{{ $loop->iteration }}</td>
+                                        <td>{{ $inv->invoice_number }}</td>
+                                        <td>
+                                            @if($inv->transaction && $inv->transaction->device)
+                                                {{ $inv->transaction->device->nama }}
+                                                @if($inv->transaction->device->playstation)
+                                                    - {{ $inv->transaction->device->playstation->nama }}
+                                                @endif
+                                                (Sesi #{{ $inv->transaction_id }})
+                                            @else
+                                                Walk-in / Non-Playing
+                                            @endif
+                                        </td>
+                                        <td>{{ $inv->cashierUser ? $inv->cashierUser->name : '-' }}</td>
+                                        <td>
+                                            @foreach($inv->items as $item)
+                                                {{ $item->name }} ({{ $item->qty }}x)@if(!$loop->last), @endif
+                                            @endforeach
+                                        </td>
+                                        <td>{{ $inv->paid_at ? $inv->paid_at->format('d M Y H:i:s') : '-' }}</td>
+                                        <td class="text-right">Rp {{ number_format($inv->final_total, 0, ',', '.') }}</td>
+                                        <td class="text-center">
+                                            <a href="{{ route('fnb.invoice.show', $inv->id) }}" class="btn btn-sm btn-primary" title="Detail Invoice">
+                                                <i class="fas fa-eye"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                            <tfoot>
+                                <tr class="font-weight-bold">
+                                    <td colspan="6" class="text-right">Total FnB Standalone:</td>
+                                    <td class="text-right">Rp {{ number_format($standaloneList->sum('final_total'), 0, ',', '.') }}</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
     @endif
 </div>
 @endsection

@@ -25,7 +25,15 @@ class TransactionController extends Controller
 
     public function showPayment($id)
     {
-        $transaction = Transaction::with(['device.playstation', 'transactionFnbs.fnb', 'user', 'custom_package.playstations', 'custom_package.fnbs'])->findOrFail($id);
+        $transaction = Transaction::with([
+            'device.playstation', 
+            'transactionFnbs.fnb', 
+            'user', 
+            'custom_package.playstations', 
+            'custom_package.fnbs',
+            'fnbOrders.items.fnb',
+            'invoices.items'
+        ])->findOrFail($id);
 
         if ($transaction->payment_status === 'paid') {
             return redirect()->route('transaction.print', $transaction->id_transaksi)
@@ -41,7 +49,15 @@ class TransactionController extends Controller
 
     public function printReceipt($id)
     {
-        $transaction = Transaction::with(['device.playstation', 'transactionFnbs.fnb', 'user', 'custom_package.playstations', 'custom_package.fnbs'])->findOrFail($id);
+        $transaction = Transaction::with([
+            'device.playstation', 
+            'transactionFnbs.fnb', 
+            'user', 
+            'custom_package.playstations', 
+            'custom_package.fnbs',
+            'fnbOrders.items.fnb',
+            'invoices.items'
+        ])->findOrFail($id);
         
         // Retrieve temporary payment data from session if available
         $amountPaid = session('amount_paid');
@@ -71,7 +87,65 @@ class TransactionController extends Controller
         $amountPaid = (float) $request->input('amount_paid');
         $paymentMethod = $request->input('payment_method');
 
-        $result = DB::transaction(function () use ($id, $discount, $amountPaid, $paymentMethod, $request) {
+        $transaction = Transaction::where('id_transaksi', $id)->firstOrFail();
+
+        if ($transaction->payment_status === 'paid') {
+            return redirect()->route('transaction.print', $transaction->id_transaksi)
+                ->with('gagal', 'Transaksi ini sudah lunas.');
+        }
+
+        $finalTotal = $transaction->total - ($transaction->total * $discount / 100);
+
+        $request->validate([
+            'payment_method' => 'required|in:tunai,e-wallet,transfer_bank',
+            'amount_paid' => 'required|numeric|min:' . $finalTotal,
+            'discount' => 'nullable|numeric|min:0|max:100',
+        ]);
+
+        if (in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'])) {
+            $paketBillingService = app(\App\Services\Billing\PaketBillingService::class);
+            $invoice = $paketBillingService->activatePaidPaket($transaction, [
+                'payment_method' => $paymentMethod,
+                'amount_paid' => $amountPaid,
+                'discount' => $discount,
+                'cashier_user_id' => auth()->id(),
+            ]);
+
+            return redirect()->route('transaction.print', ['id' => $transaction->id_transaksi, 'action' => 'payment'])
+                ->with([
+                    'success' => 'Pembayaran berhasil. Kembalian: Rp ' . number_format($invoice->change_amount, 0, ',', '.'),
+                    'amount_paid' => $invoice->amount_paid,
+                    'change' => $invoice->change_amount
+                ]);
+        }
+
+        if ($transaction->tipe_transaksi === 'postpaid') {
+            $lostTimeBillingService = app(\App\Services\Billing\LostTimeBillingService::class);
+            try {
+                $invoice = $lostTimeBillingService->checkoutLostTime($transaction->id_transaksi, [
+                    'payment_method' => $paymentMethod,
+                    'amount_paid' => $amountPaid,
+                    'discount' => $discount,
+                    'cashier_user_id' => auth()->id(),
+                ]);
+
+                return redirect()->route('transaction.print', ['id' => $transaction->id_transaksi, 'action' => 'payment'])
+                    ->with([
+                        'success' => 'Pembayaran berhasil. Kembalian: Rp ' . number_format($invoice->change_amount, 0, ',', '.'),
+                        'amount_paid' => $invoice->amount_paid,
+                        'change' => $invoice->change_amount
+                    ]);
+            } catch (\InvalidArgumentException $e) {
+                $transaction->refresh();
+                if ($transaction->payment_status === 'paid') {
+                    return redirect()->route('transaction.print', $transaction->id_transaksi)
+                        ->with('gagal', 'Transaksi ini sudah lunas.');
+                }
+                return redirect()->back()->with('gagal', $e->getMessage());
+            }
+        }
+
+        $result = DB::transaction(function () use ($id, $discount, $amountPaid, $paymentMethod, $finalTotal) {
             // Pessimistic write lock (SELECT ... FOR UPDATE) to prevent race conditions on concurrent payment requests
             $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
 
@@ -81,14 +155,6 @@ class TransactionController extends Controller
                     'transaction' => $transaction
                 ];
             }
-
-            $finalTotal = $transaction->total - ($transaction->total * $discount / 100);
-
-            $request->validate([
-                'payment_method' => 'required|in:tunai,e-wallet,transfer_bank',
-                'amount_paid' => 'required|numeric|min:' . $finalTotal,
-                'discount' => 'nullable|numeric|min:0|max:100',
-            ]);
 
             $change = $amountPaid - $finalTotal;
 
@@ -432,8 +498,13 @@ class TransactionController extends Controller
             $validatedData['device_id'] = $selectedDevice->id;
             $validatedData['custom_package_id'] = $customPackage->id;
             $validatedData['harga'] = $customPackage->harga_total;
-            $validatedData['total'] = $customPackage->harga_total;
-            $validatedData['status_transaksi'] = 'sukses';
+            $validatedData['total'] = $request->filled('total') ? (float)$request->total : $customPackage->harga_total;
+            $validatedData['status_transaksi'] = 'draft';
+            $validatedData['payment_status'] = 'unpaid';
+            $validatedData['billing_status'] = Transaction::BILLING_IDLE;
+            $validatedData['started_at'] = null;
+            $validatedData['expires_at'] = null;
+            $validatedData['session_token'] = null;
 
             // Find the duration for this specific PlayStation type from the package
             $playstationId = $selectedDevice->playstation_id;
@@ -450,8 +521,9 @@ class TransactionController extends Controller
             // Calculate proper end time with midnight detection
             $start_datetime = Carbon::parse($tanggal . ' ' . $start_time);
             $end_datetime = $start_datetime->copy()->addMinutes($totalJamMain);
-            
+
             $validatedData['jam_main'] = $totalJamMain;
+            $validatedData['waktu_mulai'] = $start_time;
             $validatedData['waktu_Selesai'] = $end_datetime->format('H:i');
 
         } elseif ($request->tipe_transaksi === 'prepaid') {
@@ -497,13 +569,19 @@ class TransactionController extends Controller
             // Calculate proper end time based on exact seconds
             $start_datetime = Carbon::now();
             $end_datetime = $start_datetime->copy()->addSeconds($durationSeconds);
-            
+
+            $validatedData['waktu_mulai'] = $start_time;
             $validatedData['waktu_Selesai'] = ($durationSeconds % 60 === 0) ? $end_datetime->format('H:i') : $end_datetime->format('H:i:s');
             $validatedData['duration_seconds'] = $durationSeconds;
             $validatedData['jam_main'] = \App\Models\HourlyPrice::formatSeconds($durationSeconds);
             $validatedData['harga'] = $playstation->harga ?? 0; // Store base hourly rate for reference
             $validatedData['total'] = $totalPs + $fnbTotal;
-            $validatedData['status_transaksi'] = 'sukses';
+            $validatedData['status_transaksi'] = 'draft';
+            $validatedData['payment_status'] = 'unpaid';
+            $validatedData['billing_status'] = Transaction::BILLING_IDLE;
+            $validatedData['started_at'] = null;
+            $validatedData['expires_at'] = null;
+            $validatedData['session_token'] = null;
             
             // Store the selected PlayStation ID for reference
             if ($request->playstation_id) {
@@ -534,10 +612,16 @@ class TransactionController extends Controller
             
             $validatedData['device_id'] = $device->id;
             $validatedData['harga'] = $playstation->harga ?? 0;
+            $validatedData['waktu_mulai'] = $start_time;
             $validatedData['waktu_Selesai'] = null;
             $validatedData['jam_main'] = null;
             $validatedData['status_transaksi'] = 'berjalan';
+            $validatedData['payment_status'] = 'unpaid';
             $validatedData['lost_time_start'] = Carbon::now();
+            $validatedData['started_at'] = Carbon::now();
+            $validatedData['expires_at'] = null;
+            $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
+            $validatedData['session_token'] = \Illuminate\Support\Str::random(40);
             
             // Store the selected PlayStation ID for reference
             if ($request->playstation_id) {
@@ -555,6 +639,8 @@ class TransactionController extends Controller
         unset($validatedData['fnb_ids']);
         unset($validatedData['fnbs_qty']);
         unset($validatedData['fnbs_harga']);
+
+        $isPaket = in_array($request->tipe_transaksi, ['prepaid', 'custom_package']);
 
         try {
             \DB::beginTransaction();
@@ -582,11 +668,9 @@ class TransactionController extends Controller
                     return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.')->withInput();
                 }
 
-                $validatedData['started_at'] = Carbon::now();
-                $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
-                if ($request->tipe_transaksi === 'custom_package' || $request->tipe_transaksi === 'prepaid') {
-                    $validatedData['expires_at'] = $end_datetime;
-                } else {
+                if (!$isPaket) {
+                    $validatedData['started_at'] = Carbon::now();
+                    $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
                     $validatedData['expires_at'] = null;
                 }
             }
@@ -595,13 +679,11 @@ class TransactionController extends Controller
             
             // Handle FnB items
             $addedFnbIds = [];
-            // For custom packages, we now rely on the pre-filled form items which are sent via fnb_ids array
 
-            
             if ($request->has('fnb_ids')) {
                 // For regular transactions or additional items in custom package, handle FnB from form
                 foreach ($request->fnb_ids as $index => $fnb_id) {
-                    if ($fnb_id && $request->fnbs_qty[$index] > 0) {
+                    if ($fnb_id && isset($request->fnbs_qty[$index]) && $request->fnbs_qty[$index] > 0) {
                         // Skip if already added as part of the package
                         if (in_array($fnb_id, $addedFnbIds)) continue;
                         
@@ -617,72 +699,68 @@ class TransactionController extends Controller
                             'transaction_id' => $transaction->id_transaksi,
                             'fnb_id' => $fnb_id,
                             'qty' => $request->fnbs_qty[$index],
-                            'harga_jual' => $request->fnbs_harga[$index] ?? $fnb->harga_jual
+                            'harga_jual' => $request->fnbs_harga[$index] ?? $fnb->harga_jual,
+                            'harga_beli' => $fnb->harga_beli ?? 0,
                         ]);
     
-                        // Update stock only if not unlimited (stok != -1)
-                        if ($fnb->stok != -1) {
-                            $fnb->decrement('stok', $request->fnbs_qty[$index]);
+                        // Deduct stock and mutate ONLY for postpaid (lost time)
+                        if (!$isPaket) {
+                            if ($fnb->stok != -1) {
+                                $fnb->decrement('stok', $request->fnbs_qty[$index]);
+                            }
+        
+                            StockMutation::create([
+                                'fnb_id' => $fnb_id,
+                                'type' => 'out',
+                                'qty' => $request->fnbs_qty[$index],
+                                'date' => now()->toDateString(),
+                                'note' => 'Penjualan transaksi #' . $transaction->id_transaksi
+                            ]);
                         }
-    
-                        // Create stock mutation
-                        StockMutation::create([
-                            'fnb_id' => $fnb_id,
-                            'type' => 'out',
-                            'qty' => $request->fnbs_qty[$index],
-                            'date' => now()->toDateString(),
-                            'note' => 'Penjualan transaksi #' . $transaction->id_transaksi
-                        ]);
                     }
                 }
             }
     
-            $device = Device::find($validatedData['device_id']);
-            if ($device) {
-                $device->update(['status' => 'Digunakan']);
+            if (!$isPaket) {
+                $device = Device::find($validatedData['device_id']);
+                if ($device) {
+                    $device->update(['status' => 'Digunakan']);
 
-                /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
-                $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
-                if ($intentService->isAutomationEnabled()) {
-                    $intentService->assertAutomationReady();
-                    $device->increment('session_generation');
-                    $device->refresh();
-                    $generation = (int) $device->session_generation;
-                    $transaction->update(['session_generation' => $generation]);
+                    /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+                    $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+                    if ($intentService->isAutomationEnabled()) {
+                        $intentService->assertAutomationReady();
+                        $device->increment('session_generation');
+                        $device->refresh();
+                        $generation = (int) $device->session_generation;
+                        $transaction->update(['session_generation' => $generation]);
 
-                    $intentService->recordIntent(
-                        $device,
-                        $transaction,
-                        \App\Models\AutomationIntent::EVENT_BILLING_STARTED,
-                        \App\Models\AutomationIntent::STATE_ON,
-                        $transaction->started_at ?? Carbon::now()
-                    );
-
-                    if ($transaction->expires_at) {
                         $intentService->recordIntent(
                             $device,
                             $transaction,
-                            \App\Models\AutomationIntent::EVENT_BILLING_EXPIRED,
-                            \App\Models\AutomationIntent::STATE_OFF,
-                            $transaction->expires_at
+                            \App\Models\AutomationIntent::EVENT_BILLING_STARTED,
+                            \App\Models\AutomationIntent::STATE_ON,
+                            $transaction->started_at ?? Carbon::now()
                         );
                     }
-                }
 
-                if (TvAlertService::hasTvControlSchema()) {
-                    app(TvAlertService::class)->markStalePendingAlertsForStation($device, 'New session started on station');
+                    if (TvAlertService::hasTvControlSchema()) {
+                        app(TvAlertService::class)->markStalePendingAlertsForStation($device, 'New session started on station');
+                    }
                 }
             }
 
             \DB::commit();
 
-            // Trigger immediate dispatch of outbox intent so hardware turns ON immediately
-            try {
-                if (app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
-                    app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(5);
+            if (!$isPaket) {
+                // Trigger immediate dispatch of outbox intent so hardware turns ON immediately
+                try {
+                    if (app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
+                        app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(5);
+                    }
+                } catch (\Throwable $e) {
+                    \Log::warning('Immediate automation dispatch after store failed: ' . $e->getMessage());
                 }
-            } catch (\Throwable $e) {
-                \Log::warning('Immediate automation dispatch after store failed: ' . $e->getMessage());
             }
         } catch (\Exception $e) {
             \DB::rollBack();
@@ -691,7 +769,11 @@ class TransactionController extends Controller
             return redirect()->back()->with('gagal', 'Gagal menyimpan transaksi: ' . $e->getMessage());
         }
 
-        // Handle different actions
+        if ($isPaket) {
+            return redirect()->route('transaction.showPayment', $transaction->id_transaksi);
+        }
+
+        // Handle different actions for postpaid
         if ($request->action === 'bayar') {
             // Redirect to payment page for immediate payment
             return redirect()->route('transaction.showPayment', $transaction->id_transaksi);
@@ -979,7 +1061,7 @@ class TransactionController extends Controller
 
         DB::transaction(function () use ($transaction) {
             // 1. Kembalikan stok FnB dan catat mutasi stok masuk untuk transaksi unpaid yang dihapus
-            if ($transaction->transactionFnbs) {
+            if ($transaction->status_transaksi !== 'draft' && $transaction->transactionFnbs) {
                 foreach ($transaction->transactionFnbs as $tFnb) {
                     $fnb = $tFnb->fnb;
                     if ($fnb) {
@@ -1191,7 +1273,7 @@ class TransactionController extends Controller
         }
 
         $waktuSelesai = Carbon::now();
-        $totalFnb = $transaction->getFnbTotalAttribute();
+        $totalFnb = $transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute();
 
         if ($transaction->tipe_transaksi === 'postpaid') {
             // Calculate duration and cost for postpaid (Lost Time) transactions
@@ -1239,11 +1321,16 @@ class TransactionController extends Controller
             ];
         }
 
+        $wasPaid = ($transaction->payment_status === 'paid');
+
         // Common updates for both transaction types
         $commonUpdates = [
             'status_transaksi' => 'selesai',
-            'payment_status' => 'unpaid'
+            'session_token' => null,
         ];
+        if (!$wasPaid) {
+            $commonUpdates['payment_status'] = 'unpaid';
+        }
         if (Transaction::hasG2Schema()) {
             $commonUpdates['ended_at'] = $waktuSelesai;
             $commonUpdates['billing_status'] = Transaction::BILLING_COMPLETED;
@@ -1290,6 +1377,11 @@ class TransactionController extends Controller
                 TvAlertEvent::STATUS_CANCELLED,
                 'Session stopped'
             );
+        }
+
+        if ($wasPaid) {
+            return redirect()->route('transaction.index')
+                ->with('success', 'Transaksi berhasil diakhiri.');
         }
 
         // Redirect to payment page
@@ -1545,7 +1637,7 @@ class TransactionController extends Controller
                     'fnb_id' => $fnb->id,
                     'qty' => $qty,
                     'harga_jual' => $fnb->harga_jual,
-                    'harga_beli' => $fnb->harga_beli
+                    'harga_beli' => (float) ($fnb->harga_beli ?? 0),
                 ]);
             }
             

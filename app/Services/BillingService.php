@@ -88,6 +88,7 @@ class BillingService
                 'started_at' => $startedAt,
                 'billing_status' => Transaction::BILLING_RUNNING,
                 'payment_status' => 'unpaid',
+                'session_token' => \Illuminate\Support\Str::random(40),
             ];
 
             // Resolve playstation associated with device
@@ -210,6 +211,7 @@ class BillingService
                     'fnb_id' => $fnb->id,
                     'qty' => $qty,
                     'harga_jual' => $unitPrice,
+                    'harga_beli' => (float) ($fnb->harga_beli ?? 0),
                 ]);
 
                 if ($fnb->stok != -1) {
@@ -439,11 +441,12 @@ class BillingService
 
             $now = Carbon::now();
             $endedAt = $now;
-            $fnbTotal = $transaction->fnb_total;
+            $fnbTotal = (float) $transaction->getFnbTotalAttribute() + (float) $transaction->getUnpaidFnbOrderTotalAttribute();
             $updateData = [
                 'ended_at' => $endedAt,
                 'waktu_Selesai' => $endedAt->format('H:i'),
                 'status_transaksi' => 'selesai',
+                'session_token' => null,
             ];
 
             if ($transaction->tipe_transaksi === 'postpaid') {
@@ -568,6 +571,7 @@ class BillingService
                         'ended_at' => $lockedTx->expires_at,
                         'billing_status' => Transaction::BILLING_EXPIRED_PENDING_ACTION,
                         'status_transaksi' => 'selesai',
+                        'session_token' => null,
                     ]);
 
                     if ($lockedTx->device) {

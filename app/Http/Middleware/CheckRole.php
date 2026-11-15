@@ -34,6 +34,13 @@ class CheckRole
             return $next($request);
         }
 
+        if ($user->isFnbStaff()) {
+            if (in_array('fnb_staff', $allowedRoles, true)) {
+                return $next($request);
+            }
+            abort(403, 'Unauthorized action.');
+        }
+
         if (in_array($userRole, $allowedRoles)) {
             return $next($request);
         }

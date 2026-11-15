@@ -48,6 +48,9 @@
                                     <span class="badge badge-success">Owner</span>
                                 @elseif($user->role == 'kasir')
                                     <span class="badge badge-info">Kasir</span>
+                                    @if($user->isFnbStaff())
+                                        <span class="badge badge-warning ml-1">Staf F&amp;B</span>
+                                    @endif
                                 @endif
                             </td>
                             <td>{{ $user->shift ?? '-' }}</td>

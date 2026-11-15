@@ -168,13 +168,41 @@
                 @if($transaction->tipe_transaksi === 'custom_package')
                     Harga Paket
                 @else
-                    Rp {{ number_format($transaction->total - $transaction->getFnbTotalAttribute(), 0, ',', '.') }}
+                    @php
+                        $checkoutInvoice = ($transaction->relationLoaded('invoices') && $transaction->invoices->isNotEmpty())
+                            ? ($transaction->invoices->where('invoice_type', '!=', \App\Models\Invoice::TYPE_FNB_STANDALONE)->last() ?? $transaction->invoices->last())
+                            : null;
+                        $rentalItem = ($checkoutInvoice && $checkoutInvoice->relationLoaded('items'))
+                            ? $checkoutInvoice->items->where('item_type', \App\Models\InvoiceItem::ITEM_TYPE_GAME_RENTAL)->first()
+                            : null;
+                        $rentalCost = $rentalItem 
+                            ? $rentalItem->subtotal 
+                            : max(0, $transaction->total - ($transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute()));
+                    @endphp
+                    Rp {{ number_format($rentalCost, 0, ',', '.') }}
                 @endif
             </td>
         </tr>
 
         <!-- FnB Items -->
-        @if($transaction->transactionFnbs->isNotEmpty())
+        @php
+            $invoiceFnbItems = null;
+            if ($checkoutInvoice && $checkoutInvoice->relationLoaded('items')) {
+                $invoiceFnbItems = $checkoutInvoice->items->where('item_type', \App\Models\InvoiceItem::ITEM_TYPE_FNB_ITEM);
+            }
+        @endphp
+
+        @if($invoiceFnbItems && $invoiceFnbItems->isNotEmpty())
+            @foreach($invoiceFnbItems as $invItem)
+                <tr>
+                    <td colspan="2">{{ $invItem->name }}</td>
+                </tr>
+                <tr>
+                    <td>{{ $invItem->qty }} x {{ number_format($invItem->unit_price_jual, 0, ',', '.') }}</td>
+                    <td class="text-right">Rp {{ number_format($invItem->subtotal, 0, ',', '.') }}</td>
+                </tr>
+            @endforeach
+        @elseif($transaction->transactionFnbs->isNotEmpty())
             @php
                 // Create lookup for package items if custom package
                 $packageItems = [];

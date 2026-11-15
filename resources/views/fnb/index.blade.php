@@ -37,6 +37,7 @@
             <table class="table">
                 <thead>
                     <tr>
+                        <th scope="col">Gambar</th>
                         <th scope="col">Nama</th>
                         <th scope="col">Kelompok Harga</th>
                         <th scope="col">Harga Jual</th>
@@ -48,6 +49,9 @@
                 <tbody>
                     @foreach ($fnbs as $fnb)
                         <tr>
+                            <td>
+                                <img src="{{ $fnb->image_url }}" alt="{{ $fnb->nama }}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid #e3e6f0;">
+                            </td>
                             <td>{{ $fnb->nama }}</td>
                             <td>{{ $fnb->priceGroup ? $fnb->priceGroup->nama : '-' }}</td>
                             <td>Rp {{ number_format($fnb->harga_jual, 0, ',', '.') }}</td>

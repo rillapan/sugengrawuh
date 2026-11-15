@@ -138,6 +138,51 @@
         </tfoot>
     </table>
 
+    @if(isset($standaloneInvoices) && $standaloneInvoices->isNotEmpty())
+    <h4 class="mt-4 mb-3">Detail Penjualan FnB Standalone</h4>
+    <table class="table" style="font-size: 10px;">
+        <thead>
+            <tr>
+                <th scope="col">No. Invoice</th>
+                <th scope="col">Stasiun / Sumber</th>
+                <th scope="col">Kasir</th>
+                <th scope="col">Item FnB</th>
+                <th scope="col">Subtotal</th>
+                <th scope="col">Diskon</th>
+                <th scope="col">Total Bayar</th>
+                <th scope="col">Tanggal Bayar</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach ($standaloneInvoices as $inv)
+                <tr>
+                    <td>{{ $inv->invoice_number }}</td>
+                    <td>
+                        @if($inv->transaction && $inv->transaction->device)
+                            {{ $inv->transaction->device->nama }}
+                            @if($inv->transaction->device->playstation)
+                                - {{ $inv->transaction->device->playstation->nama }}
+                            @endif
+                        @else
+                            Walk-in / Non-Playing
+                        @endif
+                    </td>
+                    <td>{{ $inv->cashierUser ? $inv->cashierUser->name : '-' }}</td>
+                    <td>
+                        @foreach($inv->items as $item)
+                            {{ $item->name }} ({{ $item->qty }} x Rp {{ number_format($item->unit_price_jual, 0, ',', '.') }})@if(!$loop->last), @endif
+                        @endforeach
+                    </td>
+                    <td>{{ 'Rp ' . number_format($inv->subtotal, 0, ',', '.') }}</td>
+                    <td>{{ $inv->discount > 0 ? 'Rp ' . number_format($inv->discount, 0, ',', '.') : '-' }}</td>
+                    <td>{{ 'Rp ' . number_format($inv->final_total, 0, ',', '.') }}</td>
+                    <td>{{ $inv->paid_at }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+    @endif
+
     <!-- Bootstrap core JavaScript-->
     <script src="vendor/jquery/jquery.min.js"></script>
     <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>

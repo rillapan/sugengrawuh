@@ -1,7 +1,7 @@
 <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
 
     <!-- Sidebar - Brand -->
-    <a class="sidebar-brand d-flex align-items-center justify-content-center" href="{{ route('home') }}">
+    <a class="sidebar-brand d-flex align-items-center justify-content-center" href="{{ auth()->user()->isFnbStaff() ? route('fnb.queue.index') : route('home') }}">
         <div class="sidebar-brand-icon rotate-n-15">
             <i class="fab fa-playstation"></i>
         </div>
@@ -11,12 +11,14 @@
     <!-- Divider -->
     <hr class="sidebar-divider my-0">
 
+    @if (!auth()->user()->isFnbStaff())
     <!-- Nav Item - Dashboard -->
     <li class="nav-item {{ isset($active) && $active === 'dashboard' ? 'active' : '' }}">
         <a class="nav-link" href="{{ route('home') }}">
             <i class="fas fa-fw fa-tachometer-alt"></i>
             <span>Dashboard</span></a>
     </li>
+    @endif
 
     <!-- Divider -->
     <hr class="sidebar-divider">
@@ -44,6 +46,12 @@
                 <i class="fas fa-gamepad"></i>
                 <span>Kategori Permainan</span></a>
         </li>
+        <li class="nav-item {{ isset($active) && $active === 'locations' ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('admin.locations.index') }}">
+                <i class="fas fa-qrcode"></i>
+                <span>Kelola QR Lokasi</span></a>
+        </li>
+
         <li class="nav-item {{ isset($active) && $active === 'settings' ? 'active' : '' }}">
             <a class="nav-link" href="{{ route('settings.index') }}">
                 <i class="fas fa-cogs"></i>
@@ -52,6 +60,24 @@
     @endif
 
     @if (auth()->user()->isAdmin() || auth()->user()->isKasir() || auth()->user()->isOwner())
+        <div class="sidebar-heading">
+            Dapur &amp; F&amp;B
+        </div>
+
+        <li class="nav-item {{ isset($active) && $active === 'fnb-transaction' ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('fnb.orders.create') }}">
+                <i class="fas fa-cash-register"></i>
+                <span>Transaksi F&amp;B</span></a>
+        </li>
+
+        <li class="nav-item {{ isset($active) && $active === 'fnb-queue' ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('fnb.queue.index') }}">
+                <i class="fas fa-concierge-bell"></i>
+                <span>Antrean Order F&amp;B</span></a>
+        </li>
+    @endif
+
+    @if (auth()->user()->isAdmin() || (auth()->user()->isKasir() && !auth()->user()->isFnbStaff()) || auth()->user()->isOwner())
         <div class="sidebar-heading">
             Operasional
         </div>
@@ -141,7 +167,7 @@
         </li>
     @endif
 
-    @if (auth()->user()->isAdmin() || auth()->user()->isKasir() || auth()->user()->isOwner())
+    @if (auth()->user()->isAdmin() || (auth()->user()->isKasir() && !auth()->user()->isFnbStaff()) || auth()->user()->isOwner())
         <li class="nav-item">
             <a class="nav-link collapsed" href="#" data-toggle="collapse" data-target="#collapseExpense"
                 aria-expanded="true" aria-controls="collapseExpense">

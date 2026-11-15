@@ -20,13 +20,17 @@ Route::get('/', function () {
 
 Auth::routes();
 
+// Public QR Self-Service Ordering Routes (Throttled, No Auth)
+Route::middleware(['throttle:60,1'])->group(function () {
+    Route::get('/station/{code}', [App\Http\Controllers\PublicQrOrderController::class, 'showStationMenu'])->name('public.qr.station');
+    Route::get('/station/{code}/orders', [App\Http\Controllers\PublicQrOrderController::class, 'getActiveOrders'])->name('public.qr.station.orders');
+    Route::post('/station/{code}/submit', [App\Http\Controllers\PublicQrOrderController::class, 'submitOrder'])->name('public.qr.station.submit');
+    Route::get('/order/status/{orderNumber}', [App\Http\Controllers\PublicQrOrderController::class, 'showOrderStatus'])->name('public.qr.status');
+});
+
 // Universal Authenticated Routes
 Route::middleware(['auth'])->group(function () {
     Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
-    
-    Route::get('/chart-pie-data', [App\Http\Controllers\HomeController::class, 'pieCartData2']);
-    Route::get('/chart-area-data', 'App\Http\Controllers\HomeController@areaCartData');
-    Route::get('/hourly-revenue-data', 'App\Http\Controllers\HomeController@hourlyRevenueData');
     
     Route::get('/profile', 'App\Http\Controllers\HomeController@profile')->name('profile');
     Route::post('/device/{id}/update-status', [App\Http\Controllers\DeviceController::class, 'updateStatus'])->name('device.updateStatus');
@@ -45,6 +49,10 @@ Route::middleware(['auth'])->group(function () {
 
 // Read-Only Monitoring Routes (Admin + Kasir + Owner)
 Route::middleware(['auth', 'check_role:admin,kasir,owner'])->group(function () {
+    Route::get('/chart-pie-data', [App\Http\Controllers\HomeController::class, 'pieCartData2']);
+    Route::get('/chart-area-data', 'App\Http\Controllers\HomeController@areaCartData');
+    Route::get('/hourly-revenue-data', 'App\Http\Controllers\HomeController@hourlyRevenueData');
+
     // Transaction Read-Only
     Route::get('/transaction', [App\Http\Controllers\TransactionController::class, 'index'])->name('transaction.index');
     Route::get('/transaction/{transaction}', [App\Http\Controllers\TransactionController::class, 'show'])->name('transaction.show')->whereNumber('transaction');
@@ -61,6 +69,21 @@ Route::middleware(['auth', 'check_role:admin,kasir,owner'])->group(function () {
 
     // Station Hardware Mapping Operational View (Admin + Kasir + Owner)
     Route::get('/admin/stations/{stationId}/mappings', [App\Http\Controllers\Admin\StationHardwareMappingController::class, 'index'])->name('admin.stations.mappings.index');
+});
+
+// Unified F&B Kitchen Queue (Admin + Owner + Kasir + Staf F&B)
+Route::middleware(['auth', 'check_role:admin,kasir,owner,fnb_staff'])->group(function () {
+    Route::get('/fnb/queue', [App\Http\Controllers\FnbOrderQueueController::class, 'index'])->name('fnb.queue.index');
+    Route::get('/fnb/queue/poll', [App\Http\Controllers\FnbOrderQueueController::class, 'poll'])->name('fnb.queue.poll');
+    Route::get('/fnb/orders/create', [App\Http\Controllers\FnbTransactionController::class, 'create'])->name('fnb.orders.create');
+    Route::get('/fnb/invoices/{invoiceId}', [App\Http\Controllers\FnbOrderQueueController::class, 'showInvoice'])->name('fnb.invoice.show')->whereNumber('invoiceId');
+});
+
+Route::middleware(['auth', 'check_role:admin,kasir,fnb_staff'])->group(function () {
+    Route::post('/fnb/orders/create', [App\Http\Controllers\FnbTransactionController::class, 'store'])->name('fnb.orders.store');
+    Route::post('/fnb/queue/{id}/status', [App\Http\Controllers\FnbOrderQueueController::class, 'updateStatus'])->name('fnb.queue.status')->whereNumber('id');
+    Route::post('/fnb/queue/{id}/cancel', [App\Http\Controllers\FnbOrderQueueController::class, 'cancelOrder'])->name('fnb.queue.cancel')->whereNumber('id');
+    Route::post('/fnb/queue/{id}/pay', [App\Http\Controllers\FnbOrderQueueController::class, 'payOrder'])->name('fnb.queue.pay')->whereNumber('id');
 });
 
 // Operational Mutation Routes (Admin + Kasir)
@@ -209,6 +232,12 @@ Route::middleware(['auth', 'check_role:admin'])->group(function () {
     
     // Work Shift Management
     Route::resource('/work_shifts', App\Http\Controllers\WorkShiftController::class);
+
+    // Location & QR Code Management (Admin Only)
+    Route::get('/admin/locations', [App\Http\Controllers\Admin\LocationQrController::class, 'index'])->name('admin.locations.index');
+    Route::post('/admin/locations', [App\Http\Controllers\Admin\LocationQrController::class, 'store'])->name('admin.locations.store');
+    Route::put('/admin/locations/{id}', [App\Http\Controllers\Admin\LocationQrController::class, 'update'])->name('admin.locations.update');
+    Route::get('/admin/locations/{id}/print', [App\Http\Controllers\Admin\LocationQrController::class, 'print'])->name('admin.locations.print');
 
     // Physical Device Registry Mutations (Admin Only)
     Route::post('/admin/hardware/devices', [App\Http\Controllers\Admin\PhysicalDeviceController::class, 'store'])->name('admin.hardware.devices.store');

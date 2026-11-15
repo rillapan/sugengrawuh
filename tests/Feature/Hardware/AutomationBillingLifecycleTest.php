@@ -422,10 +422,16 @@ class AutomationBillingLifecycleTest extends TestCase
             'harga' => 10000,
             'total' => 10000,
             'playstation_id' => $this->ps->id,
-            'action' => 'simpan',
+            'action' => 'bayar',
         ]);
 
-        $response->assertRedirect('transaction');
+        $tx = Transaction::where('nama', 'Pelanggan Store Immediate')->firstOrFail();
+        $response->assertRedirect(route('transaction.showPayment', $tx->id_transaksi));
+
+        $this->actingAs($this->kasir)->post(route('transaction.processPayment', $tx->id_transaksi), [
+            'payment_method' => 'tunai',
+            'amount_paid' => 10000,
+        ]);
 
         $intent = AutomationIntent::where('station_id', $this->station->id)
             ->where('event_type', AutomationIntent::EVENT_BILLING_STARTED)

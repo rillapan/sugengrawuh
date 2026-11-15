@@ -59,9 +59,8 @@ class MidnightTimerCrossingTest extends TestCase
                 'total' => 20000
             ]);
 
-        $response->assertRedirect(route('transaction.index'));
-
         $transaction = Transaction::latest()->first();
+        $response->assertRedirect(route('transaction.showPayment', $transaction->id_transaksi));
 
         // Check waktu_mulai is 23:30 (may be H:i:s format)
         $this->assertEquals('23:30', substr($transaction->waktu_mulai, 0, 5));

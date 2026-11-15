@@ -71,7 +71,14 @@ class BillingWorkflowRegressionTest extends TestCase
                 'total' => 20000
             ]);
 
-        $response->assertRedirect('transaction');
+        $transaction = Transaction::where('nama', 'Pelanggan Prepaid')->firstOrFail();
+        $response->assertRedirect(route('transaction.showPayment', $transaction->id_transaksi));
+
+        $this->actingAs($this->kasir)
+            ->post(route('transaction.processPayment', $transaction->id_transaksi), [
+                'payment_method' => 'tunai',
+                'amount_paid' => 20000,
+            ]);
 
         $this->assertDatabaseHas('transactions', [
             'nama' => 'Pelanggan Prepaid',
@@ -128,7 +135,14 @@ class BillingWorkflowRegressionTest extends TestCase
                 'tipe_transaksi' => 'custom_package'
             ]);
 
-        $response->assertRedirect('transaction');
+        $transaction = Transaction::where('nama', 'Pelanggan Custom Paket')->firstOrFail();
+        $response->assertRedirect(route('transaction.showPayment', $transaction->id_transaksi));
+
+        $this->actingAs($this->kasir)
+            ->post(route('transaction.processPayment', $transaction->id_transaksi), [
+                'payment_method' => 'tunai',
+                'amount_paid' => 25000,
+            ]);
 
         $this->assertDatabaseHas('transactions', [
             'nama' => 'Pelanggan Custom Paket',
@@ -136,6 +150,9 @@ class BillingWorkflowRegressionTest extends TestCase
             'custom_package_id' => $package->id,
             'total' => 25000
         ]);
+
+        $this->device->refresh();
+        $this->assertEquals('Digunakan', $this->device->status);
     }
 
     /** @test */
@@ -147,13 +164,15 @@ class BillingWorkflowRegressionTest extends TestCase
             'status' => 'user',
             'harga' => 10000,
             'jam_main' => 2,
+            'duration_seconds' => 7200,
             'waktu_mulai' => '10:00',
             'waktu_Selesai' => '12:00',
             'total' => '20000',
             'tipe_transaksi' => 'prepaid',
-            'payment_status' => 'unpaid'
+            'status_transaksi' => 'draft',
+            'payment_status' => 'unpaid',
+            'billing_status' => Transaction::BILLING_IDLE,
         ]);
-        $this->device->update(['status' => 'Digunakan']);
 
         // Bayar dengan diskon 10% (final = 18000), nominal bayar 20000 (kembalian 2000)
         $response = $this->actingAs($this->kasir)
@@ -171,7 +190,7 @@ class BillingWorkflowRegressionTest extends TestCase
         $this->assertNotNull($transaction->paid_at);
 
         $this->device->refresh();
-        $this->assertEquals('Tersedia', $this->device->status);
+        $this->assertEquals('Digunakan', $this->device->status);
     }
 
     /** @test */

@@ -121,10 +121,16 @@ class DurationRegressionHotfixTest extends TestCase
 
         $response = $this->actingAs($this->kasir)->post(route('transaction.store'), $postData);
         $response->assertSessionHasNoErrors();
-        $response->assertRedirect(route('transaction.index'));
 
         $transaction = Transaction::where('nama', 'Pelanggan Billiard 5 Menit')->latest()->first();
         $this->assertNotNull($transaction);
+        $response->assertRedirect(route('transaction.showPayment', $transaction->id_transaksi));
+
+        $this->actingAs($this->kasir)->post(route('transaction.processPayment', $transaction->id_transaksi), [
+            'payment_method' => 'tunai',
+            'amount_paid' => $transaction->total,
+        ]);
+        $transaction->refresh();
 
         // BUG-02: Total PS / total price is Rp2.000 (preset ADMIN)
         $this->assertEquals(2000, (int) $transaction->total);

@@ -45,6 +45,7 @@ class Transaction extends Model
         'expires_at',
         'ended_at',
         'billing_status',
+        'session_token',
         'session_generation',
     ];
 
@@ -188,6 +189,38 @@ class Transaction extends Model
         });
     }
 
+    public function getUnpaidFnbOrderTotalAttribute(): float
+    {
+        $orders = $this->relationLoaded('fnbOrders')
+            ? $this->fnbOrders
+            : $this->fnbOrders()->with('items')->get();
+
+        return (float) $orders
+            ->reject(fn($order) => in_array($order->status, [FnbOrder::STATUS_CANCELLED, FnbOrder::STATUS_EXPIRED]))
+            ->sum(function ($order) {
+                if ($order->relationLoaded('items')) {
+                    return $order->items->where('payment_status', 'unpaid')->sum('subtotal');
+                }
+                return $order->items()->where('payment_status', 'unpaid')->sum('subtotal');
+            });
+    }
+
+    public function getPaidFnbOrderTotalAttribute(): float
+    {
+        $orders = $this->relationLoaded('fnbOrders')
+            ? $this->fnbOrders
+            : $this->fnbOrders()->with('items')->get();
+
+        return (float) $orders
+            ->reject(fn($order) => in_array($order->status, [FnbOrder::STATUS_CANCELLED, FnbOrder::STATUS_EXPIRED]))
+            ->sum(function ($order) {
+                if ($order->relationLoaded('items')) {
+                    return $order->items->where('payment_status', 'paid')->sum('subtotal');
+                }
+                return $order->items()->where('payment_status', 'paid')->sum('subtotal');
+            });
+    }
+
     public function automationIntents()
     {
         return $this->hasMany(AutomationIntent::class, 'transaction_id', 'id_transaksi');
@@ -201,5 +234,15 @@ class Transaction extends Model
     public function tvAlertEvents()
     {
         return $this->hasMany(TvAlertEvent::class, 'transaction_id', 'id_transaksi');
+    }
+
+    public function fnbOrders()
+    {
+        return $this->hasMany(FnbOrder::class, 'transaction_id', 'id_transaksi');
+    }
+
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class, 'transaction_id', 'id_transaksi');
     }
 }

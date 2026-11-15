@@ -23,7 +23,8 @@ class User extends Authenticatable
         'password',
         'role',
         'shift',
-        'work_shift_id'
+        'work_shift_id',
+        'is_fnb_staff',
     ];
 
     /**
@@ -43,6 +44,7 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'is_fnb_staff' => 'boolean',
     ];
 
     public function workShift()
@@ -82,6 +84,14 @@ class User extends Authenticatable
     public function isKasir()
     {
         return strtolower($this->role ?? '') === 'kasir';
+    }
+
+    /**
+     * Check if user is F&B staff
+     */
+    public function isFnbStaff(): bool
+    {
+        return $this->isKasir() && (bool) $this->is_fnb_staff;
     }
 
     /**

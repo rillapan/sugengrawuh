@@ -5,7 +5,7 @@
         <h1 class="h3 mb-0 text-gray-800">{{ $title }}</h1>
     </div>
     <div class="col-md-12 col-lg-6">
-        <form method="POST" action="{{ route('fnb.update', $fnb->id) }}">
+        <form method="POST" action="{{ route('fnb.update', $fnb->id) }}" enctype="multipart/form-data">
             @method('put')
             @csrf
             <div class="mb-3">
@@ -72,6 +72,18 @@
                 @enderror
             </div>
             <div class="mb-3">
+                <label for="image" class="form-label">Gambar Produk (Opsional, max 2MB, .png/.jpg/.jpeg)</label>
+                <input type="file" name="image" id="image" class="form-control-file @error('image') is-invalid @enderror" accept=".png,.jpg,.jpeg">
+                <div class="mt-2">
+                    <img id="image_preview" src="{{ $fnb->image_url }}" alt="{{ $fnb->nama }}" style="max-width: 150px; max-height: 150px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd; margin-top: 8px;">
+                </div>
+                @error('image')
+                    <div class="invalid-feedback d-block">
+                        {{ $message }}
+                    </div>
+                @enderror
+            </div>
+            <div class="mb-3">
                 <label for="deskripsi" class="form-label">Deskripsi</label>
                 <textarea class="form-control @error('deskripsi') is-invalid @enderror" id="deskripsi"
                     name="deskripsi">{{ old('deskripsi', $fnb->deskripsi) }}</textarea>
@@ -120,6 +132,22 @@
                     stokInput.value = '-1'; // Use -1 as marker for unlimited
                 }
             });
+
+            // Live image preview
+            const imageInput = document.getElementById('image');
+            const imagePreview = document.getElementById('image_preview');
+            if (imageInput && imagePreview) {
+                imageInput.addEventListener('change', function(e) {
+                    const file = e.target.files && e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = function(evt) {
+                            imagePreview.src = evt.target.result;
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+            }
         });
     </script>
 @endsection

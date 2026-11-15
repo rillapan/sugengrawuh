@@ -16,20 +16,23 @@ class TransactionsExport implements FromView, ShouldAutoSize, WithHeadings, With
     protected $endDate;
     protected $total;
     protected $dailyTotals;
+    protected $standaloneInvoices;
 
-    public function __construct($transactions, $startDate, $endDate, $total, $dailyTotals)
+    public function __construct($transactions, $startDate, $endDate, $total, $dailyTotals, $standaloneInvoices = null)
     {
         $this->transactions = $transactions;
         $this->startDate = $startDate;
         $this->endDate = $endDate;
         $this->total = $total;
         $this->dailyTotals = $dailyTotals;
+        $this->standaloneInvoices = $standaloneInvoices ?? collect();
     }
 
     public function view(): View
     {
         return view('laporan.cetak-excel', [
             'transactions' => $this->transactions,
+            'standaloneInvoices' => $this->standaloneInvoices,
             'startDate' => $this->startDate,
             'endDate' => $this->endDate,
             'total' => $this->total,

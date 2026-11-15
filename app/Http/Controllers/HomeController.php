@@ -30,6 +30,10 @@ class HomeController extends Controller
      */
     public function index(Request $request)
     {
+        if (auth()->user()->isFnbStaff()) {
+            return redirect()->route('fnb.queue.index');
+        }
+
         // Get period filter from request
         $period = $request->input('period', 'today'); // today, week, month, custom
         $start_date = $request->input('start_date');
