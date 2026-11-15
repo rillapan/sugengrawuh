@@ -7,9 +7,9 @@
             <i class="fas fa-concierge-bell text-primary mr-2"></i>Antrean Order F&amp;B
         </h1>
         <div class="d-flex align-items-center">
-            <button type="button" id="btnToggleQrSound" class="btn btn-sm btn-outline-success mr-2" title="Aktifkan/Nonaktifkan Suara Notifikasi QR">
+            <button type="button" id="btnToggleQrSound" class="btn btn-sm btn-outline-success mr-2" title="Aktifkan/Nonaktifkan Suara Notifikasi">
                 <i class="fas fa-volume-up mr-1" id="qrSoundIcon"></i>
-                <span id="qrSoundLabel">Suara QR: Aktif</span>
+                <span id="qrSoundLabel">Suara Notifikasi: Aktif</span>
             </button>
             <button type="button" class="btn btn-sm btn-outline-secondary mr-2" onclick="window.location.reload()">
                 <i class="fas fa-sync-alt mr-1"></i> Muat Ulang
@@ -288,26 +288,26 @@
 </div>
 @endif
 
-<!-- Pop-up Card Pesanan QR Masuk -->
+<!-- Pop-up Card Pesanan Masuk (QR & Kasir) -->
 <div class="modal fade" id="qrIncomingModal" tabindex="-1" role="dialog" aria-labelledby="qrIncomingModalLabel" aria-hidden="true" data-backdrop="static" data-keyboard="false">
     <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
         <div class="modal-content border-left-warning shadow-lg">
             <div class="modal-header bg-warning text-dark">
                 <h5 class="modal-title font-weight-bold" id="qrIncomingModalLabel">
-                    <i class="fas fa-bell mr-2"></i>Pesanan QR Masuk (<span id="qrIncomingModalCount">{{ $pendingQrCount ?? 0 }}</span>)
+                    <i class="fas fa-bell mr-2"></i>Pesanan Masuk (<span id="qrIncomingModalCount">{{ $pendingAlertCount ?? $pendingQrCount ?? 0 }}</span>)
                 </h5>
                 <button type="button" class="close" data-dismiss="modal" aria-label="Tutup">
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
             <div class="modal-body" id="qrIncomingModalBody">
-                <p class="text-muted mb-0">Memuat pesanan QR...</p>
+                <p class="text-muted mb-0">Memuat pesanan masuk...</p>
             </div>
             <div class="modal-footer bg-light d-flex justify-content-between align-items-center">
                 <small id="qrAudioBlockedHint" class="text-muted d-none">
                     <i class="fas fa-volume-mute mr-1"></i>Klik di mana saja pada halaman ini untuk mengizinkan suara notifikasi browser.
                 </small>
-                <small class="text-muted ml-auto">Pop-up tertutup otomatis setelah semua pesanan diterima atau dibatalkan.</small>
+                <small class="text-muted ml-auto">Pop-up tertutup otomatis setelah semua pesanan diproses atau dibatalkan.</small>
             </div>
         </div>
     </div>
@@ -333,7 +333,8 @@
         const POLL_INTERVAL_MS = 5000;
 
         let pendingQrCount = {{ (int) ($pendingQrCount ?? 0) }};
-        let pendingQrOrders = [];
+        let pendingAlertCount = {{ (int) ($pendingAlertCount ?? $pendingQrCount ?? 0) }};
+        let pendingAlertOrders = [];
         let lastSignature = null;
         let lastModalHash = '';
         let soundEnabled = localStorage.getItem(SOUND_STORAGE_KEY) !== 'false';
@@ -376,25 +377,25 @@
                 btnToggle.classList.remove('btn-outline-secondary');
                 btnToggle.classList.add('btn-outline-success');
                 soundIcon.className = 'fas fa-volume-up mr-1';
-                soundLabel.textContent = 'Suara QR: Aktif';
+                soundLabel.textContent = 'Suara Notifikasi: Aktif';
             } else {
                 btnToggle.classList.remove('btn-outline-success');
                 btnToggle.classList.add('btn-outline-secondary');
                 soundIcon.className = 'fas fa-volume-mute mr-1';
-                soundLabel.textContent = 'Suara QR: Mati';
+                soundLabel.textContent = 'Suara Notifikasi: Mati';
             }
         }
 
         function renderIncomingQrModal() {
             if (modalCountEl) {
-                modalCountEl.textContent = String(pendingQrCount);
+                modalCountEl.textContent = String(pendingAlertCount);
             }
             if (!modalEl || !modalBodyEl) return;
 
             const payModal = document.getElementById('modalPayOrder');
             const isPayModalOpen = payModal && payModal.classList.contains('show');
 
-            if (pendingQrCount <= 0 || pendingQrOrders.length === 0) {
+            if (pendingAlertCount <= 0 || pendingAlertOrders.length === 0) {
                 lastModalHash = '';
                 modalBodyEl.innerHTML = '';
                 if (audioBlockedHint) {
@@ -406,13 +407,13 @@
                 return;
             }
 
-            const newHash = pendingQrOrders.map(function (o) {
-                return o.id + ':' + o.order_number + ':' + o.total_amount;
+            const newHash = pendingAlertOrders.map(function (o) {
+                return o.id + ':' + o.order_number + ':' + o.status + ':' + o.total_amount;
             }).join('|');
 
             if (newHash !== lastModalHash) {
                 lastModalHash = newHash;
-                modalBodyEl.innerHTML = pendingQrOrders.map(function (order) {
+                modalBodyEl.innerHTML = pendingAlertOrders.map(function (order) {
                     const itemsHtml = (order.items || []).map(function (item) {
                         const notesHtml = item.notes
                             ? ' <small class="text-muted">(' + escapeHtml(item.notes) + ')</small>'
@@ -424,17 +425,26 @@
                         ? '<span class="badge badge-' + (order.session_type === 'Lost Time' ? 'warning' : 'info') + ' ml-1">' + escapeHtml(order.session_type) + '</span>'
                         : '';
 
+                    const sourceBadgeClass = order.source === 'QR' ? 'badge-primary' : (order.source === 'CASHIER' ? 'badge-info' : 'badge-warning');
+                    const sourceBadge = '<span class="badge ' + sourceBadgeClass + ' mr-1">' + escapeHtml(order.source || 'ORDER') + '</span>';
+
                     const orderNotes = order.notes
                         ? '<div class="small text-muted mt-1"><i class="fas fa-sticky-note mr-1"></i>Catatan: ' + escapeHtml(order.notes) + '</div>'
                         : '';
+
+                    const isAccepted = (order.status === 'ACCEPTED');
+                    const actionLabel = isAccepted ? 'Proses Pesanan' : 'Terima Pesanan';
+                    const actionStatus = isAccepted ? 'PREPARING' : 'ACCEPTED';
+                    const actionBtnClass = isAccepted ? 'btn-primary' : 'btn-info';
+                    const actionIcon = isAccepted ? 'fas fa-fire' : 'fas fa-check';
 
                     const actionsHtml = CAN_ACTION
                         ? '<div class="mt-3 d-flex justify-content-end">' +
                             '<button type="button" class="btn btn-outline-danger btn-sm mr-2 js-qr-popup-action" data-action="cancel" data-url="' + escapeHtml(order.cancel_url) + '" data-order-number="' + escapeHtml(order.order_number) + '">' +
                                 '<i class="fas fa-times mr-1"></i>Batalkan' +
                             '</button>' +
-                            '<button type="button" class="btn btn-info btn-sm font-weight-bold js-qr-popup-action" data-action="accept" data-url="' + escapeHtml(order.accept_url) + '" data-order-number="' + escapeHtml(order.order_number) + '">' +
-                                '<i class="fas fa-check mr-1"></i>Terima Pesanan' +
+                            '<button type="button" class="btn ' + actionBtnClass + ' btn-sm font-weight-bold js-qr-popup-action" data-action="accept" data-url="' + escapeHtml(order.accept_url) + '" data-order-number="' + escapeHtml(order.order_number) + '" data-status="' + actionStatus + '">' +
+                                '<i class="' + actionIcon + ' mr-1"></i>' + actionLabel +
                             '</button>' +
                           '</div>'
                         : '<div class="mt-2 text-right small text-muted">Mode Monitoring</div>';
@@ -442,6 +452,7 @@
                     return '<div class="card border-warning mb-3 shadow-sm">' +
                         '<div class="card-header py-2 d-flex justify-content-between align-items-center bg-light">' +
                             '<div>' +
+                                sourceBadge +
                                 '<span class="badge badge-dark mr-1">ID #' + Number(order.id) + '</span>' +
                                 '<strong class="text-primary">#' + escapeHtml(order.order_number) + '</strong>' +
                                 sessionBadge +
@@ -469,10 +480,11 @@
         async function handlePopupOrderAction(btn) {
             const action = btn.getAttribute('data-action');
             const url = btn.getAttribute('data-url');
+            const targetStatus = btn.getAttribute('data-status') || 'ACCEPTED';
             const orderNumber = btn.getAttribute('data-order-number') || '';
             if (!url) return;
 
-            if (action === 'cancel' && !confirm('Batalkan pesanan QR #' + orderNumber + '?')) {
+            if (action === 'cancel' && !confirm('Batalkan pesanan #' + orderNumber + '?')) {
                 return;
             }
 
@@ -483,9 +495,9 @@
             const formData = new FormData();
             formData.append('_token', CSRF_TOKEN);
             if (action === 'accept') {
-                formData.append('status', 'ACCEPTED');
+                formData.append('status', targetStatus);
             } else {
-                formData.append('reason', 'Dibatalkan oleh petugas melalui pop-up QR');
+                formData.append('reason', 'Dibatalkan oleh petugas melalui pop-up');
             }
 
             try {
@@ -512,7 +524,7 @@
         }
 
         function playQrNotificationChime() {
-            if (!soundEnabled || pendingQrCount <= 0) return;
+            if (!soundEnabled || pendingAlertCount <= 0) return;
             const ctx = getAudioContext();
             if (!ctx) return;
 
@@ -557,7 +569,7 @@
         }
 
         function syncAlarmLoop() {
-            if (pendingQrCount > 0 && soundEnabled) {
+            if (pendingAlertCount > 0 && soundEnabled) {
                 if (!alarmTimer) {
                     playQrNotificationChime();
                     alarmTimer = setInterval(playQrNotificationChime, ALARM_INTERVAL_MS);
@@ -573,7 +585,7 @@
             if (ctx && ctx.state === 'suspended') {
                 ctx.resume().then(function () {
                     if (audioBlockedHint) audioBlockedHint.classList.add('d-none');
-                    if (pendingQrCount > 0 && soundEnabled) {
+                    if (pendingAlertCount > 0 && soundEnabled) {
                         playQrNotificationChime();
                     }
                 }).catch(function () {});
@@ -631,7 +643,8 @@
                 if (!res.ok) return;
                 const data = await res.json();
                 pendingQrCount = Number(data.pending_qr_count || 0);
-                pendingQrOrders = Array.isArray(data.pending_qr_orders) ? data.pending_qr_orders : [];
+                pendingAlertCount = Number(data.pending_alert_count !== undefined ? data.pending_alert_count : (data.pending_qr_count || 0));
+                pendingAlertOrders = Array.isArray(data.pending_alert_orders) ? data.pending_alert_orders : (Array.isArray(data.pending_qr_orders) ? data.pending_qr_orders : []);
                 renderIncomingQrModal();
                 syncAlarmLoop();
 

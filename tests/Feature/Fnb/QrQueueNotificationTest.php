@@ -139,4 +139,80 @@ class QrQueueNotificationTest extends TestCase
         $response->assertSee('playQrNotificationChime', false);
         $response->assertSee(json_encode(route('fnb.queue.poll')), false);
     }
+
+    public function test_poll_and_page_include_cashier_orders_for_sound_alert_notification(): void
+    {
+        // 1. Create a CASHIER order with status ACCEPTED (e.g. from Paket transaction)
+        $cashierPaketOrder = FnbOrder::create([
+            'order_number' => 'ORD-CASHIER-PAKET',
+            'source' => FnbOrder::SOURCE_CASHIER,
+            'customer_name' => 'Paket Player',
+            'location_id' => $this->location->id,
+            'status' => FnbOrder::STATUS_ACCEPTED,
+            'payment_status' => FnbOrder::PAYMENT_PAID,
+            'total_amount' => 15000,
+        ]);
+
+        // 2. Create a CASHIER order with status PENDING (e.g. standalone cashier order)
+        $cashierPendingOrder = FnbOrder::create([
+            'order_number' => 'ORD-CASHIER-PENDING',
+            'source' => FnbOrder::SOURCE_CASHIER,
+            'customer_name' => 'Walk-in Cashier',
+            'location_id' => $this->location->id,
+            'status' => FnbOrder::STATUS_PENDING,
+            'payment_status' => FnbOrder::PAYMENT_UNPAID,
+            'total_amount' => 8000,
+        ]);
+
+        // 3. Create a CASHIER order with status PREPARING (already in cooking/preparing -> should NOT alert)
+        FnbOrder::create([
+            'order_number' => 'ORD-CASHIER-PREPARING',
+            'source' => FnbOrder::SOURCE_CASHIER,
+            'customer_name' => 'Cooking Player',
+            'location_id' => $this->location->id,
+            'status' => FnbOrder::STATUS_PREPARING,
+            'payment_status' => FnbOrder::PAYMENT_PAID,
+            'total_amount' => 10000,
+        ]);
+
+        // Poll endpoint should return pending_cashier_count = 2 and pending_alert_count = 2
+        $pollRes = $this->actingAs($this->fnbStaff)
+            ->getJson(route('fnb.queue.poll'))
+            ->assertOk()
+            ->assertJson([
+                'pending_qr_count' => 0,
+                'pending_cashier_count' => 2,
+                'pending_alert_count' => 2,
+                'total_orders' => 3,
+            ]);
+
+        $alertOrders = $pollRes->json('pending_alert_orders');
+        $this->assertCount(2, $alertOrders);
+        $orderNumbers = collect($alertOrders)->pluck('order_number')->all();
+        $this->assertContains('ORD-CASHIER-PAKET', $orderNumbers);
+        $this->assertContains('ORD-CASHIER-PENDING', $orderNumbers);
+
+        // When cashier order is advanced to PREPARING, count drops
+        $cashierPaketOrder->update(['status' => FnbOrder::STATUS_PREPARING]);
+
+        $this->actingAs($this->fnbStaff)
+            ->getJson(route('fnb.queue.poll'))
+            ->assertOk()
+            ->assertJson([
+                'pending_cashier_count' => 1,
+                'pending_alert_count' => 1,
+            ]);
+
+        // When all active incoming cashier orders are processed to PREPARING, alert drops to 0
+        $cashierPendingOrder->update(['status' => FnbOrder::STATUS_PREPARING]);
+
+        $this->actingAs($this->fnbStaff)
+            ->getJson(route('fnb.queue.poll'))
+            ->assertOk()
+            ->assertJson([
+                'pending_cashier_count' => 0,
+                'pending_alert_count' => 0,
+                'pending_alert_orders' => [],
+            ]);
+    }
 }

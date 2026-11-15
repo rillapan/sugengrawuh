@@ -30,19 +30,29 @@ class FnbOrderQueueController extends Controller
     public function index(Request $request)
     {
         $orders = FnbOrder::with(['items.fnb', 'location', 'transaction.device'])
-            ->orderByRaw("FIELD(status, 'PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED', 'EXPIRED')")
             ->orderBy('created_at', 'desc')
+            ->orderBy('id', 'desc')
             ->get();
 
         $pendingQrCount = $orders->where('source', FnbOrder::SOURCE_QR)
             ->where('status', FnbOrder::STATUS_PENDING)
             ->count();
 
+        $pendingCashierCount = $orders->where('source', FnbOrder::SOURCE_CASHIER)
+            ->filter(function ($order) {
+                return in_array($order->status, [FnbOrder::STATUS_PENDING, FnbOrder::STATUS_ACCEPTED], true);
+            })
+            ->count();
+
+        $pendingAlertCount = $pendingQrCount + $pendingCashierCount;
+
         return view('fnb.orders_queue', [
             'title' => 'Antrean Order F&B',
             'active' => 'fnb-queue',
             'orders' => $orders,
             'pendingQrCount' => $pendingQrCount,
+            'pendingCashierCount' => $pendingCashierCount,
+            'pendingAlertCount' => $pendingAlertCount,
         ]);
     }
 
@@ -59,6 +69,14 @@ class FnbOrderQueueController extends Controller
             ->where('source', FnbOrder::SOURCE_QR)
             ->where('status', FnbOrder::STATUS_PENDING)
             ->orderBy('created_at', 'desc')
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $pendingCashierOrders = FnbOrder::with(['items.fnb', 'location', 'transaction.device'])
+            ->where('source', FnbOrder::SOURCE_CASHIER)
+            ->whereIn('status', [FnbOrder::STATUS_PENDING, FnbOrder::STATUS_ACCEPTED])
+            ->orderBy('created_at', 'desc')
+            ->orderBy('id', 'desc')
             ->get();
 
         $signatureRaw = $orders->map(function ($order) {
@@ -70,40 +88,59 @@ class FnbOrderQueueController extends Controller
             ]);
         })->implode('|');
 
+        $formatOrder = function (FnbOrder $order) {
+            $stationName = optional($order->location)->name
+                ?? optional(optional($order->transaction)->device)->nama
+                ?? 'Station';
+            $sessionType = null;
+            if ($order->transaction) {
+                $sessionType = $order->transaction->tipe_transaksi === 'postpaid'
+                    ? 'Lost Time'
+                    : 'Paket';
+            }
+
+            return [
+                'id' => $order->id,
+                'order_number' => $order->order_number,
+                'source' => $order->source,
+                'status' => $order->status,
+                'customer_name' => $order->customer_name ?? '-',
+                'station_name' => $stationName,
+                'session_type' => $sessionType,
+                'notes' => $order->notes,
+                'total_amount' => (float) $order->total_amount,
+                'created_at_formatted' => optional($order->created_at)->format('H:i:s'),
+                'accept_url' => route('fnb.queue.status', $order->id),
+                'cancel_url' => route('fnb.queue.cancel', $order->id),
+                'items' => $order->items->map(function ($item) {
+                    return [
+                        'name' => optional($item->fnb)->nama ?? 'Item F&B',
+                        'qty' => (int) $item->qty,
+                        'notes' => $item->notes,
+                        'subtotal' => (float) $item->subtotal,
+                    ];
+                })->values(),
+            ];
+        };
+
+        $pendingAlertOrders = $pendingQrOrders->concat($pendingCashierOrders)
+            ->sort(function ($a, $b) {
+                $aTime = $a->created_at ? $a->created_at->timestamp : 0;
+                $bTime = $b->created_at ? $b->created_at->timestamp : 0;
+                if ($aTime === $bTime) {
+                    return $b->id <=> $a->id;
+                }
+                return $bTime <=> $aTime;
+            })
+            ->values();
+
         return response()->json([
             'pending_qr_count' => $pendingQrOrders->count(),
-            'pending_qr_orders' => $pendingQrOrders->map(function (FnbOrder $order) {
-                $stationName = optional($order->location)->name
-                    ?? optional(optional($order->transaction)->device)->nama
-                    ?? 'Station';
-                $sessionType = null;
-                if ($order->transaction) {
-                    $sessionType = $order->transaction->tipe_transaksi === 'postpaid'
-                        ? 'Lost Time'
-                        : 'Paket';
-                }
-
-                return [
-                    'id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'customer_name' => $order->customer_name ?? '-',
-                    'station_name' => $stationName,
-                    'session_type' => $sessionType,
-                    'notes' => $order->notes,
-                    'total_amount' => (float) $order->total_amount,
-                    'created_at_formatted' => optional($order->created_at)->format('H:i:s'),
-                    'accept_url' => route('fnb.queue.status', $order->id),
-                    'cancel_url' => route('fnb.queue.cancel', $order->id),
-                    'items' => $order->items->map(function ($item) {
-                        return [
-                            'name' => optional($item->fnb)->nama ?? 'Item F&B',
-                            'qty' => (int) $item->qty,
-                            'notes' => $item->notes,
-                            'subtotal' => (float) $item->subtotal,
-                        ];
-                    })->values(),
-                ];
-            })->values(),
+            'pending_qr_orders' => $pendingQrOrders->map($formatOrder)->values(),
+            'pending_cashier_count' => $pendingCashierOrders->count(),
+            'pending_cashier_orders' => $pendingCashierOrders->map($formatOrder)->values(),
+            'pending_alert_count' => $pendingAlertOrders->count(),
+            'pending_alert_orders' => $pendingAlertOrders->map($formatOrder)->values(),
             'total_orders' => $orders->count(),
             'orders_signature' => sha1($signatureRaw),
         ]);
