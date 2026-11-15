@@ -119,7 +119,7 @@ class QrMenuUiRefinementTest extends TestCase
         $response->assertStatus(200);
 
         // Header station and player
-        $response->assertSee('📍 Bilik 1 PS5 (STATION-01)');
+        $response->assertSee('Bilik 1 PS5 (STATION-01)');
         $response->assertSee('Nama Pemain:');
         $response->assertSee('Randi Player');
 

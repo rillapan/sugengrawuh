@@ -3,150 +3,410 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover">
-    <title>Menu Pemesanan F&B - {{ $location->name }}</title>
+    <title>Menu Pemesanan F&B - {{ $location->name }} | Sugeng Rawuh</title>
     <link href="{{ asset('css/offline-fonts.css') }}" rel="stylesheet">
-    <link href="{{ asset('css/sb-admin-2.min.css') }}" rel="stylesheet">
     <style>
+        :root {
+            --sr-primary: #3158C9;
+            --sr-primary-hover: #2749AE;
+            --sr-primary-active: #1E3A8A;
+            --sr-primary-soft: #EEF2FF;
+            --sr-primary-border: #C7D2FE;
+            --sr-bg: #F8FAFC;
+            --sr-surface: #FFFFFF;
+            --sr-header-bg: #0F172A;
+            --sr-text-primary: #0F172A;
+            --sr-text-secondary: #64748B;
+            --sr-text-muted: #94A3B8;
+            --sr-border: #E2E8F0;
+            --sr-border-light: #F1F5F9;
+            --sr-success: #15803D;
+            --sr-success-soft: #DCFCE7;
+            --sr-success-border: #BBF7D0;
+            --sr-warning: #B45309;
+            --sr-warning-soft: #FEF3C7;
+            --sr-warning-border: #FDE68A;
+            --sr-danger: #B91C1C;
+            --sr-danger-soft: #FEE2E2;
+            --sr-danger-border: #FECACA;
+            --sr-info: #0369A1;
+            --sr-info-soft: #E0F2FE;
+            --sr-info-border: #BAE6FD;
+            --sr-radius: 12px;
+            --sr-radius-sm: 8px;
+            --sr-radius-xs: 6px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
-            background-color: #f4f6f9;
+            background-color: var(--sr-bg);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            color: #2d3748;
+            color: var(--sr-text-primary);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
             padding-bottom: 105px;
             overflow-x: hidden;
         }
+
         body.modal-open {
             overflow: hidden;
         }
 
-        /* Header Station */
-        .header-card {
-            background: linear-gradient(135deg, #4e73df 0%, #224abe 100%);
-            color: #ffffff;
-            border-radius: 0 0 24px 24px;
-            padding: 20px 18px 22px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 16px rgba(78, 115, 223, 0.25);
+        .container-app {
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 0 16px;
         }
+
+        /* Compact Understated Header */
+        .header-card {
+            background-color: var(--sr-header-bg);
+            color: #FFFFFF;
+            border-bottom: 1px solid #1E293B;
+            padding: 16px 0 18px;
+            margin-bottom: 16px;
+        }
+
+        .header-top-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
         .location-pill {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 5px 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #F8FAFC;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            padding: 5px 10px;
             border-radius: 9999px;
-            font-size: 13px;
+            font-size: 12px;
+            font-weight: 600;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
+        .location-pill span {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .location-pill svg {
+            flex-shrink: 0;
+            color: #93C5FD;
+        }
+
+        .btn-header-orders {
+            background: #FFFFFF;
+            color: var(--sr-primary);
+            border: 1px solid transparent;
+            border-radius: 9999px;
+            padding: 5px 12px;
+            font-size: 12px;
             font-weight: 600;
             display: inline-flex;
             align-items: center;
-        }
-        .btn-header-orders {
-            background: #ffffff;
-            color: #224abe;
-            border: none;
-            border-radius: 9999px;
-            padding: 6px 14px;
-            font-size: 13px;
-            font-weight: 700;
-            display: inline-flex;
-            align-items: center;
+            gap: 5px;
             cursor: pointer;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-            transition: transform 0.1s ease, background-color 0.15s ease;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            transition: all 0.15s ease;
             text-decoration: none;
-        }
-        .btn-header-orders:hover {
-            background: #f8f9fc;
-            color: #1e3d99;
-            transform: translateY(-1px);
-        }
-        .btn-header-orders:active {
-            transform: translateY(0);
+            flex-shrink: 0;
+            min-height: 34px;
         }
 
-        /* F&B Cards */
-        .fnb-card {
-            background: #ffffff;
-            border-radius: 14px;
-            padding: 14px 16px;
+        .btn-header-orders:hover {
+            background: #F1F5F9;
+            color: var(--sr-primary-hover);
+        }
+
+        .btn-header-orders:focus-visible {
+            outline: 2px solid #93C5FD;
+            outline-offset: 2px;
+        }
+
+        .btn-header-orders svg {
+            flex-shrink: 0;
+        }
+
+        .badge-count {
+            background: var(--sr-primary);
+            color: #FFFFFF;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 9999px;
+            padding: 1px 7px;
+            min-width: 18px;
+            text-align: center;
+            line-height: 1.4;
+        }
+
+        .header-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #94A3B8;
             margin-bottom: 12px;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-            border: 1px solid #edf2f7;
+            padding: 6px 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: var(--sr-radius-xs);
+        }
+
+        .header-meta-row svg {
+            flex-shrink: 0;
+            color: #94A3B8;
+        }
+
+        .header-player-name {
+            color: #FFFFFF;
+            font-weight: 600;
+        }
+
+        .header-title-box {
+            text-align: left;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #FFFFFF;
+            letter-spacing: -0.01em;
+            margin-bottom: 2px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: #94A3B8;
+        }
+
+        /* Order Form Card */
+        .order-form-card {
+            background: var(--sr-surface);
+            border: 1px solid var(--sr-border);
+            border-radius: var(--sr-radius);
+            padding: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 6px;
+        }
+
+        .form-label .required-mark {
+            color: var(--sr-danger);
+            font-weight: 700;
+        }
+
+        .form-control {
+            width: 100%;
+            height: 42px;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-family: inherit;
+            color: var(--sr-text-primary);
+            background-color: #FFFFFF;
+            border: 1px solid var(--sr-border);
+            border-radius: var(--sr-radius-sm);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--sr-primary);
+            box-shadow: 0 0 0 3px rgba(49, 88, 201, 0.15);
+        }
+
+        .form-control::placeholder {
+            color: #94A3B8;
+        }
+
+        /* Catalog Section */
+        .catalog-section-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--sr-text-primary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .fnb-catalog-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        .fnb-card {
+            background: var(--sr-surface);
+            border: 1px solid var(--sr-border);
+            border-radius: var(--sr-radius);
+            padding: 12px 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 12px;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+            box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.03);
         }
+
+        .fnb-card.has-selected {
+            border-color: var(--sr-primary-border);
+            background-color: #FAFCFF;
+        }
+
+        .fnb-card-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
         .fnb-img-wrapper {
-            width: 68px;
-            height: 68px;
-            min-width: 68px;
-            border-radius: 10px;
+            width: 64px;
+            height: 64px;
+            min-width: 64px;
+            border-radius: var(--sr-radius-sm);
             overflow: hidden;
-            background: #f8f9fc;
-            border: 1px solid #e3e6f0;
+            background: #F1F5F9;
+            border: 1px solid var(--sr-border);
             display: flex;
             align-items: center;
             justify-content: center;
             position: relative;
             cursor: pointer;
             flex-shrink: 0;
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
+            user-select: none;
+            transition: transform 0.12s ease;
         }
-        .fnb-img-wrapper:hover {
-            transform: scale(1.02);
-            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+
+        .fnb-img-wrapper:active {
+            transform: scale(0.97);
         }
+
+        .fnb-img-wrapper:focus-visible {
+            outline: 2px solid var(--sr-primary);
+            outline-offset: 2px;
+        }
+
         .fnb-img-wrapper img {
             width: 100%;
             height: 100%;
             object-fit: cover;
             display: block;
         }
+
         .fnb-img-zoom-badge {
             position: absolute;
             bottom: 3px;
             right: 3px;
-            background: rgba(0, 0, 0, 0.55);
-            color: #ffffff;
+            background: rgba(15, 23, 42, 0.7);
+            color: #FFFFFF;
             border-radius: 4px;
-            font-size: 10px;
-            padding: 1px 4px;
-            line-height: 1;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             pointer-events: none;
         }
-        .fnb-name {
-            font-weight: 600;
-            font-size: 15px;
-            color: #1a202c;
-            margin-bottom: 3px;
-            line-height: 1.3;
+
+        .fnb-info {
+            min-width: 0;
+            flex: 1 1 auto;
         }
+
+        .fnb-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--sr-text-primary);
+            line-height: 1.35;
+            margin-bottom: 3px;
+            word-break: break-word;
+        }
+
         .fnb-price {
-            font-weight: 700;
-            color: #4e73df;
             font-size: 14px;
+            font-weight: 700;
+            color: var(--sr-primary);
             margin-bottom: 2px;
         }
+
         .fnb-stock {
             font-size: 12px;
-            color: #718096;
+            color: var(--sr-text-secondary);
+        }
+
+        .stock-available {
+            color: var(--sr-success);
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stock-dot {
+            width: 6px;
+            height: 6px;
+            background-color: var(--sr-success);
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .stock-low {
+            color: var(--sr-warning);
+            font-weight: 600;
+        }
+
+        .stock-normal {
+            color: var(--sr-text-secondary);
         }
 
         /* Quantity Stepper */
         .qty-stepper {
             display: flex;
             align-items: center;
-            background: #f7fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
+            background: #F8FAFC;
+            border: 1px solid var(--sr-border);
+            border-radius: var(--sr-radius-sm);
             overflow: hidden;
             flex-shrink: 0;
+            height: 38px;
         }
+
         .qty-btn {
-            background: none;
+            background: transparent;
             border: none;
             width: 36px;
-            height: 36px;
-            font-size: 18px;
-            font-weight: 700;
-            color: #4e73df;
+            height: 38px;
+            color: var(--sr-primary);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -154,75 +414,448 @@
             user-select: none;
             transition: background-color 0.1s ease;
         }
+
         .qty-btn:active {
-            background-color: #edf2f7;
+            background-color: #E2E8F0;
         }
+
+        .qty-btn:focus-visible {
+            outline: 2px solid var(--sr-primary);
+            outline-offset: -2px;
+        }
+
         .qty-input {
-            width: 36px;
+            width: 34px;
             text-align: center;
             border: none;
             background: transparent;
-            font-weight: 600;
-            font-size: 15px;
-            color: #2d3748;
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--sr-text-primary);
+            padding: 0;
+            -moz-appearance: textfield;
         }
 
-        /* Floating Footer */
+        .qty-input::-webkit-outer-spin-button,
+        .qty-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        /* Floating Sticky Bottom Bar */
         .floating-footer {
             position: fixed;
             bottom: 0;
             left: 0;
             right: 0;
-            background: #ffffff;
-            border-top: 1px solid #e2e8f0;
-            padding: 12px 20px;
+            background: #FFFFFF;
+            border-top: 1px solid var(--sr-border);
+            padding: 12px 16px;
             padding-bottom: max(12px, env(safe-area-inset-bottom));
-            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.05);
+            z-index: 1000;
+        }
+
+        .floating-footer-inner {
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            z-index: 1000;
+            gap: 16px;
         }
+
+        .total-box {
+            min-width: 0;
+        }
+
         .total-label {
             font-size: 11px;
-            color: #718096;
+            color: var(--sr-text-secondary);
             text-transform: uppercase;
+            letter-spacing: 0.04em;
             font-weight: 600;
+            margin-bottom: 2px;
         }
+
         .total-amount {
             font-size: 18px;
             font-weight: 700;
-            color: #1a202c;
+            color: var(--sr-text-primary);
+            letter-spacing: -0.01em;
         }
+
         .btn-order-submit {
-            background-color: #1cc88a;
-            color: #ffffff;
+            background-color: var(--sr-primary);
+            color: #FFFFFF;
             border: none;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 15px;
-            padding: 12px 24px;
+            border-radius: var(--sr-radius-sm);
+            font-weight: 600;
+            font-size: 14px;
+            padding: 10px 20px;
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             cursor: pointer;
-            transition: background 0.15s ease-in-out;
+            transition: background-color 0.15s ease;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
+
+        .btn-order-submit:hover:not(:disabled) {
+            background-color: var(--sr-primary-hover);
+        }
+
+        .btn-order-submit:active:not(:disabled) {
+            background-color: var(--sr-primary-active);
+        }
+
         .btn-order-submit:disabled {
-            background-color: #cbd5e0;
+            background-color: #E2E8F0;
+            color: #94A3B8;
             cursor: not-allowed;
         }
 
-        /* Shared Modal Transitions */
+        .btn-order-submit:focus-visible {
+            outline: 2px solid var(--sr-primary);
+            outline-offset: 2px;
+        }
+
+        /* Alert notifications */
+        .alert-box {
+            padding: 12px 14px;
+            border-radius: var(--sr-radius-sm);
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.5;
+            position: relative;
+        }
+
+        .alert-box-success {
+            background-color: var(--sr-success-soft);
+            border: 1px solid var(--sr-success-border);
+            color: #14532D;
+        }
+
+        .alert-box-danger {
+            background-color: var(--sr-danger-soft);
+            border: 1px solid var(--sr-danger-border);
+            color: #7F1D1D;
+        }
+
+        .alert-box-info {
+            background-color: var(--sr-info-soft);
+            border: 1px solid var(--sr-info-border);
+            color: #075985;
+            text-align: center;
+        }
+
+        .alert-close-btn {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 4px;
+        }
+
+        /* Modal Styles */
         .modal {
-            transition: opacity 0.15s linear;
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(15, 23, 42, 0.6);
+            z-index: 1050;
+            overflow-y: auto;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            padding-bottom: max(16px, env(safe-area-inset-bottom));
+            opacity: 0;
+            transition: opacity 0.15s ease;
         }
-        .modal.fade .modal-dialog {
-            transition: transform 0.2s ease-out;
-            transform: translate(0, -20px);
+
+        .modal.show {
+            display: flex;
+            opacity: 1;
         }
+
+        .modal-dialog {
+            width: 100%;
+            max-width: 520px;
+            background: #FFFFFF;
+            border-radius: var(--sr-radius);
+            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.15);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: 85vh;
+            border: 1px solid var(--sr-border);
+            transform: translateY(-8px);
+            transition: transform 0.15s ease;
+        }
+
         .modal.show .modal-dialog {
-            transform: none;
+            transform: translateY(0);
         }
-        .border-bottom-dashed {
-            border-bottom: 1px dashed #e3e6f0;
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background-color: #FFFFFF;
+            border-bottom: 1px solid var(--sr-border);
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--sr-text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+        }
+
+        .modal-close-btn {
+            background: none;
+            border: none;
+            color: var(--sr-text-secondary);
+            width: 32px;
+            height: 32px;
+            border-radius: var(--sr-radius-xs);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background-color 0.1s ease, color 0.1s ease;
+        }
+
+        .modal-close-btn:hover {
+            background-color: #F1F5F9;
+            color: var(--sr-text-primary);
+        }
+
+        .modal-close-btn:focus-visible {
+            outline: 2px solid var(--sr-primary);
+        }
+
+        .modal-body {
+            padding: 18px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+        }
+
+        .modal-footer {
+            padding: 12px 18px;
+            background-color: #F8FAFC;
+            border-top: 1px solid var(--sr-border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .btn-modal {
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            padding: 9px 16px;
+            border-radius: var(--sr-radius-sm);
+            cursor: pointer;
+            min-height: 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+        }
+
+        .btn-modal-secondary {
+            background-color: #FFFFFF;
+            border-color: var(--sr-border);
+            color: var(--sr-text-primary);
+        }
+
+        .btn-modal-secondary:hover {
+            background-color: #F1F5F9;
+        }
+
+        .btn-modal-primary {
+            background-color: var(--sr-primary);
+            color: #FFFFFF;
+        }
+
+        .btn-modal-primary:hover:not(:disabled) {
+            background-color: var(--sr-primary-hover);
+        }
+
+        .btn-modal-primary:disabled {
+            background-color: #E2E8F0;
+            color: #94A3B8;
+            cursor: not-allowed;
+        }
+
+        /* Order history items inside Pesanan Saya modal */
+        .order-card-item {
+            background: #FFFFFF;
+            border: 1px solid var(--sr-border);
+            border-radius: var(--sr-radius-sm);
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .order-card-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .order-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid var(--sr-border-light);
+            gap: 10px;
+        }
+
+        .order-num {
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--sr-text-primary);
+            margin-bottom: 2px;
+        }
+
+        .order-meta-info {
+            font-size: 12px;
+            color: var(--sr-text-secondary);
+        }
+
+        .order-badges-col {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        /* Status badges */
+        .badge-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            line-height: 1.3;
+        }
+
+        .badge-kitchen-pending {
+            background-color: var(--sr-warning-soft);
+            color: var(--sr-warning);
+            border: 1px solid var(--sr-warning-border);
+        }
+
+        .badge-kitchen-accepted {
+            background-color: var(--sr-info-soft);
+            color: var(--sr-info);
+            border: 1px solid var(--sr-info-border);
+        }
+
+        .badge-kitchen-preparing {
+            background-color: var(--sr-primary-soft);
+            color: var(--sr-primary);
+            border: 1px solid var(--sr-primary-border);
+        }
+
+        .badge-kitchen-ready {
+            background-color: var(--sr-success-soft);
+            color: var(--sr-success);
+            border: 1px solid var(--sr-success-border);
+        }
+
+        .badge-kitchen-delivered {
+            background-color: #F1F5F9;
+            color: #475569;
+            border: 1px solid var(--sr-border);
+        }
+
+        .badge-payment-paid {
+            background-color: var(--sr-success-soft);
+            color: var(--sr-success);
+            border: 1px solid var(--sr-success-border);
+        }
+
+        .badge-payment-unpaid {
+            background-color: var(--sr-warning-soft);
+            color: var(--sr-warning);
+            border: 1px solid var(--sr-warning-border);
+        }
+
+        .order-item-list {
+            list-style: none;
+            margin-bottom: 10px;
+        }
+
+        .order-item-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            padding: 5px 0;
+            border-bottom: 1px dashed var(--sr-border-light);
+        }
+
+        .order-item-row:last-child {
+            border-bottom: none;
+        }
+
+        .order-notes-box {
+            font-size: 12px;
+            color: var(--sr-text-secondary);
+            background: #F8FAFC;
+            border: 1px solid var(--sr-border-light);
+            border-radius: var(--sr-radius-xs);
+            padding: 6px 10px;
+            margin-bottom: 10px;
+        }
+
+        .order-total-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 8px;
+            border-top: 1px solid var(--sr-border-light);
+            font-size: 13px;
+        }
+
+        .order-total-price {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--sr-primary);
+        }
+
+        .empty-state-orders {
+            text-align: center;
+            padding: 32px 16px;
+            color: var(--sr-text-secondary);
+            font-size: 13px;
+        }
+
+        .empty-state-orders svg {
+            margin-bottom: 10px;
+            color: #94A3B8;
         }
 
         /* Lightbox Image Preview Modal */
@@ -232,7 +865,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: rgba(0, 0, 0, 0.88);
+            background-color: rgba(15, 23, 42, 0.85);
             z-index: 1100;
             display: none;
             align-items: center;
@@ -240,12 +873,14 @@
             padding: 16px;
             padding-bottom: max(16px, env(safe-area-inset-bottom));
             opacity: 0;
-            transition: opacity 0.2s ease;
+            transition: opacity 0.15s ease;
         }
+
         #imageLightboxModal.show {
             display: flex;
             opacity: 1;
         }
+
         .lightbox-dialog {
             max-width: 90vw;
             max-height: 90vh;
@@ -254,116 +889,222 @@
             align-items: center;
             position: relative;
         }
+
         .lightbox-close-btn {
             position: absolute;
-            top: -42px;
+            top: -40px;
             right: 0;
-            background: rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.2);
             border: none;
-            color: #ffffff;
-            font-size: 24px;
-            width: 36px;
-            height: 36px;
+            color: #FFFFFF;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            line-height: 1;
-            transition: background 0.15s ease;
+            transition: background-color 0.15s ease;
         }
+
         .lightbox-close-btn:hover {
-            background: rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.35);
         }
+
         .lightbox-box {
-            background: #ffffff;
-            border-radius: 14px;
+            background: #FFFFFF;
+            border-radius: var(--sr-radius);
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
             max-width: 100%;
             max-height: 80vh;
             display: flex;
             flex-direction: column;
         }
+
         .lightbox-media {
             flex: 1 1 auto;
             overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #111827;
+            background: #0F172A;
             max-height: 65vh;
             min-height: 180px;
         }
+
         .lightbox-media img {
             max-width: 100%;
             max-height: 65vh;
             object-fit: contain;
             display: block;
         }
+
         .lightbox-caption {
             padding: 12px 16px;
-            background: #ffffff;
-            border-top: 1px solid #edf2f7;
+            background: #FFFFFF;
+            border-top: 1px solid var(--sr-border);
             text-align: center;
         }
 
+        /* Confirmation Modal Item Table */
+        .confirm-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .confirm-table td {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--sr-border-light);
+        }
+
+        .confirm-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .policy-box {
+            border-radius: var(--sr-radius-sm);
+            padding: 12px 14px;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-top: 14px;
+        }
+
+        .policy-box-warning {
+            background-color: var(--sr-warning-soft);
+            border: 1px solid var(--sr-warning-border);
+            color: #78350F;
+        }
+
+        .policy-box-info {
+            background-color: var(--sr-info-soft);
+            border: 1px solid var(--sr-info-border);
+            color: #075985;
+        }
+
         /* Responsive Breakpoints */
-        @media (max-width: 576px) {
-            .header-card {
-                padding: 16px 14px 18px;
-                border-radius: 0 0 20px 20px;
+        @media (min-width: 768px) {
+            .container-app {
+                max-width: 720px;
+            }
+            .header-title {
+                font-size: 20px;
+            }
+            .fnb-catalog-list {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 12px;
             }
             .fnb-card {
-                padding: 12px;
+                padding: 14px;
             }
             .fnb-img-wrapper {
-                width: 60px;
-                height: 60px;
-                min-width: 60px;
+                width: 68px;
+                height: 68px;
+                min-width: 68px;
             }
-            .lightbox-dialog {
-                max-width: 95vw;
+        }
+
+        @media (min-width: 1024px) {
+            .container-app {
+                max-width: 760px;
             }
-            .lightbox-media {
-                max-height: 60vh;
+        }
+
+        @media (max-width: 360px) {
+            .container-app {
+                padding: 0 10px;
             }
-            .lightbox-media img {
-                max-height: 60vh;
+            .fnb-card {
+                padding: 10px;
+                gap: 8px;
             }
-            .modal-dialog-scrollable .modal-content {
-                max-height: 85vh;
+            .fnb-name {
+                font-size: 13px;
+            }
+            .fnb-img-wrapper {
+                width: 52px;
+                height: 52px;
+                min-width: 52px;
+            }
+            .qty-stepper {
+                height: 34px;
+            }
+            .qty-btn {
+                width: 30px;
+                height: 34px;
+            }
+            .qty-input {
+                width: 28px;
+                font-size: 13px;
+            }
+            .btn-header-orders {
+                padding: 4px 8px;
+                font-size: 11px;
+                min-height: 30px;
+            }
+            .floating-footer {
+                padding: 10px 12px;
+            }
+            .total-amount {
+                font-size: 16px;
+            }
+            .btn-order-submit {
+                padding: 8px 14px;
+                font-size: 13px;
+                min-height: 40px;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Header Station -->
-    <div class="header-card">
-        <div class="container" style="max-width: 600px; padding: 0;">
-            <div class="d-flex align-items-center justify-content-between mb-2">
-                <div class="location-pill">📍 {{ $location->name }} ({{ $location->code }})</div>
+    <!-- Compact Understated Header -->
+    <header class="header-card">
+        <div class="container-app">
+            <div class="header-top-row">
+                <div class="location-pill">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span>{{ $location->name }} ({{ $location->code }})</span>
+                </div>
                 <button type="button" class="btn-header-orders" onclick="openActiveOrdersModal()" aria-label="Lihat Pesanan Saya">
-                    <span class="mr-1">📋</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                        <path d="M12 11h4"/>
+                        <path d="M12 16h4"/>
+                        <path d="M8 11h.01"/>
+                        <path d="M8 16h.01"/>
+                    </svg>
                     <span>Pesanan Saya</span>
-                    <span class="badge badge-pill badge-primary ml-1" id="active-orders-count-badge">{{ count($activeOrders ?? []) }}</span>
+                    <span class="badge-count" id="active-orders-count-badge">{{ count($activeOrders ?? []) }}</span>
                 </button>
             </div>
-            <div class="small font-weight-bold mb-2">
-                Nama Pemain: <span class="text-white">{{ $playerName ?? 'Belum Ada Pemain' }}</span>
+
+            <div class="header-meta-row">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Nama Pemain:</span>
+                <span class="header-player-name">{{ $playerName ?? 'Belum Ada Pemain' }}</span>
             </div>
-            <div class="text-center pt-1">
-                <h1 class="h4 font-weight-bold mb-1 text-white">Menu Makanan &amp; Minuman</h1>
-                <p class="mb-0 small" style="opacity: 0.9;">Pesan langsung ke stasiun bermain Anda</p>
+
+            <div class="header-title-box">
+                <h1 class="header-title">Menu Makanan &amp; Minuman</h1>
+                <p class="header-subtitle">Pesan langsung ke stasiun bermain Anda</p>
             </div>
         </div>
-    </div>
+    </header>
 
-    <div class="container" style="max-width: 600px;">
+    <main class="container-app">
         <div id="order-alert-container"></div>
 
-        @if ($errors->any())
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @if (isset($errors) && $errors->any())
+            <div class="alert-box alert-box-danger" role="alert">
                 @foreach ($errors->all() as $error)
                     <div>{{ $error }}</div>
                 @endforeach
@@ -375,239 +1116,306 @@
             <input type="hidden" name="session_token" value="{{ $token }}">
 
             <!-- Form Pemesan -->
-            <div class="card mb-3 shadow-sm border-0" style="border-radius: 14px;">
-                <div class="card-body p-3">
-                    <div class="form-group mb-2">
-                        <label class="small font-weight-bold text-gray-700">Nama Pemesan <span class="text-danger">*</span></label>
-                        <input type="text" name="customer_name" class="form-control" placeholder="Masukkan nama Anda (misal: Rendi)" required value="{{ old('customer_name') }}">
-                    </div>
-                    <div class="form-group mb-0">
-                        <label class="small font-weight-bold text-gray-700">Catatan Pesanan (Opsional)</label>
-                        <input type="text" name="notes" class="form-control" placeholder="Contoh: Es dipisah, jangan terlalu manis" value="{{ old('notes') }}">
-                    </div>
+            <div class="order-form-card">
+                <div class="form-group">
+                    <label class="form-label" for="customer-name-input">
+                        Nama Pemesan <span class="required-mark">*</span>
+                    </label>
+                    <input type="text" 
+                           id="customer-name-input"
+                           name="customer_name" 
+                           class="form-control" 
+                           placeholder="Masukkan nama Anda (misal: Rendi)" 
+                           required 
+                           autocomplete="name"
+                           value="{{ old('customer_name') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="notes-input">
+                        Catatan Pesanan (Opsional)
+                    </label>
+                    <input type="text" 
+                           id="notes-input"
+                           name="notes" 
+                           class="form-control" 
+                           placeholder="Contoh: Es dipisah, jangan terlalu manis" 
+                           value="{{ old('notes') }}">
                 </div>
             </div>
 
             <!-- Katalog F&B -->
-            <div class="mb-3">
-                <h6 class="font-weight-bold text-gray-700 mb-2 px-1">Daftar Pilihan Menu</h6>
+            <section aria-labelledby="catalog-title">
+                <div class="catalog-section-title" id="catalog-title">
+                    <span>Daftar Pilihan Menu</span>
+                </div>
 
-                @forelse ($fnbs as $index => $fnb)
-                    <div class="fnb-card" data-fnb-id="{{ $fnb->id }}" data-price="{{ $fnb->effective_price }}">
-                        <div class="d-flex align-items-center mr-3" style="min-width: 0; flex: 1 1 auto;">
-                            <!-- Thumbnail with Lightbox Trigger -->
-                            <div class="fnb-img-wrapper mr-3" 
-                                 role="button" 
-                                 tabindex="0"
-                                 title="Klik untuk memperbesar gambar {{ $fnb->nama }}"
-                                 data-name="{{ $fnb->nama }}"
-                                 data-img="{{ $fnb->image_url }}"
-                                 data-price="Rp {{ number_format($fnb->effective_price, 0, ',', '.') }}"
-                                 onclick="handleThumbnailClick(this, event)"
-                                 onkeydown="handleThumbnailKeydown(this, event)">
-                                <img src="{{ $fnb->image_url }}" alt="{{ $fnb->nama }}" loading="lazy">
-                                <div class="fnb-img-zoom-badge">🔍</div>
-                            </div>
-                            <div class="fnb-info" style="min-width: 0; flex: 1 1 auto;">
-                                <div class="fnb-name">{{ $fnb->nama }}</div>
-                                <div class="fnb-price">Rp {{ number_format($fnb->effective_price, 0, ',', '.') }}</div>
-                                <div class="fnb-stock">
-                                    @if ($fnb->stok == -1)
-                                        <span class="text-success">● Selalu Tersedia</span>
-                                    @else
-                                        <span class="{{ $fnb->stok < 5 ? 'text-warning font-weight-bold' : 'text-muted' }}">
-                                            Tersedia: {{ $fnb->stok }} porsi
-                                        </span>
-                                    @endif
+                <div class="fnb-catalog-list">
+                    @forelse ($fnbs as $index => $fnb)
+                        <article class="fnb-card" id="fnb-card-{{ $fnb->id }}" data-fnb-id="{{ $fnb->id }}" data-price="{{ $fnb->effective_price }}">
+                            <div class="fnb-card-left">
+                                <!-- Thumbnail with Lightbox Trigger -->
+                                <div class="fnb-img-wrapper" 
+                                     role="button" 
+                                     tabindex="0"
+                                     title="Klik untuk memperbesar gambar {{ $fnb->nama }}"
+                                     data-name="{{ $fnb->nama }}"
+                                     data-img="{{ $fnb->image_url }}"
+                                     data-price="Rp {{ number_format($fnb->effective_price, 0, ',', '.') }}"
+                                     onclick="handleThumbnailClick(this, event)"
+                                     onkeydown="handleThumbnailKeydown(this, event)">
+                                    <img src="{{ $fnb->image_url }}" alt="{{ $fnb->nama }}" loading="lazy">
+                                    <div class="fnb-img-zoom-badge" aria-hidden="true">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                            <circle cx="11" cy="11" r="8"/>
+                                            <line x1="21" x2="16.65" y1="21" x2="16.65"/>
+                                            <line x1="11" x2="11" y1="8" y2="14"/>
+                                            <line x1="8" x2="14" y1="11" y2="11"/>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="fnb-info">
+                                    <h2 class="fnb-name">{{ $fnb->nama }}</h2>
+                                    <div class="fnb-price">Rp {{ number_format($fnb->effective_price, 0, ',', '.') }}</div>
+                                    <div class="fnb-stock">
+                                        @if ($fnb->stok == -1)
+                                            <span class="stock-available">
+                                                <span class="stock-dot" aria-hidden="true"></span>
+                                                <span>Selalu Tersedia</span>
+                                            </span>
+                                        @else
+                                            <span class="{{ $fnb->stok < 5 ? 'stock-low' : 'stock-normal' }}">
+                                                Tersedia: {{ $fnb->stok }} porsi
+                                            </span>
+                                        @endif
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="qty-stepper">
-                            <button type="button" class="qty-btn" onclick="changeQty({{ $fnb->id }}, -1)">−</button>
-                            <input type="number" 
-                                   id="qty-{{ $fnb->id }}" 
-                                   class="qty-input" 
-                                   value="0" 
-                                   min="0" 
-                                   max="{{ $fnb->stok == -1 ? 99 : $fnb->stok }}" 
-                                   readonly>
-                            <button type="button" class="qty-btn" onclick="changeQty({{ $fnb->id }}, 1, {{ $fnb->stok }})">+</button>
-                        </div>
+                            <div class="qty-stepper">
+                                <button type="button" 
+                                        class="qty-btn" 
+                                        onclick="changeQty({{ $fnb->id }}, -1)"
+                                        aria-label="Kurangi pesanan {{ $fnb->nama }}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <line x1="5" x2="19" y1="12" y2="12"/>
+                                    </svg>
+                                </button>
+                                <input type="number" 
+                                       id="qty-{{ $fnb->id }}" 
+                                       class="qty-input" 
+                                       value="0" 
+                                       min="0" 
+                                       max="{{ $fnb->stok == -1 ? 99 : $fnb->stok }}" 
+                                       readonly
+                                       aria-label="Jumlah {{ $fnb->nama }}">
+                                <button type="button" 
+                                        class="qty-btn" 
+                                        onclick="changeQty({{ $fnb->id }}, 1, {{ $fnb->stok }})"
+                                        aria-label="Tambah pesanan {{ $fnb->nama }}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <line x1="12" x2="12" y1="5" y2="19"/>
+                                        <line x1="5" x2="19" y1="12" y2="12"/>
+                                    </svg>
+                                </button>
+                            </div>
 
-                        <!-- Dynamic hidden fields added when qty > 0 -->
-                        <div id="hidden-inputs-{{ $fnb->id }}"></div>
-                    </div>
-                @empty
-                    <div class="alert alert-info text-center" style="border-radius: 12px;">
-                        Saat ini belum ada menu makanan/minuman yang tersedia.
-                    </div>
-                @endforelse
-            </div>
+                            <!-- Dynamic hidden fields added when qty > 0 -->
+                            <div id="hidden-inputs-{{ $fnb->id }}"></div>
+                        </article>
+                    @empty
+                        <div class="alert-box alert-box-info" id="no-menu-alert">
+                            Saat ini belum ada menu makanan/minuman yang tersedia.
+                        </div>
+                    @endforelse
+                </div>
+            </section>
 
             <!-- Sticky Bottom Bar -->
             <div class="floating-footer">
-                <div>
-                    <div class="total-label">Total Pesanan</div>
-                    <div class="total-amount" id="total-display">Rp 0</div>
+                <div class="floating-footer-inner">
+                    <div class="total-box">
+                        <div class="total-label">Total Pesanan</div>
+                        <div class="total-amount" id="total-display">Rp 0</div>
+                    </div>
+                    <button type="button" id="btn-submit" class="btn-order-submit" onclick="handleOrderSubmitClick(event)" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/>
+                            <path d="M3 6h18"/>
+                            <path d="M16 10a4 4 0 0 1-8 0"/>
+                        </svg>
+                        <span>Pesan Sekarang</span>
+                    </button>
                 </div>
-                <button type="button" id="btn-submit" class="btn-order-submit" onclick="handleOrderSubmitClick(event)" disabled>
-                    Pesan Sekarang
-                </button>
             </div>
         </form>
-    </div>
+    </main>
 
     <!-- Modal Pesanan Saya -->
-    <div class="modal fade" id="activeOrdersModal" tabindex="-1" role="dialog" aria-labelledby="activeOrdersModalLabel" aria-hidden="true" style="display: none; background: rgba(0, 0, 0, 0.6); z-index: 1050; overflow-y: auto;">
-        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" role="document" style="margin: 1.75rem auto; max-width: 520px; width: 95%;">
-            <div class="modal-content shadow-lg border-0 rounded-lg">
-                <div class="modal-header bg-primary text-white py-3">
-                    <h5 class="modal-title font-weight-bold h6 mb-0 d-flex align-items-center" id="activeOrdersModalLabel">
-                        <span class="mr-2">📋</span>
-                        <span>Pesanan Saya</span>
-                        <span class="badge badge-pill badge-light text-primary ml-2 font-weight-bold" id="active-orders-count">{{ count($activeOrders ?? []) }}</span>
-                    </h5>
-                    <button type="button" class="close text-white" aria-label="Close" onclick="closeActiveOrdersModal()">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body p-3" id="active-orders-modal-body" style="max-height: 70vh; overflow-y: auto;">
-                    <div id="pesanan-saya-card">
-                        <div id="active-orders-container">
-                            @forelse ($activeOrders ?? [] as $order)
-                                <div class="border rounded p-3 mb-3 bg-white shadow-sm order-card-item">
-                                    <div class="d-flex justify-content-between align-items-start mb-2 pb-2 border-bottom">
-                                        <div>
-                                            <div class="font-weight-bold text-dark">#{{ $order->order_number }}</div>
-                                            <div class="small text-muted">
-                                                Waktu: {{ $order->created_at ? $order->created_at->format('H:i') : '-' }} &bull; Pemesan: <span class="font-weight-bold text-gray-800">{{ $order->customer_name }}</span>
-                                            </div>
-                                        </div>
-                                        <div class="text-right">
-                                            @if ($order->status === 'PENDING')
-                                                <span class="badge badge-warning">Menunggu Dapur</span>
-                                            @elseif ($order->status === 'ACCEPTED')
-                                                <span class="badge badge-info">Diterima Dapur</span>
-                                            @elseif ($order->status === 'PREPARING')
-                                                <span class="badge badge-primary">Sedang Disiapkan</span>
-                                            @elseif ($order->status === 'READY')
-                                                <span class="badge badge-success font-weight-bold">Siap Diantar</span>
-                                            @elseif ($order->status === 'DELIVERED')
-                                                <span class="badge badge-secondary">Selesai Diantar</span>
-                                            @else
-                                                <span class="badge badge-light border">{{ $order->status }}</span>
-                                            @endif
-
-                                            <div class="mt-1">
-                                                @if (strtolower($order->payment_status) === 'paid')
-                                                    <span class="badge badge-success">Lunas</span>
-                                                @else
-                                                    <span class="badge badge-warning">Belum Bayar</span>
-                                                @endif
-                                            </div>
+    <div class="modal" id="activeOrdersModal" tabindex="-1" role="dialog" aria-labelledby="activeOrdersModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-header">
+                <h2 class="modal-title" id="activeOrdersModalLabel">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                        <path d="M12 11h4"/>
+                        <path d="M12 16h4"/>
+                        <path d="M8 11h.01"/>
+                        <path d="M8 16h.01"/>
+                    </svg>
+                    <span>Pesanan Saya</span>
+                    <span class="badge-count" id="active-orders-count">{{ count($activeOrders ?? []) }}</span>
+                </h2>
+                <button type="button" class="modal-close-btn" aria-label="Tutup" onclick="closeActiveOrdersModal()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18 6 6 18"/>
+                        <path d="m6 6 12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="active-orders-modal-body">
+                <div id="pesanan-saya-card">
+                    <div id="active-orders-container">
+                        @forelse ($activeOrders ?? [] as $order)
+                            <div class="order-card-item">
+                                <div class="order-item-header">
+                                    <div>
+                                        <div class="order-num">#{{ $order->order_number }}</div>
+                                        <div class="order-meta-info">
+                                            Waktu: {{ $order->created_at ? $order->created_at->format('H:i') : '-' }} &bull; Pemesan: <strong>{{ $order->customer_name }}</strong>
                                         </div>
                                     </div>
+                                    <div class="order-badges-col">
+                                        @if ($order->status === 'PENDING')
+                                            <span class="badge-status badge-kitchen-pending">Menunggu Dapur</span>
+                                        @elseif ($order->status === 'ACCEPTED')
+                                            <span class="badge-status badge-kitchen-accepted">Diterima Dapur</span>
+                                        @elseif ($order->status === 'PREPARING')
+                                            <span class="badge-status badge-kitchen-preparing">Sedang Disiapkan</span>
+                                        @elseif ($order->status === 'READY')
+                                            <span class="badge-status badge-kitchen-ready">Siap Diantar</span>
+                                        @elseif ($order->status === 'DELIVERED')
+                                            <span class="badge-status badge-kitchen-delivered">Selesai Diantar</span>
+                                        @else
+                                            <span class="badge-status badge-kitchen-delivered">{{ $order->status }}</span>
+                                        @endif
 
-                                    <div class="mb-2">
-                                        <div class="small text-muted font-weight-bold mb-1">Rincian Menu:</div>
-                                        <ul class="list-unstyled mb-0 small">
-                                            @foreach ($order->items as $item)
-                                                <li class="d-flex justify-content-between py-1 border-bottom-dashed">
-                                                    <span>{{ $item->qty }}x {{ $item->fnb ? $item->fnb->nama : 'Menu Dihapus' }}</span>
-                                                    <span class="text-muted">Rp {{ number_format($item->subtotal, 0, ',', '.') }}</span>
-                                                </li>
-                                            @endforeach
-                                        </ul>
-                                    </div>
-
-                                    @if ($order->notes)
-                                        <div class="small text-muted bg-light p-2 rounded mb-2">
-                                            <em>Catatan: {{ $order->notes }}</em>
-                                        </div>
-                                    @endif
-
-                                    <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-                                        <span class="small font-weight-bold text-gray-700">Total Pesanan:</span>
-                                        <span class="font-weight-bold text-primary">Rp {{ number_format($order->total_amount, 0, ',', '.') }}</span>
+                                        @if (strtolower($order->payment_status) === 'paid')
+                                            <span class="badge-status badge-payment-paid">Lunas</span>
+                                        @else
+                                            <span class="badge-status badge-payment-unpaid">Belum Bayar</span>
+                                        @endif
                                     </div>
                                 </div>
-                            @empty
-                                <div class="alert alert-light border text-center text-muted small py-3 mb-0" id="no-active-orders-message">
-                                    Belum ada pesanan aktif untuk sesi ini.
+
+                                <ul class="order-item-list">
+                                    @foreach ($order->items as $item)
+                                        <li class="order-item-row">
+                                            <span>{{ $item->qty }}x {{ $item->fnb ? $item->fnb->nama : 'Menu Dihapus' }}</span>
+                                            <span style="color: var(--sr-text-secondary);">Rp {{ number_format($item->subtotal, 0, ',', '.') }}</span>
+                                        </li>
+                                    @endforeach
+                                </ul>
+
+                                @if ($order->notes)
+                                    <div class="order-notes-box">
+                                        <em>Catatan: {{ $order->notes }}</em>
+                                    </div>
+                                @endif
+
+                                <div class="order-total-row">
+                                    <span style="color: var(--sr-text-secondary); font-weight: 500;">Total Pesanan:</span>
+                                    <span class="order-total-price">Rp {{ number_format($order->total_amount, 0, ',', '.') }}</span>
                                 </div>
-                            @endforelse
-                        </div>
+                            </div>
+                        @empty
+                            <div class="empty-state-orders" id="no-active-orders-message">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                </svg>
+                                <div>Belum ada pesanan aktif untuk sesi ini.</div>
+                            </div>
+                        @endforelse
                     </div>
                 </div>
-                <div class="modal-footer p-2 bg-light border-top d-flex justify-content-end">
-                    <button type="button" class="btn btn-secondary btn-sm font-weight-bold px-3" onclick="closeActiveOrdersModal()">
-                        Tutup
-                    </button>
-                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeActiveOrdersModal()">
+                    Tutup
+                </button>
             </div>
         </div>
     </div>
 
     <!-- Modal Konfirmasi Pesanan -->
-    <div class="modal fade" id="confirmOrderModal" tabindex="-1" role="dialog" aria-labelledby="confirmOrderModalLabel" aria-hidden="true" style="display: none; background: rgba(0, 0, 0, 0.6); z-index: 1050; overflow-y: auto;">
-        <div class="modal-dialog modal-dialog-centered" role="document" style="margin: 1.75rem auto; max-width: 500px; width: 95%;">
-            <div class="modal-content shadow border-0 rounded-lg">
-                <div class="modal-header bg-primary text-white py-3">
-                    <h5 class="modal-title font-weight-bold h6 mb-0" id="confirmOrderModalLabel">Konfirmasi Pesanan</h5>
-                    <button type="button" class="close text-white" aria-label="Close" onclick="closeConfirmModal()">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body p-3">
-                    <!-- Detail Stasiun & Pemain -->
-                    <div class="bg-light p-3 rounded mb-3 border">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="text-muted small">Station / Meja:</span>
-                            <span class="font-weight-bold small text-dark">{{ $location->name }} ({{ $location->code }})</span>
-                        </div>
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="text-muted small">Pemain Utama:</span>
-                            <span class="font-weight-bold small text-dark">{{ $playerName ?? 'Belum Ada Pemain' }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between">
-                            <span class="text-muted small">Nama Pemesan:</span>
-                            <span class="font-weight-bold small text-primary" id="modal-customer-name">-</span>
-                        </div>
+    <div class="modal" id="confirmOrderModal" tabindex="-1" role="dialog" aria-labelledby="confirmOrderModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-header">
+                <h2 class="modal-title" id="confirmOrderModalLabel">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="m9 12 2 2 4-4"/>
+                    </svg>
+                    <span>Konfirmasi Pesanan</span>
+                </h2>
+                <button type="button" class="modal-close-btn" aria-label="Tutup" onclick="closeConfirmModal()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M18 6 6 18"/>
+                        <path d="m6 6 12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Detail Stasiun & Pemain -->
+                <div style="background: #F8FAFC; border: 1px solid var(--sr-border); border-radius: var(--sr-radius-sm); padding: 12px 14px; margin-bottom: 14px; font-size: 13px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="color: var(--sr-text-secondary);">Station / Meja:</span>
+                        <span style="font-weight: 600; color: var(--sr-text-primary);">{{ $location->name }} ({{ $location->code }})</span>
                     </div>
-
-                    <!-- Rincian Menu -->
-                    <h6 class="font-weight-bold text-gray-800 small mb-2">Rincian Menu:</h6>
-                    <div id="modal-items-list" class="mb-3">
-                        <!-- Dynamic itemized list inserted here -->
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span style="color: var(--sr-text-secondary);">Pemain Utama:</span>
+                        <span style="font-weight: 600; color: var(--sr-text-primary);">{{ $playerName ?? 'Belum Ada Pemain' }}</span>
                     </div>
-
-                    <div class="d-flex justify-content-between align-items-center border-top pt-2 mb-3">
-                        <span class="font-weight-bold text-gray-800">Total Pesanan:</span>
-                        <span class="font-weight-bold text-primary h5 mb-0" id="modal-total-price">Rp 0</span>
-                    </div>
-
-                    <div id="modal-notes-container" class="alert alert-secondary small py-2 px-3 mb-3" style="display: none;">
-                        <strong>Catatan:</strong> <span id="modal-notes-text"></span>
-                    </div>
-
-                    <!-- Informasi Pembayaran -->
-                    <div class="alert {{ ($sessionType ?? null) === 'postpaid' ? 'alert-info' : 'alert-warning' }} small mb-0">
-                        @if (($sessionType ?? null) === 'postpaid')
-                            <strong>Informasi Pembayaran:</strong> Anda memesan pada sesi Lost Time. Tagihan F&B akan dicatat ke tagihan meja Anda dan dibayarkan saat checkout permainan.
-                        @else
-                            <strong>Informasi Pembayaran:</strong> Anda memesan pada sesi Paket. Pembayaran dapat dilakukan kepada staf saat pesanan diantarkan atau setelah sesi bermain selesai.
-                        @endif
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--sr-text-secondary);">Nama Pemesan:</span>
+                        <span style="font-weight: 700; color: var(--sr-primary);" id="modal-customer-name">-</span>
                     </div>
                 </div>
-                <div class="modal-footer p-3 bg-light border-top">
-                    <button type="button" id="btn-modal-cancel" class="btn btn-secondary font-weight-bold px-3" onclick="closeConfirmModal()">
-                        Kembali / Edit Pesanan
-                    </button>
-                    <button type="button" id="btn-modal-confirm" class="btn btn-success font-weight-bold px-3" onclick="submitConfirmedOrder()">
-                        Ya, Konfirmasi Pesanan
-                    </button>
+
+                <!-- Rincian Menu -->
+                <div style="font-size: 13px; font-weight: 700; color: var(--sr-text-primary); margin-bottom: 8px;">
+                    Rincian Menu:
                 </div>
+                <div id="modal-items-list" style="margin-bottom: 14px;">
+                    <!-- Dynamic itemized list inserted here -->
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--sr-border); padding-top: 10px; margin-bottom: 12px;">
+                    <span style="font-weight: 600; color: var(--sr-text-primary); font-size: 14px;">Total Pesanan:</span>
+                    <span style="font-weight: 700; color: var(--sr-primary); font-size: 18px;" id="modal-total-price">Rp 0</span>
+                </div>
+
+                <div id="modal-notes-container" style="display: none; background: #F8FAFC; border: 1px solid var(--sr-border); border-radius: var(--sr-radius-xs); padding: 8px 12px; font-size: 13px; margin-bottom: 14px;">
+                    <strong>Catatan:</strong> <span id="modal-notes-text"></span>
+                </div>
+
+                <!-- Informasi Pembayaran -->
+                <div class="policy-box {{ ($sessionType ?? null) === 'postpaid' ? 'policy-box-info' : 'policy-box-warning' }}">
+                    @if (($sessionType ?? null) === 'postpaid')
+                        <strong>Informasi Pembayaran:</strong> Anda memesan pada sesi Lost Time. Tagihan F&B akan dicatat ke tagihan meja Anda dan dibayarkan saat checkout permainan.
+                    @else
+                        <strong>Informasi Pembayaran:</strong> Anda memesan pada sesi Paket. Pembayaran dapat dilakukan kepada staf saat pesanan diantarkan atau setelah sesi bermain selesai.
+                    @endif
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="btn-modal-cancel" class="btn-modal btn-modal-secondary" onclick="closeConfirmModal()">
+                    Kembali / Edit Pesanan
+                </button>
+                <button type="button" id="btn-modal-confirm" class="btn-modal btn-modal-primary" onclick="submitConfirmedOrder()">
+                    Ya, Konfirmasi Pesanan
+                </button>
             </div>
         </div>
     </div>
@@ -616,15 +1424,18 @@
     <div id="imageLightboxModal" tabindex="-1" role="dialog" aria-hidden="true" onclick="closeImageLightbox()">
         <div class="lightbox-dialog" onclick="event.stopPropagation()">
             <button type="button" class="lightbox-close-btn" aria-label="Tutup Preview Gambar" onclick="closeImageLightbox()">
-                &times;
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 6 6 18"/>
+                    <path d="m6 6 12 12"/>
+                </svg>
             </button>
             <div class="lightbox-box">
                 <div class="lightbox-media">
                     <img id="lightbox-img" src="" alt="Preview Produk">
                 </div>
                 <div class="lightbox-caption">
-                    <div id="lightbox-title" class="font-weight-bold text-dark" style="font-size: 16px;"></div>
-                    <div id="lightbox-price" class="font-weight-bold text-primary" style="font-size: 15px;"></div>
+                    <div id="lightbox-title" style="font-weight: 700; font-size: 15px; color: var(--sr-text-primary); margin-bottom: 2px;"></div>
+                    <div id="lightbox-price" style="font-weight: 700; font-size: 14px; color: var(--sr-primary);"></div>
                 </div>
             </div>
         </div>
@@ -651,6 +1462,7 @@
 
         function changeQty(fnbId, delta, maxStock = -1) {
             const input = document.getElementById('qty-' + fnbId);
+            if (!input) return;
             let current = parseInt(input.value) || 0;
             let next = current + delta;
 
@@ -661,12 +1473,24 @@
             }
 
             input.value = next;
+
+            // Highlight card subtly when selected
+            const card = document.getElementById('fnb-card-' + fnbId);
+            if (card) {
+                if (next > 0) {
+                    card.classList.add('has-selected');
+                } else {
+                    card.classList.remove('has-selected');
+                }
+            }
+
             updateHiddenFields(fnbId, next);
             updateTotal();
         }
 
         function updateHiddenFields(fnbId, qty) {
             const container = document.getElementById('hidden-inputs-' + fnbId);
+            if (!container) return;
             if (qty > 0) {
                 container.innerHTML = `
                     <input type="hidden" name="items[${fnbId}][fnb_id]" value="${fnbId}">
@@ -689,15 +1513,21 @@
                 totalQty += qty;
             }
 
-            document.getElementById('total-display').textContent = 'Rp ' + total.toLocaleString('id-ID');
-            document.getElementById('btn-submit').disabled = (totalQty === 0);
+            const totalDisplay = document.getElementById('total-display');
+            if (totalDisplay) {
+                totalDisplay.textContent = 'Rp ' + total.toLocaleString('id-ID');
+            }
+            const btnSubmit = document.getElementById('btn-submit');
+            if (btnSubmit) {
+                btnSubmit.disabled = (totalQty === 0);
+            }
         }
 
         /* Modal "Pesanan Saya" Controllers */
         function openActiveOrdersModal() {
             const modal = document.getElementById('activeOrdersModal');
             if (!modal) return;
-            modal.style.display = 'block';
+            modal.style.display = 'flex';
             setTimeout(() => { modal.classList.add('show'); }, 10);
             updateBodyScrollLock();
         }
@@ -716,7 +1546,7 @@
         function openConfirmModal() {
             const modal = document.getElementById('confirmOrderModal');
             if (!modal) return;
-            modal.style.display = 'block';
+            modal.style.display = 'flex';
             setTimeout(() => { modal.classList.add('show'); }, 10);
             updateBodyScrollLock();
         }
@@ -874,26 +1704,31 @@
             }
 
             // Populate confirmation modal
-            document.getElementById('modal-customer-name').textContent = customerName;
+            const modalCustomerName = document.getElementById('modal-customer-name');
+            if (modalCustomerName) modalCustomerName.textContent = customerName;
 
-            let itemsHtml = '<div class="table-responsive"><table class="table table-sm table-borderless mb-0"><tbody>';
+            let itemsHtml = '<table class="confirm-table"><tbody>';
             let totalPrice = 0;
             itemsList.forEach(item => {
                 totalPrice += item.subtotal;
                 itemsHtml += `
-                    <tr class="border-bottom">
-                        <td class="pl-0 py-2">
-                            <div class="font-weight-bold text-dark">${escapeHtml(item.name)}</div>
-                            <div class="text-muted small">Rp ${item.price.toLocaleString('id-ID')}</div>
+                    <tr>
+                        <td style="text-align: left;">
+                            <div style="font-weight: 600; color: var(--sr-text-primary);">${escapeHtml(item.name)}</div>
+                            <div style="color: var(--sr-text-secondary); font-size: 12px;">Rp ${item.price.toLocaleString('id-ID')}</div>
                         </td>
-                        <td class="text-center font-weight-bold text-muted align-middle py-2">${item.qty}x</td>
-                        <td class="text-right font-weight-bold align-middle pr-0 py-2">Rp ${item.subtotal.toLocaleString('id-ID')}</td>
+                        <td style="text-align: center; font-weight: 600; color: var(--sr-text-secondary);">${item.qty}x</td>
+                        <td style="text-align: right; font-weight: 700; color: var(--sr-text-primary);">Rp ${item.subtotal.toLocaleString('id-ID')}</td>
                     </tr>
                 `;
             });
-            itemsHtml += '</tbody></table></div>';
-            document.getElementById('modal-items-list').innerHTML = itemsHtml;
-            document.getElementById('modal-total-price').textContent = 'Rp ' + totalPrice.toLocaleString('id-ID');
+            itemsHtml += '</tbody></table>';
+
+            const modalItemsList = document.getElementById('modal-items-list');
+            if (modalItemsList) modalItemsList.innerHTML = itemsHtml;
+
+            const modalTotalPrice = document.getElementById('modal-total-price');
+            if (modalTotalPrice) modalTotalPrice.textContent = 'Rp ' + totalPrice.toLocaleString('id-ID');
 
             // Notes
             const notesInput = document.querySelector('input[name="notes"]');
@@ -901,10 +1736,10 @@
             const modalNotesContainer = document.getElementById('modal-notes-container');
             const modalNotesText = document.getElementById('modal-notes-text');
             if (notes) {
-                modalNotesText.textContent = notes;
-                modalNotesContainer.style.display = 'block';
+                if (modalNotesText) modalNotesText.textContent = notes;
+                if (modalNotesContainer) modalNotesContainer.style.display = 'block';
             } else {
-                modalNotesContainer.style.display = 'none';
+                if (modalNotesContainer) modalNotesContainer.style.display = 'none';
             }
 
             openConfirmModal();
@@ -944,25 +1779,31 @@
                     for (const fnbId in fnbPrices) {
                         const input = document.getElementById('qty-' + fnbId);
                         if (input) input.value = 0;
+                        const card = document.getElementById('fnb-card-' + fnbId);
+                        if (card) card.classList.remove('has-selected');
                         updateHiddenFields(fnbId, 0);
                     }
                     const notesInput = document.querySelector('input[name="notes"]');
                     if (notesInput) notesInput.value = '';
                     updateTotal();
 
-                    // Show success banner with action to open Pesanan Saya
+                    // Show success banner with clean button to open Pesanan Saya
                     const alertContainer = document.getElementById('order-alert-container');
                     if (alertContainer) {
                         const orderNum = data.order ? data.order.order_number : '';
                         alertContainer.innerHTML = `
-                            <div class="alert alert-success alert-dismissible fade show shadow-sm mb-3" role="alert" style="border-radius: 12px;">
-                                <div class="font-weight-bold mb-1">Pesanan Berhasil Dikirim!</div>
-                                <div class="mb-2">Pesanan Anda telah dicatat dengan Nomor Pesanan: <strong>#${escapeHtml(orderNum)}</strong></div>
-                                <button type="button" class="btn btn-sm btn-success font-weight-bold" onclick="openActiveOrdersModal()">
-                                    📋 Lihat Pesanan Saya
+                            <div class="alert-box alert-box-success" role="alert">
+                                <div style="font-weight: 700; margin-bottom: 2px;">Pesanan Berhasil Dikirim!</div>
+                                <div style="margin-bottom: 10px;">Pesanan Anda telah dicatat dengan Nomor Pesanan: <strong>#${escapeHtml(orderNum)}</strong></div>
+                                <button type="button" class="btn-modal btn-modal-primary" style="font-size: 13px; min-height: 36px; padding: 6px 14px; gap: 6px;" onclick="openActiveOrdersModal()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                    </svg>
+                                    <span>Lihat Pesanan Saya</span>
                                 </button>
-                                <button type="button" class="close" data-dismiss="alert" aria-label="Close" onclick="this.parentElement.remove()">
-                                    <span aria-hidden="true">&times;</span>
+                                <button type="button" class="alert-close-btn" aria-label="Tutup Notifikasi" onclick="this.parentElement.remove()">
+                                    &times;
                                 </button>
                             </div>
                         `;
@@ -1017,25 +1858,25 @@
         function getKitchenBadge(status) {
             switch (status) {
                 case 'PENDING':
-                    return '<span class="badge badge-warning">Menunggu Dapur</span>';
+                    return '<span class="badge-status badge-kitchen-pending">Menunggu Dapur</span>';
                 case 'ACCEPTED':
-                    return '<span class="badge badge-info">Diterima Dapur</span>';
+                    return '<span class="badge-status badge-kitchen-accepted">Diterima Dapur</span>';
                 case 'PREPARING':
-                    return '<span class="badge badge-primary">Sedang Disiapkan</span>';
+                    return '<span class="badge-status badge-kitchen-preparing">Sedang Disiapkan</span>';
                 case 'READY':
-                    return '<span class="badge badge-success font-weight-bold">Siap Diantar</span>';
+                    return '<span class="badge-status badge-kitchen-ready">Siap Diantar</span>';
                 case 'DELIVERED':
-                    return '<span class="badge badge-secondary">Selesai Diantar</span>';
+                    return '<span class="badge-status badge-kitchen-delivered">Selesai Diantar</span>';
                 default:
-                    return `<span class="badge badge-light border">${escapeHtml(status)}</span>`;
+                    return `<span class="badge-status badge-kitchen-delivered">${escapeHtml(status)}</span>`;
             }
         }
 
         function getPaymentBadge(paymentStatus) {
             if (String(paymentStatus).toLowerCase() === 'paid') {
-                return '<span class="badge badge-success">Lunas</span>';
+                return '<span class="badge-status badge-payment-paid">Lunas</span>';
             }
-            return '<span class="badge badge-warning">Belum Bayar</span>';
+            return '<span class="badge-status badge-payment-unpaid">Belum Bayar</span>';
         }
 
         function renderActiveOrders(orders) {
@@ -1050,8 +1891,12 @@
 
             if (!orders || orders.length === 0) {
                 container.innerHTML = `
-                    <div class="alert alert-light border text-center text-muted small py-3 mb-0" id="no-active-orders-message">
-                        Belum ada pesanan aktif untuk sesi ini.
+                    <div class="empty-state-orders" id="no-active-orders-message">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                        </svg>
+                        <div>Belum ada pesanan aktif untuk sesi ini.</div>
                     </div>
                 `;
                 return;
@@ -1069,9 +1914,9 @@
                     order.items.forEach(item => {
                         const subtotalFormatted = 'Rp ' + Number(item.subtotal).toLocaleString('id-ID');
                         itemsHtml += `
-                            <li class="d-flex justify-content-between py-1 border-bottom-dashed">
+                            <li class="order-item-row">
                                 <span>${item.qty}x ${escapeHtml(item.name)}</span>
-                                <span class="text-muted">${subtotalFormatted}</span>
+                                <span style="color: var(--sr-text-secondary);">${subtotalFormatted}</span>
                             </li>
                         `;
                     });
@@ -1080,41 +1925,36 @@
                 let notesHtml = '';
                 if (order.notes) {
                     notesHtml = `
-                        <div class="small text-muted bg-light p-2 rounded mb-2">
+                        <div class="order-notes-box">
                             <em>Catatan: ${escapeHtml(order.notes)}</em>
                         </div>
                     `;
                 }
 
                 html += `
-                    <div class="border rounded p-3 mb-3 bg-white shadow-sm order-card-item">
-                        <div class="d-flex justify-content-between align-items-start mb-2 pb-2 border-bottom">
+                    <div class="order-card-item">
+                        <div class="order-item-header">
                             <div>
-                                <div class="font-weight-bold text-dark">#${escapeHtml(order.order_number)}</div>
-                                <div class="small text-muted">
-                                    Waktu: ${escapeHtml(orderTime)} &bull; Pemesan: <span class="font-weight-bold text-gray-800">${escapeHtml(order.customer_name)}</span>
+                                <div class="order-num">#${escapeHtml(order.order_number)}</div>
+                                <div class="order-meta-info">
+                                    Waktu: ${escapeHtml(orderTime)} &bull; Pemesan: <strong>${escapeHtml(order.customer_name)}</strong>
                                 </div>
                             </div>
-                            <div class="text-right">
+                            <div class="order-badges-col">
                                 ${kitchenBadge}
-                                <div class="mt-1">
-                                    ${paymentBadge}
-                                </div>
+                                ${paymentBadge}
                             </div>
                         </div>
 
-                        <div class="mb-2">
-                            <div class="small text-muted font-weight-bold mb-1">Rincian Menu:</div>
-                            <ul class="list-unstyled mb-0 small">
-                                ${itemsHtml}
-                            </ul>
-                        </div>
+                        <ul class="order-item-list">
+                            ${itemsHtml}
+                        </ul>
 
                         ${notesHtml}
 
-                        <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-                            <span class="small font-weight-bold text-gray-700">Total Pesanan:</span>
-                            <span class="font-weight-bold text-primary">${totalFormatted}</span>
+                        <div class="order-total-row">
+                            <span style="color: var(--sr-text-secondary); font-weight: 500;">Total Pesanan:</span>
+                            <span class="order-total-price">${totalFormatted}</span>
                         </div>
                     </div>
                 `;
