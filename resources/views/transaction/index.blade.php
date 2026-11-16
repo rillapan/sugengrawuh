@@ -134,10 +134,12 @@
             $fnbUnpaidTotal = $unpaidOrderFnbTotal + ($tx->payment_status === 'paid' ? 0.0 : $extraLegacyFnbTotal);
             $totalFnbDisplay = $fnbPaidTotal + $fnbUnpaidTotal;
 
-            if ($tx->tipe_transaksi === 'custom_package') {
-                $rentalSubtotal = (float) ($tx->harga ?: $tx->total);
-            } elseif ($tx->tipe_transaksi === 'prepaid') {
-                $rentalSubtotal = max(0.0, (float) $tx->total - $extraLegacyFnbTotal);
+            if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+                $rentalSubtotal = method_exists($tx, 'resolvePaketRentalTotal')
+                    ? (float) $tx->resolvePaketRentalTotal()
+                    : ($tx->tipe_transaksi === 'custom_package'
+                        ? (float) ($tx->harga ?: $tx->total)
+                        : max(0.0, (float) $tx->total - $extraLegacyFnbTotal));
             } else {
                 $rentalSubtotal = 0.0;
             }
@@ -302,10 +304,25 @@
             <span id="pos-feedback-message"></span>
         </div>
 
+        @php
+            $totalCount = (int) ($stationStats['total'] ?? 0);
+            $availCount = (int) ($stationStats['available'] ?? 0);
+            $inUseCount = (int) ($stationStats['in_use'] ?? 0);
+            $unpaidCount = (int) ($stationStats['unpaid_attention'] ?? 0);
+            $availPct = $totalCount > 0 ? round(($availCount / $totalCount) * 100) : 0;
+            $inUsePct = $totalCount > 0 ? round(($inUseCount / $totalCount) * 100) : 0;
+        @endphp
+
         <header class="pos-header">
             <div class="pos-header-top">
                 <div>
-                    <h1 class="pos-title">Operasional Kasir</h1>
+                    <div class="d-flex align-items-center" style="gap: 0.5rem; margin-bottom: 0.25rem;">
+                        <h1 class="pos-title mb-0">Operasional Kasir</h1>
+                        <span class="pos-live-terminal-badge">
+                            <span class="pos-live-dot" aria-hidden="true"></span>
+                            <span>Terminal Real-Time</span>
+                        </span>
+                    </div>
                     <p class="pos-subtitle">Kontrol billing stasiun real-time, order cafe, dan riwayat transaksi.</p>
                 </div>
 
@@ -332,7 +349,8 @@
                 <div class="pos-stat-item pos-stat-total">
                     <div>
                         <div class="pos-stat-label">Total Stasiun</div>
-                        <div class="pos-stat-value" id="stat-total-stations">{{ $stationStats['total'] ?? 0 }}</div>
+                        <div class="pos-stat-value" id="stat-total-stations">{{ $totalCount }} Unit</div>
+                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">Semua Stasiun Terdaftar</div>
                     </div>
                     <span class="pos-stat-icon" aria-hidden="true">
                         <i class="fas fa-gamepad"></i>
@@ -341,8 +359,12 @@
 
                 <div class="pos-stat-item pos-stat-available">
                     <div>
-                        <div class="pos-stat-label">Tersedia</div>
-                        <div class="pos-stat-value" id="stat-available-stations">{{ $stationStats['available'] ?? 0 }}</div>
+                        <div class="d-flex align-items-center justify-content-between" style="gap: 0.5rem;">
+                            <div class="pos-stat-label" style="color: var(--pos-tertiary);">Tersedia</div>
+                            <span class="pos-stat-pct is-mint">{{ $availPct }}%</span>
+                        </div>
+                        <div class="pos-stat-value" id="stat-available-stations" style="color: var(--pos-tertiary);">{{ $availCount }} Unit</div>
+                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">Siap Digunakan Langsung</div>
                     </div>
                     <span class="pos-stat-icon" aria-hidden="true">
                         <i class="fas fa-check-circle"></i>
@@ -351,8 +373,12 @@
 
                 <div class="pos-stat-item pos-stat-inuse">
                     <div>
-                        <div class="pos-stat-label">Sedang Bermain</div>
-                        <div class="pos-stat-value" id="stat-inuse-stations">{{ $stationStats['in_use'] ?? 0 }}</div>
+                        <div class="d-flex align-items-center justify-content-between" style="gap: 0.5rem;">
+                            <div class="pos-stat-label" style="color: var(--pos-primary);">Sedang Bermain</div>
+                            <span class="pos-stat-pct is-blue">{{ $inUsePct }}%</span>
+                        </div>
+                        <div class="pos-stat-value" id="stat-inuse-stations" style="color: var(--pos-primary);">{{ $inUseCount }} Unit</div>
+                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">Sesi Aktif Berjalan</div>
                     </div>
                     <span class="pos-stat-icon" aria-hidden="true">
                         <i class="fas fa-play-circle"></i>
@@ -361,8 +387,9 @@
 
                 <div class="pos-stat-item pos-stat-unpaid">
                     <div>
-                        <div class="pos-stat-label">Belum Lunas</div>
-                        <div class="pos-stat-value" id="stat-unpaid-attention">{{ $stationStats['unpaid_attention'] ?? 0 }}</div>
+                        <div class="pos-stat-label" style="color: #b45309;">Belum Lunas</div>
+                        <div class="pos-stat-value" id="stat-unpaid-attention">{{ $unpaidCount }} Sesi</div>
+                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">Menunggu Penyelesaian</div>
                     </div>
                     <span class="pos-stat-icon" aria-hidden="true">
                         <i class="fas fa-receipt"></i>
@@ -382,8 +409,8 @@
                     aria-selected="{{ $currentTab === 'stations' ? 'true' : 'false' }}"
                     tabindex="{{ $currentTab === 'stations' ? '0' : '-1' }}"
                 >
-                    <span>Stasiun</span>
-                    <span class="pos-tab-badge">{{ $stationStats['total'] ?? 0 }}</span>
+                    <span>Stasiun Aktif</span>
+                    <span class="pos-tab-badge">{{ $totalCount }}</span>
                 </button>
                 <button
                     type="button"
@@ -396,6 +423,25 @@
                 >
                     <span>Riwayat Transaksi</span>
                 </button>
+            </div>
+
+            <div class="pos-live-legend" aria-label="Status Indikator">
+                <div class="pos-legend-item">
+                    <span class="pos-hw-dot" style="background-color: var(--pos-tertiary);" aria-hidden="true"></span>
+                    <span>Tersedia</span>
+                </div>
+                <div class="pos-legend-item">
+                    <span class="pos-hw-dot" style="background-color: var(--pos-primary);" aria-hidden="true"></span>
+                    <span>Bermain (Lost Time)</span>
+                </div>
+                <div class="pos-legend-item">
+                    <span class="pos-hw-dot" style="background-color: #4f46e5;" aria-hidden="true"></span>
+                    <span>Bermain (Paket)</span>
+                </div>
+                <div class="pos-legend-item">
+                    <span class="pos-hw-dot" style="background-color: var(--pos-red);" aria-hidden="true"></span>
+                    <span>Kritis (&lt;10m)</span>
+                </div>
             </div>
         </div>
 
@@ -445,11 +491,11 @@
                 'canOperate' => $canOperate,
             ])
         </section>
+
+        @include('transaction.partials._modals')
     </div>
 
     <script type="application/json" id="pos-bootstrap-data">{!! json_encode($posBootstrap, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) !!}</script>
-
-    @include('transaction.partials._modals')
 @endsection
 
 @section('scripts')

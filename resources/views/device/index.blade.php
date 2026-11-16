@@ -471,7 +471,10 @@
                         <article class="stitch-station-card w-100">
                             <!-- Card Header: Title & Transaction Type Badge -->
                             <div class="stitch-card-header">
-                                <h2 class="stitch-station-title">{{ $device->nama }}</h2>
+                                <div class="d-flex flex-column">
+                                    <span class="small font-weight-bold text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Station {{ $stationNumbers[$device->id] ?? ($device->station_number ?? '') }}</span>
+                                    <h2 class="stitch-station-title mb-0">{{ $device->nama }}</h2>
+                                </div>
                                 @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
                                     <span class="stitch-badge-tx 
                                         @if($customers[$device->id]['tipe_transaksi'] === 'prepaid') stitch-badge-tx-prepaid
@@ -695,7 +698,7 @@
                                         <div class="small mb-2">
                                             <div class="d-flex justify-content-between">
                                                 <span class="text-muted">Station & Kategori:</span>
-                                                <strong class="text-dark">{{ $device->nama }} ({{ $device->playstation_names ?: 'PlayStation' }})</strong>
+                                                <strong class="text-dark">Station {{ $stationNumbers[$device->id] ?? ($device->station_number ?? '') }} · {{ $device->nama }} ({{ $device->playstation_names ?: 'PlayStation' }})</strong>
                                             </div>
                                             <div class="d-flex justify-content-between align-items-center mt-1">
                                                 <span class="text-muted">Konsol PlayStation:</span>

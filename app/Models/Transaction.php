@@ -189,6 +189,124 @@ class Transaction extends Model
         });
     }
 
+    /**
+     * Resolve exact rental total for Paket (prepaid / custom_package) transactions.
+     */
+    public function resolvePaketRentalTotal(): float
+    {
+        if ($this->tipe_transaksi === 'custom_package') {
+            if ((float) ($this->harga ?? 0) > 0) {
+                return (float) $this->harga;
+            }
+
+            $customPackage = $this->relationLoaded('custom_package')
+                ? $this->custom_package
+                : $this->custom_package()->first();
+
+            return (float) ($customPackage->harga_total ?? $this->total ?? 0);
+        }
+
+        if ($this->tipe_transaksi === 'prepaid') {
+            if ($this->duration_seconds === null && is_numeric($this->jam_main)) {
+                return (float) $this->harga * (float) $this->jam_main;
+            }
+
+            $durationSeconds = ($this->duration_seconds !== null && (int) $this->duration_seconds > 0)
+                ? (int) $this->duration_seconds
+                : null;
+
+            if ($durationSeconds === null && !empty($this->jam_main)) {
+                if (is_numeric($this->jam_main)) {
+                    $durationSeconds = (int) round((float) $this->jam_main * 3600);
+                } elseif (is_string($this->jam_main) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', trim($this->jam_main), $m)) {
+                    $durationSeconds = ((int) $m[1] * 3600) + ((int) $m[2] * 60) + (isset($m[3]) ? (int) $m[3] : 0);
+                }
+            }
+
+            if ($durationSeconds !== null && $durationSeconds > 0) {
+                $playstation = $this->relationLoaded('playstation')
+                    ? $this->playstation
+                    : $this->playstation()->first();
+
+                if (!$playstation) {
+                    $device = $this->relationLoaded('device')
+                        ? $this->device
+                        : $this->device()->with('playstation')->first();
+                    $playstation = $device?->playstation;
+                }
+
+                if ($playstation && ((float) ($this->harga ?? 0) <= 0 || abs((float) $this->harga - (float) ($playstation->harga ?? 0)) < 0.01)) {
+                    return (float) $playstation->calculateCustomPrice($durationSeconds);
+                }
+
+                if ((float) ($this->harga ?? 0) > 0) {
+                    return (float) ((float) $this->harga * ($durationSeconds / 3600));
+                }
+            }
+
+            return (float) ($this->harga ?? 0);
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Sum chargeable legacy TransactionFnb rows that have not yet been linked to an InvoiceItem.
+     */
+    public function getUninvoicedLegacyFnbTotalAttribute(): float
+    {
+        $legacyFnbs = $this->relationLoaded('transactionFnbs')
+            ? $this->transactionFnbs
+            : $this->transactionFnbs()->with('invoiceItem')->get();
+
+        if ($legacyFnbs->isEmpty()) {
+            return 0.0;
+        }
+
+        $packageItems = [];
+        if ($this->tipe_transaksi === 'custom_package') {
+            $customPackage = $this->relationLoaded('custom_package')
+                ? $this->custom_package
+                : $this->custom_package()->with('fnbs')->first();
+
+            if ($customPackage) {
+                if (!$customPackage->relationLoaded('fnbs')) {
+                    $customPackage->load('fnbs');
+                }
+                foreach ($customPackage->fnbs as $pFnb) {
+                    $packageItems[$pFnb->id] = (int) $pFnb->pivot->quantity;
+                }
+            }
+        }
+
+        $total = 0.0;
+        foreach ($legacyFnbs as $tFnb) {
+            $hasInvoiceItem = $tFnb->relationLoaded('invoiceItem')
+                ? ($tFnb->invoiceItem !== null)
+                : $tFnb->invoiceItem()->exists();
+
+            if ($hasInvoiceItem) {
+                continue;
+            }
+
+            $qtyInPackage = $packageItems[$tFnb->fnb_id] ?? 0;
+            $chargeableQty = max(0, (int) $tFnb->qty - $qtyInPackage);
+            $total += $chargeableQty * (float) $tFnb->harga_jual;
+        }
+
+        return (float) $total;
+    }
+
+    /**
+     * Total payable amount for a Paket (prepaid / custom_package) transaction.
+     */
+    public function getPaketPayableTotalAttribute(): float
+    {
+        return $this->resolvePaketRentalTotal()
+            + $this->uninvoiced_legacy_fnb_total
+            + $this->unpaid_fnb_order_total;
+    }
+
     public function getUnpaidFnbOrderTotalAttribute(): float
     {
         $orders = $this->relationLoaded('fnbOrders')

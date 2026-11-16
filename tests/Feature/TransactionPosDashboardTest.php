@@ -111,22 +111,30 @@ class TransactionPosDashboardTest extends TestCase
         $ps4 = Playstation::create(['nama' => 'PS4 Pro', 'harga' => 10000]);
         $billiard = Playstation::create(['nama' => 'Billiard Table', 'harga' => 25000]);
 
-        // Non-sequential DB insertion order
+        // DB insertion order: IDs will be strictly ascending [1, 2, 3, 4, 5, 6]
         $d12 = $this->createStation('PS4 12', $ps4);
         $d3 = $this->createStation('Meja 3 - Billiard', $billiard);
         $d10 = $this->createStation('PS4 VIP', $ps4, 'Tersedia', 'STATION 10');
-        $d1 = $this->createStation('PS3 1', $ps3);
+        $d1 = $this->createStation('Meja 1 - Billiard', $billiard);
         $d2 = $this->createStation('PS4 Reguler', $ps4, 'Tersedia', 'STATION 02');
+        // Add a newly created device with name that previously conflicted with Meja 1 - Billiard
+        $dDuplicateName = $this->createStation('TV 1 [UJI COBA]', $ps4);
 
-        $expectedOrder = [$d1->id, $d2->id, $d3->id, $d10->id, $d12->id];
+        $expectedOrder = [$d12->id, $d3->id, $d10->id, $d1->id, $d2->id, $dDuplicateName->id];
 
-        // 1. Model-level deterministic sorting
+        // 1. Model-level deterministic sorting strictly by devices.id ASC
         $sorted = Device::sortStationsDeterministically(
             Device::with(['playstations', 'locations'])->get()
         );
         $this->assertSame($expectedOrder, $sorted->pluck('id')->all());
 
-        // 2. /transaction renders 1, 2, 3, 10, 12 in strict numeric order
+        // Verify that non-consecutive IDs map to 1-based sequential station numbers
+        $this->assertSame(
+            [1 => 1, 3 => 2, 5 => 3],
+            Device::resolveGlobalStationNumbers(collect([['id' => 1], ['id' => 3], ['id' => 5]]))
+        );
+
+        // 2. /transaction renders devices strictly in devices.id ASC order with sequential station numbers
         $txResp = $this->actingAs($this->kasir)->get(route('transaction.index'));
         $txResp->assertStatus(200);
         $this->assertSubstringsInStrictOrder(
@@ -134,10 +142,15 @@ class TransactionPosDashboardTest extends TestCase
             array_map(fn ($id) => 'id="station-card-' . $id . '"', $expectedOrder)
         );
         $bootstrap = $this->extractBootstrapJson($txResp->getContent());
+        $stationNumbers = array_column($bootstrap['devices'], 'station_number');
         $this->assertSame(
-            [1, 2, 3, 10, 12],
-            array_column($bootstrap['devices'], 'station_number')
+            [1, 2, 3, 4, 5, 6],
+            $stationNumbers
         );
+        // Explicitly verify NO DUPLICATE STATION NUMBERS exist
+        $this->assertCount(count($stationNumbers), array_unique($stationNumbers));
+        // Verify newly created device with previously conflicting name receives next sequence number (Station 6)
+        $this->assertSame(6, $dDuplicateName->resolveStationNumber());
 
         // 3. /device renders in exact deterministic order
         $devResp = $this->actingAs($this->kasir)->get(route('device.index'));
@@ -169,16 +182,16 @@ class TransactionPosDashboardTest extends TestCase
             'status' => 'user',
             'nama' => 'Pelanggan 1 Selesai',
             'device_id' => $d1->id,
-            'playstation_id' => $ps3->id,
+            'playstation_id' => $billiard->id,
             'user_id' => $this->kasir->id,
-            'harga' => $ps3->harga,
+            'harga' => $billiard->harga,
             'waktu_mulai' => now()->subMinutes(5)->format('H:i'),
             'waktu_Selesai' => now()->format('H:i'),
             'status_transaksi' => 'selesai',
             'payment_status' => 'paid',
             'tipe_transaksi' => 'postpaid',
             'billing_status' => Transaction::BILLING_COMPLETED,
-            'total' => 6000,
+            'total' => 25000,
         ]);
 
         // Order remains unchanged on both /transaction and /device
@@ -628,11 +641,11 @@ class TransactionPosDashboardTest extends TestCase
         $this->assertStringNotContainsString('Budi Paket', $tbody);
         $this->assertStringNotContainsString('Citra Other', $tbody);
 
-        // Station cards remain complete and in deterministic 1, 5, 12 order
+        // Station cards remain complete and in deterministic devices.id ASC order
         $this->assertSubstringsInStrictOrder($html, [
+            'id="station-card-' . $d12->id . '"',
             'id="station-card-' . $d1->id . '"',
             'id="station-card-' . $d5->id . '"',
-            'id="station-card-' . $d12->id . '"',
         ]);
     }
 

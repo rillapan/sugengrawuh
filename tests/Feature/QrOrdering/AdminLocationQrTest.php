@@ -69,6 +69,12 @@ class AdminLocationQrTest extends TestCase
         $response->assertSee('ROOM-VIP-01');
         // Offline SVG preview generated
         $response->assertSee('<svg', false);
+        // Action buttons layout
+        $response->assertSee('location-table-actions');
+        $response->assertSee('btn-info');
+        $response->assertSee('btn-warning');
+        $response->assertSee('Cetak');
+        $response->assertSee('Edit');
     }
 
     /** @test */

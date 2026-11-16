@@ -154,6 +154,11 @@ class DeviceController extends Controller
             Device::with($withRelations)->get()
         );
 
+        $stationNumbers = Device::resolveGlobalStationNumbers($sortedDevices);
+        foreach ($sortedDevices as $device) {
+            $device->setAttribute('station_number', $stationNumbers[$device->id] ?? null);
+        }
+
         $perPage = 25;
         $currentPage = LengthAwarePaginator::resolveCurrentPage();
         $devices = new LengthAwarePaginator(
@@ -295,6 +300,7 @@ class DeviceController extends Controller
             'title' => 'Data Perangkat',
             'active' => 'device',
             'devices' => $devices,
+            'stationNumbers' => $stationNumbers,
             'timers' => $timers,
             'customers' => $customers,
             'postpaidTransactions' => $postpaidTransactions,

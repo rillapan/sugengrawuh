@@ -1,7 +1,18 @@
 {{-- 1. Lost Time Category Picker Dialog --}}
 <dialog id="lostTimeCategoryDialog" class="pos-dialog" aria-labelledby="lostTimeCategoryDialogTitle">
     <div class="pos-dialog-header">
-        <h2 id="lostTimeCategoryDialogTitle" class="pos-dialog-title">Mulai Sesi Lost Time</h2>
+        <div class="pos-modal-header-cluster">
+            <div class="pos-modal-icon-badge is-green" aria-hidden="true">
+                <i class="fas fa-hourglass-half"></i>
+            </div>
+            <div class="pos-modal-title-wrap">
+                <div class="pos-modal-title-row">
+                    <h2 id="lostTimeCategoryDialogTitle" class="pos-dialog-title">Mode Lost Time</h2>
+                    <span class="pos-dialog-badge is-secondary">Billing Open-Ended</span>
+                </div>
+                <div id="lost-time-station-label" class="pos-dialog-subtitle">Stasiun</div>
+            </div>
+        </div>
         <button
             type="button"
             class="pos-dialog-close"
@@ -20,7 +31,22 @@
         <input type="hidden" name="playstation_id" id="lost-time-playstation-id" value="">
 
         <div class="pos-dialog-body">
-            <div id="lost-time-station-label" class="pos-context-pill">Stasiun</div>
+            <div class="pos-hw-id-card">
+                <div class="pos-hw-id-header">
+                    <span>Target Stasiun &amp; Hardware</span>
+                    <span class="pos-hw-relay-tag">
+                        <span class="pos-hw-dot" style="background-color: var(--pos-emerald);" aria-hidden="true"></span>
+                        Relay Auto-ON Aktif
+                    </span>
+                </div>
+                <div class="pos-hw-device-row">
+                    <div class="pos-hw-device-title">
+                        <i class="fas fa-tv text-primary" aria-hidden="true"></i>
+                        <span>Pilih Kategori Permainan</span>
+                    </div>
+                </div>
+                <div id="lost-time-category-options" class="pos-category-options"></div>
+            </div>
 
             <div class="pos-form-row">
                 <div class="pos-form-group">
@@ -33,23 +59,38 @@
                 </div>
             </div>
 
-            <div class="pos-form-group">
-                <span class="pos-form-label">Pilih Kategori Permainan</span>
-                <div id="lost-time-category-options" class="pos-category-options"></div>
+            <div class="pos-alert-formula">
+                <div class="pos-alert-formula-title">
+                    <i class="fas fa-calculator" aria-hidden="true"></i>
+                    <span>Hitungan Otomatis</span>
+                </div>
+                <p class="pos-alert-formula-text">
+                    Timer menghitung durasi berjalan. Total biaya dihitung otomatis saat stasiun dihentikan atau diselesaikan kasir.
+                </p>
+            </div>
+
+            <div class="pos-hw-relay-note">
+                <i class="fas fa-bolt" aria-hidden="true"></i>
+                <span>Relay otomatis menyalakan layar TV stasiun saat sesi dimulai.</span>
             </div>
 
             <div id="lost-time-dialog-error" class="pos-dialog-error" role="alert" hidden></div>
         </div>
 
         <div class="pos-dialog-footer">
-            <button
-                type="button"
-                class="pos-btn pos-btn-outline-secondary"
-                command="close"
-                commandfor="lostTimeCategoryDialog"
-                data-dialog-close
-            >Batal</button>
-            <button type="submit" class="pos-btn pos-btn-primary" id="btn-submit-lost-time">Mulai Lost Time</button>
+            <div class="pos-dialog-footer-actions">
+                <button
+                    type="button"
+                    class="pos-btn pos-btn-outline-secondary"
+                    command="close"
+                    commandfor="lostTimeCategoryDialog"
+                    data-dialog-close
+                >
+                    <i class="fas fa-arrow-left mr-1" aria-hidden="true"></i>
+                    <span>Batal</span>
+                </button>
+                <button type="submit" class="pos-btn pos-btn-tertiary" id="btn-submit-lost-time">Mulai Lost Time</button>
+            </div>
         </div>
     </form>
 </dialog>
@@ -57,7 +98,18 @@
 {{-- 2. Paket & Custom Paket Dialog --}}
 <dialog id="paketDialog" class="pos-dialog" aria-labelledby="paketDialogTitle">
     <div class="pos-dialog-header">
-        <h2 id="paketDialogTitle" class="pos-dialog-title">Mulai Sesi Paket</h2>
+        <div class="pos-modal-header-cluster">
+            <div class="pos-modal-icon-badge is-blue" aria-hidden="true">
+                <i class="fas fa-stopwatch"></i>
+            </div>
+            <div class="pos-modal-title-wrap">
+                <div class="pos-modal-title-row">
+                    <h2 id="paketDialogTitle" class="pos-dialog-title">Mulai Sesi Paket</h2>
+                    <span class="pos-dialog-badge is-blue">Auto-Sync</span>
+                </div>
+                <div id="paket-station-label" class="pos-dialog-subtitle">Stasiun</div>
+            </div>
+        </div>
         <button
             type="button"
             class="pos-dialog-close"
@@ -71,6 +123,7 @@
     </div>
     <form id="paket-form" method="post" action="{{ route('transaction.store') }}">
         @csrf
+        <input type="hidden" name="action" id="paket-action-input" value="bayar">
         <input type="hidden" name="device_id" id="paket-device-id" value="">
         <input type="hidden" name="tipe_transaksi" id="paket-tipe-transaksi" value="prepaid">
         <input type="hidden" name="harga" id="paket-harga-input" value="">
@@ -78,7 +131,21 @@
         <input type="hidden" name="duration_seconds" id="paket-duration-seconds-input" value="">
 
         <div class="pos-dialog-body">
-            <div id="paket-station-label" class="pos-context-pill">Stasiun</div>
+            <div class="pos-hw-id-card">
+                <div class="pos-hw-id-header">
+                    <span>Identifikasi Hardware &amp; Relay</span>
+                    <span class="pos-hw-relay-tag">
+                        <span class="pos-hw-dot" style="background-color: var(--pos-emerald);" aria-hidden="true"></span>
+                        Shelly Relay Auto-ON Aktif
+                    </span>
+                </div>
+                <div class="pos-hw-device-row">
+                    <div class="pos-hw-device-title">
+                        <i class="fas fa-tv text-primary" aria-hidden="true"></i>
+                        <span id="paket-device-title-display">Stasiun Terpilih</span>
+                    </div>
+                </div>
+            </div>
 
             <div class="pos-mode-switch" role="group" aria-label="Pilih Jenis Paket">
                 <button type="button" class="pos-mode-btn" id="btn-mode-prepaid" data-paket-mode="prepaid" aria-pressed="true" autofocus>Paket Reguler</button>
@@ -125,7 +192,14 @@
                     </div>
                 </div>
 
-                <div id="paket-prepaid-price-preview" class="pos-context-pill">Estimasi Tarif: Rp 0</div>
+                <div class="pos-summary-bar">
+                    <div class="pos-summary-meta">
+                        <div class="pos-summary-col">
+                            <span class="pos-summary-col-label">Ringkasan Sesi</span>
+                            <div id="paket-prepaid-price-preview" class="pos-summary-col-value">Estimasi Tarif: Rp 0</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {{-- Custom Paket Section --}}
@@ -141,14 +215,36 @@
         </div>
 
         <div class="pos-dialog-footer">
-            <button
-                type="button"
-                class="pos-btn pos-btn-outline-secondary"
-                command="close"
-                commandfor="paketDialog"
-                data-dialog-close
-            >Batal</button>
-            <button type="submit" class="pos-btn pos-btn-primary" id="btn-submit-paket">Buat &amp; Lanjut Bayar</button>
+            <div class="pos-dialog-footer-actions">
+                <button
+                    type="button"
+                    class="pos-btn pos-btn-outline-secondary"
+                    command="close"
+                    commandfor="paketDialog"
+                    data-dialog-close
+                >
+                    <i class="fas fa-arrow-left mr-1" aria-hidden="true"></i>
+                    <span>Batal</span>
+                </button>
+                <div class="pos-dialog-footer-right">
+                    <button
+                        type="submit"
+                        class="pos-btn pos-btn-tertiary"
+                        id="btn-submit-paket-bayar"
+                        data-paket-action="bayar"
+                    >Bayar Sekarang</button>
+                    <button
+                        type="submit"
+                        class="pos-btn pos-btn-primary"
+                        id="btn-submit-paket-simpan"
+                        data-paket-action="simpan"
+                    >Simpan Transaksi</button>
+                </div>
+            </div>
+            <div class="pos-dialog-footer-note">
+                <i class="fas fa-info-circle text-primary" aria-hidden="true"></i>
+                <span>Simpan Transaksi memulai timer stasiun; pembayaran dapat diselesaikan saat sesi selesai atau via menu Bayar.</span>
+            </div>
         </div>
     </form>
 </dialog>

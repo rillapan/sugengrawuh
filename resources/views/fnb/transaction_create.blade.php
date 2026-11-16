@@ -1,17 +1,172 @@
 @extends('layouts.app', ['title' => $title ?? 'Transaksi F&B', 'active' => 'fnb-transaction'])
 
 @section('content')
-<div class="container-fluid">
-    <div class="d-sm-flex align-items-center justify-content-between mb-4">
-        <div>
-            <h1 class="h3 mb-1 text-gray-800">
-                <i class="fas fa-cash-register text-primary mr-2"></i>Transaksi F&amp;B
-            </h1>
-            <p class="text-muted small mb-0">Input pesanan makanan &amp; minuman mandiri untuk pelanggan bermain maupun walk-in.</p>
+<style>
+/* Scoped styles for F&B POS Redesign (Google Stitch Aligned) */
+.fnb-pos-container {
+    color: #1e293b;
+}
+
+.fnb-pos-card {
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+}
+
+.fnb-pos-card .card-header {
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.fnb-segmented-toggle {
+    background: #f1f5f9;
+    padding: 4px;
+    border-radius: 8px;
+    display: flex;
+    border: 1px solid #e2e8f0;
+    gap: 4px;
+}
+
+.fnb-segmented-toggle .btn {
+    border: none !important;
+    border-radius: 6px !important;
+    color: #475569;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 8px 14px;
+    background: transparent;
+    box-shadow: none !important;
+    transition: all 0.15s ease-in-out;
+}
+
+.fnb-segmented-toggle .btn:hover {
+    color: #0f172a;
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.fnb-segmented-toggle .btn.active {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+}
+
+.fnb-segmented-toggle-secondary .btn.active {
+    background: #334155 !important;
+    color: #ffffff !important;
+    box-shadow: 0 1px 3px rgba(51, 65, 85, 0.25) !important;
+}
+
+/* Alert notices styling */
+.alert-pos {
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    border: 1px solid transparent;
+}
+
+.alert-pos.alert-paket {
+    border-left: 4px solid #2563eb;
+    background-color: #eff6ff;
+    border-color: #dbeafe #dbeafe #dbeafe #2563eb;
+    color: #1e3a8a;
+}
+
+.alert-pos.alert-lost-time {
+    border-left: 4px solid #6366f1;
+    background-color: #eef2ff;
+    border-color: #e0e7ff #e0e7ff #e0e7ff #6366f1;
+    color: #312e81;
+}
+
+.alert-pos.alert-non-playing {
+    border-left: 4px solid #f59e0b;
+    background-color: #fffbeb;
+    border-color: #fef3c7 #fef3c7 #fef3c7 #f59e0b;
+    color: #92400e;
+}
+
+.alert-pos.alert-helper {
+    border-left: 4px solid #0284c7;
+    background-color: #f0f9ff;
+    border-color: #e0f2fe #e0f2fe #e0f2fe #0284c7;
+    color: #0369a1;
+}
+
+/* Table styling */
+.fnb-table-container {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+#tableFnbItems thead th {
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    color: #475569;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    white-space: nowrap;
+}
+
+#tableFnbItems tbody td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-top: 1px solid #f1f5f9;
+}
+
+#tableFnbItems tbody tr:hover {
+    background-color: #f8fafc;
+}
+
+.grand-total-highlight-box {
+    background: #eff6ff;
+    border-color: #bfdbfe !important;
+}
+
+.pos-status-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #2563eb;
+    display: inline-block;
+}
+
+/* Tabular numbers for price clarity */
+.row-price, .row-subtotal, #displayGrandTotal, .item-qty {
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 767.98px) {
+    .fnb-pos-container {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+}
+</style>
+
+<div class="container-fluid fnb-pos-container px-3 px-md-4 py-2">
+    <!-- Screen Header Bar -->
+    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-4 pb-2 border-bottom bg-white p-3 rounded-lg shadow-sm">
+        <div class="mb-2 mb-md-0">
+            <div class="d-flex align-items-center">
+                <span class="pos-status-indicator mr-2"></span>
+                <h1 class="h4 mb-0 font-weight-bold text-gray-900">
+                    <i class="fas fa-cash-register text-primary mr-2"></i>Transaksi F&amp;B
+                </h1>
+                <span class="badge badge-light border text-muted ml-2 font-weight-bold text-uppercase px-2 py-1" style="font-size: 11px; letter-spacing: 0.5px;">Order Entry</span>
+            </div>
+            <p class="text-muted small mb-0 mt-1">Kelola pesanan makanan dan minuman pelanggan operasional kasir.</p>
         </div>
-        <a href="{{ route('fnb.queue.index') }}" class="btn btn-sm btn-outline-secondary shadow-sm">
-            <i class="fas fa-concierge-bell mr-1"></i> Ke Antrean Kitchen
-        </a>
+        <div class="d-flex align-items-center">
+            <a href="{{ route('fnb.queue.index') }}" class="btn btn-sm btn-outline-primary shadow-sm font-weight-bold d-flex align-items-center">
+                <i class="fas fa-concierge-bell mr-2"></i> Ke Antrean Kitchen
+            </a>
+        </div>
     </div>
 
     @if (session('success'))
@@ -50,19 +205,21 @@
         @csrf
 
         <div class="row">
-            <!-- Left Column: Customer & Session Configuration -->
-            <div class="col-lg-5">
-                <div class="card shadow mb-4">
-                    <div class="card-header py-3 bg-white">
-                        <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-user-tag mr-1"></i> 1. Jenis Pelanggan &amp; Sesi
-                        </h6>
+            <!-- Left Column: Customer & Session Configuration (approx 35% on Desktop) -->
+            <div class="col-xl-4 col-lg-5 mb-4">
+                <div class="card fnb-pos-card mb-4">
+                    <div class="card-header py-3 bg-white d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center">
+                            <span class="badge badge-primary px-2 py-1 mr-2 font-weight-bold" style="font-size: 13px;">1</span>
+                            <h6 class="m-0 font-weight-bold text-gray-900" style="font-size: 15px;">Informasi Pelanggan</h6>
+                        </div>
+                        <span class="text-muted small"><i class="fas fa-id-card text-primary"></i></span>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body p-3 p-md-4">
                         <!-- Customer Type Toggle -->
-                        <div class="form-group">
-                            <label class="font-weight-bold d-block text-gray-800">Tipe Pelanggan</label>
-                            <div class="btn-group btn-group-toggle w-100" data-toggle="buttons">
+                        <div class="form-group mb-3">
+                            <label class="font-weight-bold text-xs text-uppercase text-gray-600 tracking-wider mb-2 d-block">Tipe Pelanggan</label>
+                            <div class="btn-group btn-group-toggle w-100 fnb-segmented-toggle" data-toggle="buttons">
                                 <label class="btn btn-outline-primary active w-50 py-2 font-weight-bold" id="labelCustomerPlaying">
                                     <input type="radio" name="customer_type" id="customerTypePlaying" value="playing" checked autocomplete="off">
                                     <i class="fas fa-gamepad mr-1"></i> Aktif Bermain
@@ -76,21 +233,33 @@
 
                         <!-- Section: Aktif Bermain -->
                         <div id="sectionCustomerPlaying">
-                            <div class="form-group">
-                                <label for="transaction_id" class="font-weight-bold text-gray-800">
-                                    Sesi Bermain Aktif <span class="text-danger">*</span>
-                                </label>
+                            <div class="form-group mb-3">
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <label for="transaction_id" class="font-weight-bold text-gray-800 mb-0">
+                                        Sesi Bermain Aktif <span class="text-danger">*</span>
+                                    </label>
+                                    <span class="badge badge-light border text-success font-weight-500" style="font-size: 11px;">
+                                        <i class="fas fa-circle mr-1" style="font-size: 7px;"></i> Active Sync
+                                    </span>
+                                </div>
                                 <select class="form-control" name="transaction_id" id="transaction_id">
-                                    <option value="" data-type="" data-billing-name="" data-location-id="">-- Pilih Sesi Bermain Aktif --</option>
+                                    @php
+                                        $selectedTx = $activeTransactions->firstWhere('id_transaksi', old('transaction_id'));
+                                        $selectedIsPaket = $selectedTx && ($selectedTx->tipe_transaksi !== 'postpaid');
+                                        $selectedPaymentStatus = $selectedTx ? strtolower((string) ($selectedTx->payment_status ?? 'unpaid')) : 'unpaid';
+                                    @endphp
+                                    <option value="" data-type="" data-billing-name="" data-location-id="" data-payment-status="">-- Pilih Sesi Bermain Aktif --</option>
                                     @foreach($activeTransactions as $tx)
                                         @php
                                             $isPaket = ($tx->tipe_transaksi !== 'postpaid');
                                             $txTypeLabel = $isPaket ? 'Paket' : 'Lost Time';
                                             $matchingLoc = $locations->firstWhere('device_id', $tx->device_id);
+                                            $txPaymentStatus = strtolower((string) ($tx->payment_status ?? 'unpaid'));
                                         @endphp
                                         <option value="{{ $tx->id_transaksi }}"
                                             data-type="{{ $tx->tipe_transaksi }}"
                                             data-is-paket="{{ $isPaket ? '1' : '0' }}"
+                                            data-payment-status="{{ $txPaymentStatus }}"
                                             data-billing-name="{{ $tx->nama }}"
                                             data-location-id="{{ $matchingLoc ? $matchingLoc->id : '' }}"
                                             {{ old('transaction_id') == $tx->id_transaksi ? 'selected' : '' }}>
@@ -101,47 +270,65 @@
                                 <small class="form-text text-muted">Hanya menampilkan rental dengan billing yang sedang berjalan.</small>
                             </div>
 
-                            <div class="form-group">
-                                <label class="font-weight-bold text-gray-800">Penanggung Jawab Tagihan (Billing)</label>
-                                <input type="text" class="form-control bg-light" id="billing_name_display" readonly placeholder="Otomatis terisi dari nama sesi rental...">
+                            <div class="form-group mb-3">
+                                <label class="font-weight-bold text-gray-800 mb-1">Penanggung Jawab Tagihan (Billing)</label>
+                                <div class="input-group">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text bg-light border-right-0 text-muted"><i class="fas fa-shield-alt text-primary"></i></span>
+                                    </div>
+                                    <input type="text" class="form-control bg-light border-left-0" id="billing_name_display" readonly placeholder="Otomatis terisi dari nama sesi rental...">
+                                </div>
                             </div>
 
                             <!-- Dynamic Session Payment Notices -->
-                            <div id="noticePaket" class="alert alert-info d-none" role="alert">
-                                <i class="fas fa-info-circle mr-2"></i>
-                                <strong>Sesi Paket</strong> — Biaya main sudah lunas. Pesanan F&amp;B dapat dilayani langsung dan dibayarkan saat staf mengantar makanan atau setelah sesi bermain selesai.
+                            <div id="noticePaket" class="alert alert-pos alert-paket d-none mb-3" role="alert">
+                                <div class="d-flex align-items-start">
+                                    <i class="fas fa-info-circle mr-2 mt-1 fa-lg text-primary"></i>
+                                    <div>
+                                        <strong id="noticePaketTitle">{{ ($selectedIsPaket && $selectedPaymentStatus === 'paid') ? 'Sesi Paket — Sudah Lunas' : 'Sesi Paket — Belum Lunas' }}</strong> — <span id="noticePaketText">{{ ($selectedIsPaket && $selectedPaymentStatus === 'paid') ? 'Biaya bermain sudah lunas. Pesanan F&B menjadi tagihan tambahan yang terpisah dari biaya bermain dan dapat dibayar sesuai pilihan pembayaran yang tersedia.' : 'Biaya bermain belum dibayar. Pesanan F&B dapat digabungkan dengan tagihan bermain untuk pembayaran di akhir sesi, atau dibayar secara terpisah sesuai pilihan pembayaran yang tersedia.' }}</span>
+                                    </div>
+                                </div>
                             </div>
-                            <div id="noticeLostTime" class="alert alert-info d-none" role="alert">
-                                <i class="fas fa-info-circle mr-2"></i>
-                                <strong>Sesi Lost Time</strong> — F&amp;B dapat ditagihkan saat checkout permainan atau dibayar langsung sekarang.
+
+                            <div id="noticeLostTime" class="alert alert-pos alert-lost-time d-none mb-3" role="alert">
+                                <div class="d-flex align-items-start">
+                                    <i class="fas fa-clock mr-2 mt-1 fa-lg text-primary"></i>
+                                    <div>
+                                        <strong>Sesi Lost Time</strong> — F&amp;B dapat ditagihkan saat checkout permainan atau dibayar langsung sekarang.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
                         <!-- Section: Non-Bermain -->
                         <div id="sectionCustomerNonPlaying" class="d-none">
-                            <div class="form-group">
-                                <label class="font-weight-bold d-block text-gray-800">Tipe Layanan</label>
-                                <div class="btn-group btn-group-toggle w-100" data-toggle="buttons">
-                                    <label class="btn btn-outline-secondary active w-50">
+                            <div class="form-group mb-3">
+                                <label class="font-weight-bold text-xs text-uppercase text-gray-600 tracking-wider mb-2 d-block">Tipe Layanan</label>
+                                <div class="btn-group btn-group-toggle w-100 fnb-segmented-toggle fnb-segmented-toggle-secondary" data-toggle="buttons">
+                                    <label class="btn btn-outline-secondary active w-50 py-2 font-weight-bold">
                                         <input type="radio" name="dining_option" id="diningDineIn" value="dine_in" checked autocomplete="off">
                                         <i class="fas fa-utensils mr-1"></i> Dine-in
                                     </label>
-                                    <label class="btn btn-outline-secondary w-50">
+                                    <label class="btn btn-outline-secondary w-50 py-2 font-weight-bold">
                                         <input type="radio" name="dining_option" id="diningTakeaway" value="takeaway" autocomplete="off">
                                         <i class="fas fa-shopping-bag mr-1"></i> Takeaway
                                     </label>
                                 </div>
                             </div>
 
-                            <div id="noticeNonPlaying" class="alert alert-warning" role="alert">
-                                <i class="fas fa-exclamation-triangle mr-2"></i>
-                                <strong>Pelanggan Non-Bermain</strong> — Pesanan wajib dibayar di muka di kasir sebelum diproses dapur.
+                            <div id="noticeNonPlaying" class="alert alert-pos alert-non-playing mb-3" role="alert">
+                                <div class="d-flex align-items-start">
+                                    <i class="fas fa-exclamation-triangle mr-2 mt-1 fa-lg text-warning"></i>
+                                    <div>
+                                        <strong>Pelanggan Non-Bermain</strong> — Pesanan wajib dibayar di muka di kasir sebelum diproses dapur.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
                         <!-- Common Customer Fields -->
-                        <div class="form-group">
-                            <label for="customer_name" class="font-weight-bold text-gray-800" id="labelCustomerName">
+                        <div class="form-group mb-3">
+                            <label for="customer_name" class="font-weight-bold text-gray-800 mb-1" id="labelCustomerName">
                                 Nama Pemesan <span id="customerNameReqStar" class="text-danger d-none">*</span>
                             </label>
                             <input type="text" class="form-control" name="customer_name" id="customer_name"
@@ -150,8 +337,8 @@
                             <small class="form-text text-muted" id="customerNameHint">Boleh dikosongkan jika sesuai nama penanggung jawab billing.</small>
                         </div>
 
-                        <div class="form-group">
-                            <label for="location_id" class="font-weight-bold text-gray-800">Lokasi / Station / Meja</label>
+                        <div class="form-group mb-3">
+                            <label for="location_id" class="font-weight-bold text-gray-800 mb-1">Lokasi / Station / Meja</label>
                             <select class="form-control" name="location_id" id="location_id">
                                 <option value="">-- Pilih Lokasi (Opsional) --</option>
                                 @foreach($locations as $loc)
@@ -163,36 +350,38 @@
                         </div>
 
                         <div class="form-group mb-0">
-                            <label for="notes" class="font-weight-bold text-gray-800">Catatan Pesanan Keseluruhan</label>
+                            <label for="notes" class="font-weight-bold text-gray-800 mb-1">Catatan Pesanan Keseluruhan</label>
                             <textarea class="form-control" name="notes" id="notes" rows="2" placeholder="Catatan dapur (misal: diantar sekaligus)...">{{ old('notes') }}</textarea>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Right Column: F&B Items Selection & Actions -->
-            <div class="col-lg-7">
-                <div class="card shadow mb-4">
-                    <div class="card-header py-3 bg-white d-flex justify-content-between align-items-center">
-                        <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-utensils mr-1"></i> 2. Item Pesanan F&amp;B
-                        </h6>
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="btnAddRow">
-                            <i class="fas fa-plus mr-1"></i> Tambah Baris Menu
+            <!-- Right Column: F&B Items Selection & Actions (approx 65% on Desktop) -->
+            <div class="col-xl-8 col-lg-7 mb-4">
+                <div class="card fnb-pos-card mb-4">
+                    <div class="card-header py-3 bg-white d-flex flex-wrap justify-content-between align-items-center">
+                        <div class="d-flex align-items-center flex-wrap my-1 mr-2">
+                            <span class="badge badge-primary px-2 py-1 mr-2 font-weight-bold" style="font-size: 13px;">2</span>
+                            <h6 class="m-0 font-weight-bold text-gray-900 mr-2" style="font-size: 15px;">Item Pesanan F&amp;B</h6>
+                            <span id="orderItemCountBadge" class="badge badge-light border text-primary font-weight-bold" style="font-size: 11px;">1 Menu Dipilih</span>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary font-weight-bold shadow-sm my-1" id="btnAddRow">
+                            <i class="fas fa-plus-circle mr-1"></i> Tambah Baris Menu
                         </button>
                     </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-bordered align-middle" id="tableFnbItems">
+                    <div class="card-body p-3 p-md-4">
+                        <div class="table-responsive fnb-table-container mb-4">
+                            <table class="table table-hover align-middle mb-0" id="tableFnbItems">
                                 <thead class="thead-light">
                                     <tr>
-                                        <th style="min-width: 220px;">Menu F&amp;B</th>
-                                        <th style="width: 105px;">Harga</th>
-                                        <th style="width: 75px;">Stok</th>
-                                        <th style="width: 130px;">Jumlah</th>
-                                        <th>Catatan Item</th>
-                                        <th style="width: 110px;">Subtotal</th>
-                                        <th style="width: 45px;" class="text-center"><i class="fas fa-cog"></i></th>
+                                        <th style="min-width: 240px;">Menu F&amp;B</th>
+                                        <th class="text-right" style="width: 115px;">Harga</th>
+                                        <th class="text-center" style="width: 75px;">Stok</th>
+                                        <th class="text-center" style="width: 135px;">Jumlah</th>
+                                        <th style="min-width: 170px;">Catatan Item</th>
+                                        <th class="text-right" style="width: 120px;">Subtotal</th>
+                                        <th class="text-center" style="width: 45px;"><i class="fas fa-cog text-muted"></i></th>
                                     </tr>
                                 </thead>
                                 <tbody id="fnbItemsBody">
@@ -201,11 +390,50 @@
                             </table>
                         </div>
 
-                        <!-- Grand Total Ringkasan -->
-                        <div class="card bg-light border-0 p-3 mb-4">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="h6 mb-0 text-gray-700 font-weight-bold">Total Tagihan:</span>
-                                <span class="h4 mb-0 font-weight-bold text-primary" id="displayGrandTotal">Rp 0</span>
+                        <!-- Quick Inline Info / Hint Bar -->
+                        <div class="p-2 mb-4 bg-light rounded d-flex align-items-center justify-content-between border text-muted small">
+                            <div class="d-flex align-items-center">
+                                <i class="fas fa-info-circle mr-2 text-primary"></i>
+                                <span>Pilih menu melalui dropdown di setiap baris atau tambah baris menu baru untuk variasi lain.</span>
+                            </div>
+                            <span class="badge badge-white border text-muted font-weight-normal px-2 py-1 d-none d-sm-inline-block">POS Mode</span>
+                        </div>
+
+                        <!-- Grand Total Ringkasan & Terminal -->
+                        <div class="card-summary-terminal mb-4 p-3 rounded-lg border bg-light">
+                            <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-receipt text-primary mr-2"></i>
+                                    <h6 class="font-weight-bold text-gray-900 mb-0">Ringkasan Pesanan (Order Summary)</h6>
+                                </div>
+                                <span class="badge badge-light border text-muted px-2 py-1 font-weight-500">Order Entry</span>
+                            </div>
+                            <div class="row align-items-center">
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <div class="p-3 bg-white rounded border">
+                                        <div class="d-flex justify-content-between align-items-center mb-1 text-muted small">
+                                            <span>Jumlah Variasi Item:</span>
+                                            <strong class="text-gray-900" id="summaryItemCount">0 Jenis Menu</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center mb-1 text-muted small">
+                                            <span>Total Kuantitas Porsi:</span>
+                                            <strong class="text-gray-900" id="summaryTotalQty">0 Porsi</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center text-muted small pt-1 border-top">
+                                            <span>Subtotal F&amp;B:</span>
+                                            <strong class="text-primary font-weight-bold" id="summarySubtotal">Rp 0</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="p-3 rounded border text-center text-md-right grand-total-highlight-box bg-white">
+                                        <span class="text-xs text-uppercase font-weight-bold text-primary tracking-wider d-block mb-1">Total Tagihan F&amp;B</span>
+                                        <span class="h3 font-weight-bold text-gray-900 mb-0 d-block" id="displayGrandTotal">Rp 0</span>
+                                        <small class="text-muted mt-1 d-block" style="font-size: 11px;">
+                                            <i class="fas fa-info-circle text-info mr-1"></i> Belum termasuk tagihan durasi main
+                                        </small>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -213,7 +441,7 @@
                         <div class="mt-4 pt-3 border-top">
                             @if(!auth()->user()->isOwner())
                                 <!-- Guidance / Helper Text for Kasir / Kasir F&B / Admin -->
-                                <div id="actionHelperNotice" class="alert alert-info py-2 px-3 small mb-3 d-flex align-items-center">
+                                <div id="actionHelperNotice" class="alert alert-pos alert-helper py-2 px-3 small mb-3 d-flex align-items-center">
                                     <i class="fas fa-info-circle mr-2 fa-lg text-info"></i>
                                     <span id="actionHelperText">Sesi Paket dapat dilayani langsung. Pembayaran dapat dilakukan saat staf mengantar makanan atau setelah sesi bermain selesai.</span>
                                 </div>
@@ -222,11 +450,11 @@
                                     <!-- Secondary Actions -->
                                     <div class="mb-2 mb-sm-0" id="secondaryActionContainer">
                                         <!-- Shown for Non-Bermain: Simpan Pending -->
-                                        <button type="submit" name="action" value="save" id="btnSecondarySavePending" class="btn btn-outline-secondary shadow-sm">
+                                        <button type="submit" name="action" value="save" id="btnSecondarySavePending" class="btn btn-outline-secondary font-weight-bold px-3 py-2 shadow-sm">
                                             <i class="fas fa-clock mr-1"></i> <span id="labelSecondarySave">Simpan Pending (Bayar Nanti)</span>
                                         </button>
                                         <!-- Shown for Lost Time & Paket: Bayar Sekarang -->
-                                        <button type="button" id="btnSecondaryPayEarly" class="btn btn-outline-success btn-sm shadow-sm d-none" onclick="openPaymentSummaryModal()">
+                                        <button type="button" id="btnSecondaryPayEarly" class="btn btn-outline-success font-weight-bold px-3 py-2 shadow-sm d-none" onclick="openPaymentSummaryModal()">
                                             <i class="fas fa-hand-holding-usd mr-1"></i> <span id="labelSecondaryPay">Bayar Sekarang</span>
                                         </button>
                                     </div>
@@ -258,8 +486,8 @@
         <!-- Payment Summary Modal -->
         <div class="modal fade" id="modalPaymentSummary" tabindex="-1" role="dialog" aria-labelledby="modalPaymentSummaryLabel" aria-hidden="true">
             <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
-                <div class="modal-content">
-                    <div class="modal-header bg-primary text-white">
+                <div class="modal-content shadow-lg border-0" style="border-radius: 12px; overflow: hidden;">
+                    <div class="modal-header bg-primary text-white py-3">
                         <h5 class="modal-title font-weight-bold" id="modalPaymentSummaryLabel">
                             <i class="fas fa-receipt mr-1"></i> Ringkasan Pembayaran F&amp;B
                         </h5>
@@ -267,7 +495,7 @@
                             <span aria-hidden="true">&times;</span>
                         </button>
                     </div>
-                    <div class="modal-body">
+                    <div class="modal-body p-4">
                         <!-- Identitas Pelanggan & Sesi -->
                         <div class="card bg-light border-0 mb-3">
                             <div class="card-body p-3">
@@ -362,8 +590,8 @@
                             <i class="fas fa-exclamation-circle mr-1"></i> Nominal bayar kurang dari total tagihan!
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Batal</button>
+                    <div class="modal-footer bg-light">
+                        <button type="button" class="btn btn-secondary font-weight-bold" data-dismiss="modal">Batal</button>
                         <button type="submit" name="action" value="pay_now" id="btnSubmitPayNow" class="btn btn-success shadow-sm font-weight-bold">
                             <i class="fas fa-check-circle mr-1"></i> Konfirmasi Pembayaran &amp; Cetak Struk
                         </button>
@@ -374,8 +602,9 @@
         @endif
     </form>
 </div>
+@endsection
 
-<!-- Template for F&B Item Options (JSON encoded for safe local rendering) -->
+@section('scripts')
 <script>
     const fnbCatalog = @json($fnbs);
     const placeholderThumb = "{{ asset('img/fnb-placeholder.svg') }}";
@@ -447,7 +676,6 @@
                     }
                 } else if (isPlaying) {
                     // Case B: Aktif Bermain — Paket (or session not yet picked)
-                    // Status Aksi dapat langsung diterima tidak harus menunggu bayar
                     btnPrimarySave.classList.remove('d-none');
                     btnPrimaryPayNow.classList.add('d-none');
                     if (btnSecondaryPayEarly) {
@@ -460,7 +688,6 @@
                     }
                 } else {
                     // Case C: Non-Bermain
-                    // Tombol utama: "Bayar dan Proses"
                     btnPrimarySave.classList.add('d-none');
                     btnPrimaryPayNow.classList.remove('d-none');
                     if (labelPrimaryPay) labelPrimaryPay.innerText = 'Bayar dan Proses';
@@ -527,6 +754,22 @@
             }
 
             if (isPaket) {
+                const paymentStatus = (selected.getAttribute('data-payment-status') || '').toLowerCase();
+                const noticePaketTitle = document.getElementById('noticePaketTitle');
+                const noticePaketText = document.getElementById('noticePaketText');
+
+                if (paymentStatus === 'paid') {
+                    if (noticePaketTitle) noticePaketTitle.innerText = 'Sesi Paket — Sudah Lunas';
+                    if (noticePaketText) noticePaketText.innerText = 'Biaya bermain sudah lunas. Pesanan F&B menjadi tagihan tambahan yang terpisah dari biaya bermain dan dapat dibayar sesuai pilihan pembayaran yang tersedia.';
+                } else if (paymentStatus === 'unpaid') {
+                    if (noticePaketTitle) noticePaketTitle.innerText = 'Sesi Paket — Belum Lunas';
+                    if (noticePaketText) noticePaketText.innerText = 'Biaya bermain belum dibayar. Pesanan F&B dapat digabungkan dengan tagihan bermain untuk pembayaran di akhir sesi, atau dibayar secara terpisah sesuai pilihan pembayaran yang tersedia.';
+                } else {
+                    const statusLabel = paymentStatus ? paymentStatus.toUpperCase() : 'BELUM TERVERIFIKASI';
+                    if (noticePaketTitle) noticePaketTitle.innerText = 'Sesi Paket — ' + statusLabel;
+                    if (noticePaketText) noticePaketText.innerText = 'Status pembayaran sesi bermain: ' + statusLabel + '. Pesanan F&B dapat dibayar sesuai pilihan pembayaran yang tersedia.';
+                }
+
                 noticePaket.classList.remove('d-none');
                 noticeLostTime.classList.add('d-none');
             } else {
@@ -556,31 +799,36 @@
             });
 
             tr.innerHTML = `
-                <td>
+                <td class="align-middle">
                     <div class="d-flex align-items-center">
-                        <img src="${placeholderThumb}" class="row-thumb rounded border mr-2" style="width: 38px; height: 38px; object-fit: cover;" alt="thumb">
-                        <select name="items[${rowIndex}][fnb_id]" class="form-control form-control-sm fnb-select" required>
+                        <img src="${placeholderThumb}" class="row-thumb rounded border mr-2 flex-shrink-0" style="width: 38px; height: 38px; object-fit: cover;" alt="thumb">
+                        <select name="items[${rowIndex}][fnb_id]" class="form-control form-control-sm fnb-select" required style="min-width: 180px;">
                             ${optionsHtml}
                         </select>
                     </div>
                 </td>
-                <td class="align-middle text-nowrap"><span class="row-price font-weight-bold">Rp 0</span></td>
+                <td class="align-middle text-right text-nowrap"><span class="row-price font-weight-bold text-gray-800">Rp 0</span></td>
                 <td class="align-middle text-center"><span class="badge badge-secondary row-stock">-</span></td>
                 <td class="align-middle">
-                    <div class="input-group input-group-sm" style="width: 110px;">
+                    <div class="input-group input-group-sm mx-auto" style="width: 115px;">
                         <div class="input-group-prepend">
-                            <button type="button" class="btn btn-outline-secondary btn-step-down"><i class="fas fa-minus"></i></button>
+                            <button type="button" class="btn btn-outline-secondary btn-step-down px-2"><i class="fas fa-minus"></i></button>
                         </div>
-                        <input type="number" name="items[${rowIndex}][qty]" class="form-control text-center item-qty" value="${initialQty}" min="1" max="999" required>
+                        <input type="number" name="items[${rowIndex}][qty]" class="form-control text-center item-qty font-weight-bold px-1" value="${initialQty}" min="1" max="999" required>
                         <div class="input-group-append">
-                            <button type="button" class="btn btn-outline-secondary btn-step-up"><i class="fas fa-plus"></i></button>
+                            <button type="button" class="btn btn-outline-secondary btn-step-up px-2"><i class="fas fa-plus"></i></button>
                         </div>
                     </div>
                 </td>
                 <td class="align-middle">
-                    <input type="text" name="items[${rowIndex}][notes]" class="form-control form-control-sm item-notes" placeholder="Catatan (e.g. Pedas)">
+                    <div class="input-group input-group-sm">
+                        <div class="input-group-prepend">
+                            <span class="input-group-text bg-white text-muted px-2"><i class="fas fa-edit" style="font-size: 11px;"></i></span>
+                        </div>
+                        <input type="text" name="items[${rowIndex}][notes]" class="form-control form-control-sm item-notes" placeholder="Catatan (e.g. Pedas)">
+                    </div>
                 </td>
-                <td class="align-middle text-nowrap"><span class="row-subtotal font-weight-bold text-gray-900">Rp 0</span></td>
+                <td class="align-middle text-right text-nowrap"><span class="row-subtotal font-weight-bold text-gray-900">Rp 0</span></td>
                 <td class="align-middle text-center">
                     <button type="button" class="btn btn-sm btn-outline-danger btn-remove-row" title="Hapus"><i class="fas fa-trash-alt"></i></button>
                 </td>
@@ -600,8 +848,13 @@
             });
 
             qtyInput.addEventListener('input', function () {
-                if (parseInt(this.value) < 1 || isNaN(parseInt(this.value))) {
-                    this.value = 1;
+                let val = parseInt(qtyInput.value);
+                const max = parseInt(qtyInput.getAttribute('max'));
+                if (val < 1 || isNaN(val)) {
+                    qtyInput.value = 1;
+                } else if (max && val > max) {
+                    qtyInput.value = max;
+                    alert('Jumlah melebihi stok yang tersedia (' + max + ')');
                 }
                 updateRow(tr);
                 calculateGrandTotal();
@@ -618,6 +871,11 @@
 
             btnStepUp.addEventListener('click', function () {
                 let current = parseInt(qtyInput.value) || 1;
+                const max = parseInt(qtyInput.getAttribute('max'));
+                if (max && current >= max) {
+                    alert('Jumlah sudah mencapai batas stok (' + max + ')');
+                    return;
+                }
                 qtyInput.value = current + 1;
                 updateRow(tr);
                 calculateGrandTotal();
@@ -686,18 +944,34 @@
 
         window.calculateGrandTotal = function () {
             let total = 0;
+            let distinctItemCount = 0;
+            let totalPortionQty = 0;
+
             document.querySelectorAll('.fnb-row').forEach(function (tr) {
                 const selectEl = tr.querySelector('.fnb-select');
                 const qtyInput = tr.querySelector('.item-qty');
                 if (selectEl && selectEl.value) {
+                    distinctItemCount++;
                     const selected = selectEl.options[selectEl.selectedIndex];
                     const price = parseFloat(selected.getAttribute('data-price')) || 0;
                     const qty = parseInt(qtyInput.value) || 0;
+                    totalPortionQty += qty;
                     total += (price * qty);
                 }
             });
 
             displayGrandTotal.innerText = formatRupiah(total);
+
+            const summaryItemCount = document.getElementById('summaryItemCount');
+            const summaryTotalQty = document.getElementById('summaryTotalQty');
+            const summarySubtotal = document.getElementById('summarySubtotal');
+            const orderItemCountBadge = document.getElementById('orderItemCountBadge');
+
+            if (summaryItemCount) summaryItemCount.innerText = distinctItemCount + ' Jenis Menu';
+            if (summaryTotalQty) summaryTotalQty.innerText = totalPortionQty + ' Porsi';
+            if (summarySubtotal) summarySubtotal.innerText = formatRupiah(total);
+            if (orderItemCountBadge) orderItemCountBadge.innerText = (distinctItemCount > 0 ? distinctItemCount : 1) + ' Menu Dipilih';
+
             return total;
         };
 

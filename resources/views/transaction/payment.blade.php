@@ -158,11 +158,21 @@
                             </tr>
                         @endif
                         @php
-                            $unpaidFnbOrdersTotal = $transaction->getUnpaidFnbOrderTotalAttribute();
-                            $paidFnbOrdersTotal = $transaction->getPaidFnbOrderTotalAttribute();
-                            $legacyFnbTotal = $transaction->getFnbTotalAttribute();
-                            $totalFnbToPay = $legacyFnbTotal + $unpaidFnbOrdersTotal;
-                            $psCostDisplay = max(0, $transaction->total - $totalFnbToPay);
+                            $isPaketPayment = in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true);
+                            $unpaidFnbOrdersTotal = $unpaidFnbOrdersTotal ?? $transaction->unpaid_fnb_order_total;
+                            $paidFnbOrdersTotal = $paidFnbOrdersTotal ?? $transaction->paid_fnb_order_total;
+                            $legacyFnbTotal = $legacyFnbTotal ?? $transaction->uninvoiced_legacy_fnb_total;
+                            $totalFnbToPay = $totalFnbToPay ?? ($legacyFnbTotal + $unpaidFnbOrdersTotal);
+
+                            if (!isset($payableSubtotal) || !isset($psCostDisplay)) {
+                                if ($isPaketPayment && $transaction->payment_status === 'unpaid') {
+                                    $psCostDisplay = $transaction->resolvePaketRentalTotal();
+                                    $payableSubtotal = $psCostDisplay + $totalFnbToPay;
+                                } else {
+                                    $payableSubtotal = (float) $transaction->total;
+                                    $psCostDisplay = max(0, $payableSubtotal - $totalFnbToPay);
+                                }
+                            }
                         @endphp
                         @if($transaction->tipe_transaksi !== 'custom_package')
                         <tr>
@@ -170,7 +180,7 @@
                             <td>Rp {{ number_format($psCostDisplay, 0, ',', '.') }}</td>
                         </tr>
                         @endif
-                        @if($transaction->tipe_transaksi !== 'custom_package' || $transaction->transactionFnbs->isNotEmpty() || $unpaidFnbOrdersTotal > 0)
+                        @if($transaction->tipe_transaksi !== 'custom_package' || $totalFnbToPay > 0 || $transaction->transactionFnbs->isNotEmpty() || $unpaidFnbOrdersTotal > 0)
                         <tr>
                             <td><strong>Biaya FnB:</strong></td>
                             <td>Rp {{ number_format($totalFnbToPay, 0, ',', '.') }}</td>
@@ -188,7 +198,7 @@
                         </tr>
                         <tr class="bg-success">
                             <td class="text-white font-weight-bold"><h5>Total Biaya:</h5></td>
-                            <td class="text-white font-weight-bold"><h5>Rp <span id="total-display">{{ number_format($transaction->total, 0, ',', '.') }}</span></h5></td>
+                            <td class="text-white font-weight-bold"><h5>Rp <span id="total-display">{{ number_format($payableSubtotal, 0, ',', '.') }}</span></h5></td>
                         </tr>
 
                     </table>
@@ -263,7 +273,11 @@
                                         <td>Rp {{ number_format($orderItem->unit_price_jual, 0, ',', '.') }}</td>
                                         <td>Rp {{ number_format($orderItem->subtotal, 0, ',', '.') }}</td>
                                         <td>
-                                            @if($orderItem->payment_status === 'paid' || $order->payment_status === 'paid')
+                                            @if($order->status === \App\Models\FnbOrder::STATUS_CANCELLED)
+                                                <span class="badge badge-secondary">Dibatalkan</span>
+                                            @elseif($order->status === \App\Models\FnbOrder::STATUS_EXPIRED)
+                                                <span class="badge badge-secondary">Kedaluwarsa</span>
+                                            @elseif($orderItem->payment_status === 'paid' || $order->payment_status === 'paid')
                                                 <span class="badge badge-success">Sudah Dibayar</span>
                                             @else
                                                 <span class="badge badge-warning">Belum Lunas</span>
@@ -350,7 +364,7 @@
 
                 <div class="form-group mb-3">
                     <label for="amount_paid">Jumlah Uang Dibayar</label>
-                    <input type="number" class="form-control @error('amount_paid') is-invalid @enderror" id="amount_paid" name="amount_paid" required min="{{ $transaction->total }}" oninput="calculateChange()">
+                    <input type="number" class="form-control @error('amount_paid') is-invalid @enderror" id="amount_paid" name="amount_paid" required min="{{ $payableSubtotal }}" oninput="calculateChange()">
                     @error('amount_paid')
                         <div class="invalid-feedback">{{ $message }}</div>
                     @enderror
@@ -382,7 +396,7 @@
 </div>
 
 <script>
-    const originalTotal = {{ $transaction->total }};
+    const originalTotal = {{ $payableSubtotal }};
     let finalTotal = originalTotal;
     
     function updateTotalAfterDiscount() {

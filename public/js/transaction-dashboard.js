@@ -712,6 +712,7 @@
             var paketDialog = document.getElementById('paketDialog');
 
             var deviceIdInput = document.getElementById('paket-device-id');
+            var actionInput = document.getElementById('paket-action-input');
             var tipeInput = document.getElementById('paket-tipe-transaksi');
             var hargaInput = document.getElementById('paket-harga-input');
             var totalInput = document.getElementById('paket-total-input');
@@ -738,7 +739,9 @@
             var customPkgSelect = document.getElementById('paket-custom-package-id');
             var customPkgDetail = document.getElementById('paket-custom-package-detail');
             var errorEl = document.getElementById('paket-dialog-error');
-            var submitBtn = document.getElementById('btn-submit-paket');
+            var simpanBtn = document.getElementById('btn-submit-paket-simpan');
+            var bayarBtn = document.getElementById('btn-submit-paket-bayar');
+            var actionButtons = [simpanBtn, bayarBtn].filter(Boolean);
 
             var currentDevice = null;
             var currentCompatiblePackages = [];
@@ -749,6 +752,50 @@
             var customDebounceTimer = null;
             var isCustomCalcPending = false;
             var customCalcSeq = 0;
+            var isSubmittingPaket = false;
+            var paketSubmitSeq = 0;
+            var lastTriggeredAction = 'bayar';
+
+            function setPaketSubmittingState(isSubmitting, triggeredAction) {
+                isSubmittingPaket = Boolean(isSubmitting);
+                if (isSubmitting) {
+                    var triggeredBtn = triggeredAction === 'simpan' ? simpanBtn : bayarBtn;
+                    actionButtons.forEach(function (btn) {
+                        if (btn === triggeredBtn) {
+                            setButtonLoading(btn, true, 'Memproses...', false);
+                        } else {
+                            if (btn.dataset.origLabel === undefined) {
+                                btn.dataset.origLabel = btn.textContent;
+                            }
+                            btn.disabled = true;
+                        }
+                    });
+                } else {
+                    actionButtons.forEach(function (btn) {
+                        setButtonLoading(btn, false);
+                    });
+                }
+            }
+
+            function resolvePaketAction(submitter) {
+                if (submitter && submitter.dataset &&
+                    (submitter.dataset.paketAction === 'simpan' || submitter.dataset.paketAction === 'bayar')) {
+                    return submitter.dataset.paketAction;
+                }
+                if (lastTriggeredAction === 'simpan' || lastTriggeredAction === 'bayar') {
+                    return lastTriggeredAction;
+                }
+                return 'bayar';
+            }
+
+            function resetPaketSubmissionState() {
+                paketSubmitSeq++;
+                lastTriggeredAction = 'bayar';
+                if (actionInput) {
+                    actionInput.value = 'bayar';
+                }
+                setPaketSubmittingState(false);
+            }
 
             function getCustomTotalSeconds() {
                 var h = Math.max(0, parseInt(customHoursInput ? customHoursInput.value : '0', 10) || 0);
@@ -1182,8 +1229,53 @@
                 }
 
                 setPaketMode('prepaid');
+                resetPaketSubmissionState();
                 openDialog('paketDialog');
                 loadHourlyPrices(device.id, psSelect ? psSelect.value : '');
+            });
+
+            if (paketDialog) {
+                paketDialog.addEventListener('close', function () {
+                    clearCustomCalcTimer();
+                    if (customAbortController) {
+                        customAbortController.abort();
+                    }
+                    customCalcSeq++;
+                    isCustomCalcPending = false;
+                    resetPaketSubmissionState();
+                });
+            }
+
+            actionButtons.forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    if (isSubmittingPaket) {
+                        return;
+                    }
+                    var btnAction = btn.dataset && btn.dataset.paketAction === 'simpan' ? 'simpan' : 'bayar';
+                    lastTriggeredAction = btnAction;
+                    if (actionInput) {
+                        actionInput.value = btnAction;
+                    }
+                });
+            });
+
+            // Pressing Enter inside an input defaults cleanly to 'bayar' rather than the first DOM submit button
+            form.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
+                    e.preventDefault();
+                    if (isSubmittingPaket || !bayarBtn || bayarBtn.disabled) {
+                        return;
+                    }
+                    lastTriggeredAction = 'bayar';
+                    if (actionInput) {
+                        actionInput.value = 'bayar';
+                    }
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit(bayarBtn);
+                    } else {
+                        bayarBtn.click();
+                    }
+                }
             });
 
             if (btnModePrepaid) {
@@ -1220,8 +1312,14 @@
                 customPkgSelect.addEventListener('change', renderCustomPackageDetail);
             }
 
-            function submitPaketTransaction() {
+            function submitPaketTransaction(resolvedAction) {
+                var action = resolvedAction === 'simpan' ? 'simpan' : 'bayar';
+                if (actionInput) {
+                    actionInput.value = action;
+                }
                 var fd = new FormData(form);
+                fd.set('action', action);
+                var seq = ++paketSubmitSeq;
 
                 apiFetchJson(bootstrap.routes.storeTransaction, {
                     method: 'POST',
@@ -1232,19 +1330,34 @@
                             window.location.href = res.data.redirect_url || (window.location.pathname + '?tab=stations');
                             return;
                         }
-                        showDialogError(errorEl, extractErrorMessage(res.data, 'Gagal memproses transaksi paket.'));
-                        setButtonLoading(submitBtn, false);
+                        if (seq === paketSubmitSeq) {
+                            showDialogError(errorEl, extractErrorMessage(res.data, 'Gagal memproses transaksi paket.'));
+                            setPaketSubmittingState(false);
+                        }
                     })
                     .catch(function () {
-                        showDialogError(errorEl, 'Koneksi gagal saat mengirim transaksi.');
-                        setButtonLoading(submitBtn, false);
+                        if (seq === paketSubmitSeq) {
+                            showDialogError(errorEl, 'Koneksi gagal saat mengirim transaksi.');
+                            setPaketSubmittingState(false);
+                        }
                     });
             }
 
             form.addEventListener('submit', function (e) {
                 e.preventDefault();
-                if (!submitBtn || submitBtn.disabled) {
+                if (isSubmittingPaket ||
+                    actionButtons.length === 0 ||
+                    actionButtons.some(function (btn) { return btn.disabled; })) {
                     return;
+                }
+
+                var resolvedAction = resolvePaketAction(e.submitter);
+                if (actionInput) {
+                    actionInput.value = resolvedAction;
+                }
+                if (errorEl) {
+                    errorEl.textContent = '';
+                    errorEl.hidden = true;
                 }
 
                 var mode = tipeInput.value;
@@ -1261,19 +1374,22 @@
 
                         if (needsCalc) {
                             clearCustomCalcTimer();
-                            setButtonLoading(submitBtn, true, 'Memproses...', false);
+                            setPaketSubmittingState(true, resolvedAction);
+                            var calcSubmitSeq = paketSubmitSeq;
                             runCustomDurationCalc().then(function (ok) {
-                                if (!paketDialog || !paketDialog.open) {
-                                    setButtonLoading(submitBtn, false);
+                                if (calcSubmitSeq !== paketSubmitSeq || !paketDialog || !paketDialog.open || !isSubmittingPaket) {
+                                    if (calcSubmitSeq === paketSubmitSeq) {
+                                        setPaketSubmittingState(false);
+                                    }
                                     return;
                                 }
                                 var resolvedSec = Number(durationSecondsInput.value || 0);
                                 if (!ok || resolvedSec <= 0) {
                                     showDialogError(errorEl, 'Gagal menghitung tarif durasi custom. Silakan coba lagi.');
-                                    setButtonLoading(submitBtn, false);
+                                    setPaketSubmittingState(false);
                                     return;
                                 }
-                                submitPaketTransaction();
+                                submitPaketTransaction(resolvedAction);
                             });
                             return;
                         }
@@ -1291,8 +1407,8 @@
                     }
                 }
 
-                setButtonLoading(submitBtn, true, 'Memproses...', false);
-                submitPaketTransaction();
+                setPaketSubmittingState(true, resolvedAction);
+                submitPaketTransaction(resolvedAction);
             });
         }
 

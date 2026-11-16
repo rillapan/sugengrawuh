@@ -164,14 +164,16 @@
                    {{ $transaction->jam_main }} Jam
                 @endif
             </td>
+            @php
+                $checkoutInvoice = ($transaction->relationLoaded('invoices') && $transaction->invoices->isNotEmpty())
+                    ? ($transaction->invoices->where('invoice_type', '!=', \App\Models\Invoice::TYPE_FNB_STANDALONE)->last() ?? $transaction->invoices->last())
+                    : null;
+            @endphp
             <td class="text-right">
                 @if($transaction->tipe_transaksi === 'custom_package')
                     Harga Paket
                 @else
                     @php
-                        $checkoutInvoice = ($transaction->relationLoaded('invoices') && $transaction->invoices->isNotEmpty())
-                            ? ($transaction->invoices->where('invoice_type', '!=', \App\Models\Invoice::TYPE_FNB_STANDALONE)->last() ?? $transaction->invoices->last())
-                            : null;
                         $rentalItem = ($checkoutInvoice && $checkoutInvoice->relationLoaded('items'))
                             ? $checkoutInvoice->items->where('item_type', \App\Models\InvoiceItem::ITEM_TYPE_GAME_RENTAL)->first()
                             : null;

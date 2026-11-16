@@ -26,20 +26,51 @@
     }
 
     $stationLabel = $stationNum ? ('Station ' . $stationNum) : 'Station';
+
+    $stationCategory = method_exists($device, 'getStationCategory') ? $device->getStationCategory() : null;
+    if (!$stationCategory && $psList->isNotEmpty()) {
+        $detected = $psList->map(function ($ps) {
+            if (method_exists($ps, 'getCategory') && $ps->getCategory()) {
+                return $ps->getCategory();
+            }
+            $name = strtoupper(trim((string) $ps->nama));
+            if (str_contains($name, 'BILLIARD') || str_contains($name, 'BILIAR') || str_starts_with($name, 'MEJA')) {
+                return 'BILLIARD';
+            }
+            if (str_contains($name, 'PLAYSTATION') || preg_match('/\bPS[0-9]?\b/i', $name)) {
+                return 'PLAYSTATION';
+            }
+            return null;
+        })->filter()->unique()->values();
+
+        if ($detected->count() === 1) {
+            $stationCategory = $detected->first();
+        }
+    }
+
+    $bgClass = match ($stationCategory) {
+        'PLAYSTATION' => 'has-bg-ps',
+        'BILLIARD' => 'has-bg-billiard',
+        default => '',
+    };
 @endphp
 
 <article
-    class="pos-station-card {{ $isUsed ? 'is-used' : 'is-available' }}"
+    class="pos-station-card {{ $isUsed ? 'is-used' : 'is-available' }} {{ $bgClass }}"
     id="station-card-{{ $device->id }}"
     data-device-id="{{ $device->id }}"
     data-station-number="{{ $stationNum ?? '' }}"
+    @if ($stationCategory) data-station-category="{{ strtolower($stationCategory) }}" @endif
 >
     @if (!$isUsed)
         {{-- State A: Available --}}
         <header class="pos-card-head">
             <div class="pos-card-top-row">
                 <span class="pos-station-label">{{ $stationLabel }}</span>
-                <span class="pos-status-pill is-available">TERSEDIA</span>
+                <span class="pos-status-pill is-available">
+                    <i class="fas fa-check-circle mr-1" aria-hidden="true"></i>
+                    <span>TERSEDIA</span>
+                </span>
             </div>
             <h2 class="pos-station-name">{{ $device->nama }}</h2>
             @if ($psList->isNotEmpty())
@@ -53,13 +84,16 @@
 
         <div class="pos-card-body">
             <div class="pos-tariff-line">
-                @if ($psList->count() === 1)
-                    Rp {{ number_format($psList->first()->harga ?? 0, 0, ',', '.') }}/jam
-                @elseif ($psList->count() > 1)
-                    {{ $psList->map(fn ($ps) => $ps->nama . ': Rp ' . number_format($ps->harga ?? 0, 0, ',', '.') . '/jam')->implode(' | ') }}
-                @else
-                    Tarif belum diatur
-                @endif
+                <div class="pos-tariff-caption">Tarif Reguler:</div>
+                <div class="pos-tariff-amount">
+                    @if ($psList->count() === 1)
+                        Rp {{ number_format($psList->first()->harga ?? 0, 0, ',', '.') }}/jam
+                    @elseif ($psList->count() > 1)
+                        {{ $psList->map(fn ($ps) => $ps->nama . ': Rp ' . number_format($ps->harga ?? 0, 0, ',', '.') . '/jam')->implode(' | ') }}
+                    @else
+                        Tarif belum diatur
+                    @endif
+                </div>
             </div>
 
             @if ($mappings->isNotEmpty())
@@ -74,20 +108,29 @@
             @if ($canOperate)
                 <button
                     type="button"
-                    class="pos-btn pos-btn-primary js-start-lost-time"
+                    class="pos-btn pos-btn-lost-time js-start-lost-time"
                     data-device-id="{{ $device->id }}"
-                >Lost Time</button>
+                >
+                    <i class="fas fa-stopwatch mr-1" aria-hidden="true"></i>
+                    <span>Lost Time</span>
+                </button>
                 <button
                     type="button"
-                    class="pos-btn pos-btn-outline-primary js-open-paket"
+                    class="pos-btn pos-btn-paket-card js-open-paket"
                     data-device-id="{{ $device->id }}"
-                >Paket</button>
+                >
+                    <i class="fas fa-calendar-alt mr-1" aria-hidden="true"></i>
+                    <span>Paket</span>
+                </button>
                 <button
                     type="button"
                     class="pos-btn pos-btn-accent js-open-cafe"
                     data-device-id="{{ $device->id }}"
                     data-mode="standalone"
-                >Cafe</button>
+                >
+                    <i class="fas fa-coffee mr-1" aria-hidden="true"></i>
+                    <span>Cafe</span>
+                </button>
             @else
                 <p class="pos-readonly-note">Mode Pantau (Read-Only)</p>
             @endif
@@ -120,11 +163,15 @@
                 $fnbPaidTotal = $paidOrderFnbTotal + ($activeTx->payment_status === 'paid' ? $extraLegacyFnbTotal : 0.0);
                 $unpaidFnbTotal = $unpaidOrderFnbTotal + ($activeTx->payment_status === 'paid' ? 0.0 : $extraLegacyFnbTotal);
                 $totalFnbDisplay = $fnbPaidTotal + $unpaidFnbTotal;
-                $rentalSubtotal = $activeTx->tipe_transaksi === 'custom_package'
-                    ? (float) ($activeTx->harga ?: $activeTx->total)
-                    : ($activeTx->tipe_transaksi === 'prepaid'
-                        ? max(0.0, (float) $activeTx->total - $extraLegacyFnbTotal)
-                        : 0.0);
+                if (in_array($activeTx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+                    $rentalSubtotal = method_exists($activeTx, 'resolvePaketRentalTotal')
+                        ? (float) $activeTx->resolvePaketRentalTotal()
+                        : ($activeTx->tipe_transaksi === 'custom_package'
+                            ? (float) ($activeTx->harga ?: $activeTx->total)
+                            : max(0.0, (float) $activeTx->total - $extraLegacyFnbTotal));
+                } else {
+                    $rentalSubtotal = 0.0;
+                }
             }
 
             $isPaid = ($activeTx->payment_status === 'paid');
@@ -152,7 +199,10 @@
         <header class="pos-card-head">
             <div class="pos-card-top-row">
                 <span class="pos-station-label">{{ $stationLabel }}</span>
-                <span class="pos-status-pill is-used">BERMAIN</span>
+                <span class="pos-status-pill is-used">
+                    <span class="pos-hw-dot" style="background-color: var(--pos-red);" aria-hidden="true"></span>
+                    <span>BERMAIN</span>
+                </span>
             </div>
             <h2 class="pos-station-name">{{ $device->nama }}</h2>
             <div class="pos-chip-row">
@@ -163,6 +213,7 @@
 
         <div class="pos-card-body">
             <div class="pos-timer-box">
+                <div class="pos-timer-label">Durasi Berjalan</div>
                 <div
                     id="pos-timer-{{ $device->id }}"
                     class="pos-timer-value js-pos-timer"
@@ -188,36 +239,49 @@
                     </div>
                     @if ($totalFnbDisplay > 0)
                         <div class="pos-cost-row">
-                            <span>FnB:</span>
+                            <span>Total Cafe (FnB):</span>
                             <strong>Rp {{ number_format($totalFnbDisplay, 0, ',', '.') }}</strong>
                         </div>
                     @endif
                 @else
                     <div class="pos-cost-row">
-                        <span>Sewa:</span>
+                        <span>Sewa / Paket:</span>
                         <strong>Rp {{ number_format($rentalSubtotal, 0, ',', '.') }}</strong>
                     </div>
                     @if ($totalFnbDisplay > 0)
                         <div class="pos-cost-row">
-                            <span>FnB:</span>
+                            <span>Total Cafe (FnB):</span>
                             <strong>Rp {{ number_format($totalFnbDisplay, 0, ',', '.') }}</strong>
                         </div>
                     @endif
                     <div class="pos-cost-row pos-cost-total">
-                        <span>Total:</span>
-                        <strong>Rp {{ number_format($rentalSubtotal + $totalFnbDisplay, 0, ',', '.') }}</strong>
+                        <span>Total Tagihan:</span>
+                        <div class="d-flex align-items-center" style="gap: 0.35rem;">
+                            <strong style="color: var(--pos-primary); font-size: 0.9375rem;">Rp {{ number_format($rentalSubtotal + $totalFnbDisplay, 0, ',', '.') }}</strong>
+                            <span class="pos-pay-badge {{ $isPaid ? 'is-paid' : 'is-unpaid' }}">
+                                {{ $isPaid ? 'LUNAS' : 'BELUM BAYAR' }}
+                            </span>
+                        </div>
                     </div>
                 @endif
             </div>
 
-            <div class="pos-meta-row">
-                <span class="pos-pay-badge {{ $isPaid ? 'is-paid' : 'is-unpaid' }}">
-                    {{ $isPaid ? 'LUNAS' : 'BELUM BAYAR' }}
-                </span>
+            @if ($activeTx->tipe_transaksi === 'postpaid')
+                <div class="pos-meta-row">
+                    <span class="pos-pay-badge {{ $isPaid ? 'is-paid' : 'is-unpaid' }}">
+                        {{ $isPaid ? 'LUNAS' : 'BELUM BAYAR' }}
+                    </span>
+                    @if ($activeTx->nama && $activeTx->nama !== 'Pelanggan')
+                        <span class="pos-customer-name">{{ $activeTx->nama }}</span>
+                    @endif
+                </div>
+            @else
                 @if ($activeTx->nama && $activeTx->nama !== 'Pelanggan')
-                    <span class="pos-customer-name">{{ $activeTx->nama }}</span>
+                    <div class="pos-meta-row">
+                        <span class="pos-customer-name">{{ $activeTx->nama }}</span>
+                    </div>
                 @endif
-            </div>
+            @endif
 
             @if ($mappings->isNotEmpty())
                 <div class="pos-hw-status {{ $hwClass }}">
@@ -237,10 +301,19 @@
 
             @if ($canOperate)
                 @if ($activeTx->payment_status === 'unpaid')
-                    <a href="{{ route('transaction.showPayment', $activeTx->id_transaksi) }}" class="pos-btn pos-btn-success">Bayar</a>
-                    <a href="{{ route('transaction.edit', $activeTx->id_transaksi) }}" class="pos-btn pos-btn-outline-primary">Edit</a>
+                    <a href="{{ route('transaction.showPayment', $activeTx->id_transaksi) }}" class="pos-btn pos-btn-success">
+                        <i class="fas fa-money-bill-wave mr-1" aria-hidden="true"></i>
+                        <span>Bayar</span>
+                    </a>
+                    <a href="{{ route('transaction.edit', $activeTx->id_transaksi) }}" class="pos-btn pos-btn-outline-primary">
+                        <i class="fas fa-pencil-alt mr-1" aria-hidden="true"></i>
+                        <span>Edit</span>
+                    </a>
                 @elseif ($activeTx->payment_status === 'paid')
-                    <a href="{{ route('transaction.print', $activeTx->id_transaksi) }}" target="_blank" rel="noopener" class="pos-btn pos-btn-outline-secondary">Struk</a>
+                    <a href="{{ route('transaction.print', $activeTx->id_transaksi) }}" target="_blank" rel="noopener" class="pos-btn pos-btn-outline-secondary">
+                        <i class="fas fa-print mr-1" aria-hidden="true"></i>
+                        <span>Struk</span>
+                    </a>
                 @endif
 
                 <button
@@ -249,7 +322,10 @@
                     data-device-id="{{ $device->id }}"
                     data-tx-id="{{ $activeTx->id_transaksi }}"
                     data-mode="session"
-                >Cafe</button>
+                >
+                    <i class="fas fa-coffee mr-1" aria-hidden="true"></i>
+                    <span>Cafe</span>
+                </button>
 
                 <button
                     type="button"
@@ -257,7 +333,10 @@
                     data-device-id="{{ $device->id }}"
                     data-tx-id="{{ $activeTx->id_transaksi }}"
                     data-device-name="{{ $device->nama }}"
-                >Berhenti</button>
+                >
+                    <i class="fas fa-pause mr-1" aria-hidden="true"></i>
+                    <span>Berhenti</span>
+                </button>
 
                 @if ($activeTx->tipe_transaksi === 'postpaid' && $activeTx->status_transaksi === 'berjalan')
                     <button
@@ -267,7 +346,10 @@
                         data-tx-id="{{ $activeTx->id_transaksi }}"
                         data-device-name="{{ $device->nama }}"
                         data-action="{{ route('transaction.end', $activeTx->id_transaksi) }}"
-                    >Selesai</button>
+                    >
+                        <i class="fas fa-check mr-1" aria-hidden="true"></i>
+                        <span>Selesai</span>
+                    </button>
                 @endif
             @endif
         </footer>

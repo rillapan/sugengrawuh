@@ -1,34 +1,10 @@
-/* Custom styles for fixed sidebar */
-.sidebar {
-    position: fixed;
-    width: 250px;
-    height: 100vh;
-    overflow-y: auto;
-    z-index: 1;
-}
+/* ==========================================================================
+   Sugeng Rawuh — Sidebar & Navbar Layout Alignment
+   ========================================================================== */
 
-/* Adjust main content when sidebar is fixed */
-#content {
-    margin-left: 250px;
-    width: calc(100% - 250px);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    transition: all 0.3s;
-}
-
-/* Ensure proper spacing for mobile view */
-@media (max-width: 768px) {
-    .sidebar {
-        width: 100%;
-        height: auto;
-        position: relative;
-    }
-    
-    #content {
-        margin-left: 0;
-        width: 100%;
-    }
+:root {
+    --sidebar-width: 14rem;
+    --sidebar-collapsed-width: 6.5rem;
 }
 
 /* Custom scrollbar for sidebar */
@@ -49,7 +25,25 @@
     background: #858796;
 }
 
-/* Ensure the content wrapper takes full width */
+/* Base fixed sidebar styling */
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 1000;
+}
+
+/* Ensure the content container takes full height and flex layout */
+#content {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Content wrapper helper */
 #content-wrapper {
     width: 100%;
     min-height: 100vh;
@@ -57,36 +51,113 @@
     flex-direction: column;
 }
 
-/* Adjust the main content padding */
+/* Main content wrapper */
 .main-content {
     flex: 1;
     padding: 20px;
 }
 
-/* Handle sidebar toggle state */
-body.sidebar-toggled .sidebar {
-    width: 6.5rem;
+/* Desktop layout (>= 768px) */
+@media (min-width: 768px) {
+    .sidebar {
+        width: var(--sidebar-width) !important;
+        transition: width 0.15s ease-in-out;
+    }
+
+    #content {
+        margin-left: var(--sidebar-width);
+        width: calc(100% - var(--sidebar-width));
+        transition: margin-left 0.15s ease-in-out, width 0.15s ease-in-out;
+    }
+
+    /* Collapsed sidebar on desktop */
+    body.sidebar-toggled .sidebar,
+    .sidebar.toggled {
+        width: var(--sidebar-collapsed-width) !important;
+    }
+
+    body.sidebar-toggled #content {
+        margin-left: var(--sidebar-collapsed-width);
+        width: calc(100% - var(--sidebar-collapsed-width));
+    }
 }
 
-body.sidebar-toggled #content {
-    margin-left: 6.5rem;
-    width: calc(100% - 6.5rem);
+/* Mobile & Tablet layout (< 768px) */
+@media (max-width: 767.98px) {
+    .sidebar {
+        width: var(--sidebar-collapsed-width) !important;
+        transition: width 0.15s ease-in-out;
+    }
+
+    #content {
+        margin-left: var(--sidebar-collapsed-width);
+        width: calc(100% - var(--sidebar-collapsed-width));
+        transition: margin-left 0.15s ease-in-out, width 0.15s ease-in-out;
+    }
+
+    /* Hidden sidebar when toggled on mobile */
+    body.sidebar-toggled .sidebar,
+    .sidebar.toggled {
+        width: 0 !important;
+        overflow: hidden;
+    }
+
+    body.sidebar-toggled #content {
+        margin-left: 0;
+        width: 100%;
+    }
 }
 
+/* Sidebar collapsed item states */
 body.sidebar-toggled .sidebar .sidebar-brand-text,
-body.sidebar-toggled .sidebar .sidebar-heading {
+body.sidebar-toggled .sidebar .sidebar-heading,
+.sidebar.toggled .sidebar-brand-text,
+.sidebar.toggled .sidebar-heading {
     display: none;
 }
 
-body.sidebar-toggled .sidebar .nav-link span {
+body.sidebar-toggled .sidebar .nav-link span,
+.sidebar.toggled .sidebar .nav-link span {
     display: none;
 }
 
-body.sidebar-toggled .sidebar .nav-link {
+body.sidebar-toggled .sidebar .nav-link,
+.sidebar.toggled .sidebar .nav-link {
     text-align: center;
     padding: 0.75rem 1rem;
 }
 
-body.sidebar-toggled .sidebar .nav-link i {
+body.sidebar-toggled .sidebar .nav-link i,
+.sidebar.toggled .sidebar .nav-link i {
     margin-right: 0;
 }
+
+/* ==========================================================================
+   Sugeng Rawuh — Location Table Actions Alignment
+   ========================================================================== */
+.location-table-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.location-table-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    border-radius: 0.2rem;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.location-table-actions .btn i {
+    font-size: 0.875rem;
+    line-height: 1;
+}
+

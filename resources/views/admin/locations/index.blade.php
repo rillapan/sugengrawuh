@@ -1,6 +1,36 @@
 @extends('layouts.app', ['title' => 'Kelola QR Lokasi'])
 
 @section('content')
+<style>
+    /* ==========================================================================
+       Sugeng Rawuh — Location Table Actions Alignment
+       ========================================================================== */
+    .location-table-actions {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        white-space: nowrap;
+    }
+
+    .location-table-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        border-radius: 0.2rem;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+
+    .location-table-actions .btn i {
+        font-size: 0.875rem;
+        line-height: 1;
+    }
+</style>
 <div class="container-fluid">
     <div class="d-sm-flex align-items-center justify-content-between mb-4">
         <h1 class="h3 mb-0 text-gray-800">
@@ -39,7 +69,7 @@
             <span class="badge badge-info">{{ $locations->count() }} Lokasi Terdaftar</span>
         </div>
         <div class="card-body">
-            <div class="table-responsive">
+            <div class="table-responsive" role="region" aria-label="Daftar Lokasi & Meja" tabindex="0">
                 <table class="table table-bordered table-hover align-middle" width="100%" cellspacing="0">
                     <thead class="thead-light">
                         <tr>
@@ -50,7 +80,7 @@
                             <th>Perangkat Terhubung</th>
                             <th style="width: 120px;" class="text-center">Preview QR</th>
                             <th style="width: 90px;" class="text-center">Status</th>
-                            <th style="width: 160px;" class="text-center">Aksi</th>
+                            <th style="min-width: 175px; width: 175px;" class="text-center">Aksi</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -88,16 +118,18 @@
                                         <span class="badge badge-danger px-2 py-1">Nonaktif</span>
                                     @endif
                                 </td>
-                                <td class="text-center">
-                                    <a href="{{ route('admin.locations.print', $loc->id) }}" class="btn btn-sm btn-info" title="Cetak Kartu QR" target="_blank">
-                                        <i class="fas fa-print"></i> Cetak
-                                    </a>
-                                    <button type="button" 
-                                            class="btn btn-sm btn-warning" 
-                                            onclick="openEditModal({{ json_encode($loc) }})"
-                                            title="Edit Lokasi">
-                                        <i class="fas fa-edit"></i> Edit
-                                    </button>
+                                <td class="text-center align-middle">
+                                    <div class="location-table-actions">
+                                        <a href="{{ route('admin.locations.print', $loc->id) }}" class="btn btn-info btn-sm" title="Cetak Kartu QR" target="_blank">
+                                            <i class="fas fa-print"></i> Cetak
+                                        </a>
+                                        <button type="button" 
+                                                class="btn btn-warning btn-sm" 
+                                                onclick="openEditModal({{ json_encode($loc) }})"
+                                                title="Edit Lokasi">
+                                            <i class="fas fa-edit"></i> Edit
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         @empty
