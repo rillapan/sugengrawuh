@@ -9,12 +9,14 @@ use App\Models\Fnb;
 use App\Models\TransactionFnb;
 use App\Models\StockMutation;
 use App\Models\CustomPackage;
+use App\Models\Location;
 use App\Models\TvAlertEvent;
 use App\Services\Hardware\TvAlertService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class TransactionController extends Controller
 {
@@ -216,11 +218,39 @@ class TransactionController extends Controller
      */
     public function index(Request $request)
     {
-        $this->updateDeviceStatuses();
+        $now = Carbon::now();
+
+        // Non-blocking expiration & hardware automation heartbeat (mirrors DeviceController@index without inline mutation loop)
+        try {
+            if (Transaction::hasG2Schema()) {
+                $hasExpired = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
+                    ->whereNotNull('expires_at')
+                    ->where('expires_at', '<=', $now)
+                    ->exists();
+
+                if ($hasExpired) {
+                    app(\App\Services\BillingService::class)->evaluateExpiration($now);
+                }
+            }
+
+            if (\App\Services\Hardware\Automation\AutomationIntentService::hasG5Schema() &&
+                app(\App\Services\Hardware\Automation\AutomationIntentService::class)->isAutomationEnabled()) {
+                $hasEligibleIntents = \App\Models\AutomationIntent::eligible($now)->exists();
+                if ($hasEligibleIntents) {
+                    app(\App\Services\Hardware\Automation\AutomationDispatcherService::class)->dispatchBatch(10, $now);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('TransactionController index heartbeat issue: ' . $e->getMessage());
+        }
 
         $type = $request->input('type', 'all');
+        $search = trim((string) $request->input('search', ''));
+        $activeTab = $request->filled('tab')
+            ? $request->input('tab')
+            : (($request->has('page') || $request->filled('type') || $request->filled('search')) ? 'history' : 'stations');
 
-        $query = Transaction::with('transactionFnbs');
+        $query = Transaction::with(['device.playstation', 'transactionFnbs.fnb', 'custom_package']);
 
         $userRole = strtolower(auth()->user()->role ?? '');
         if (!in_array($userRole, ['admin', 'kasir', 'owner'])) {
@@ -231,7 +261,15 @@ class TransactionController extends Controller
             $query->where('tipe_transaksi', $type);
         }
 
-        $transaction = $query->latest()->paginate(10);
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('id_transaksi', 'like', "%{$search}%")
+                    ->orWhere('nama', 'like', "%{$search}%")
+                    ->orWhereHas('device', fn ($dq) => $dq->where('nama', 'like', "%{$search}%"));
+            });
+        }
+
+        $transaction = $query->latest()->paginate(10)->appends($request->query());
 
         // Calculate counts for transaction types and payment statuses
         $postpaidCount = Transaction::where('tipe_transaksi', 'postpaid')->count();
@@ -253,6 +291,136 @@ class TransactionController extends Controller
             'transfer_bank' => Transaction::where('payment_status', 'paid')->where('payment_method', 'transfer_bank')->sum('total'),
         ];
 
+        // Load all registered stations deterministically (no pagination cut-off, eager-loaded)
+        $deviceRelations = ['playstations.hourlyPrices', 'playstation.hourlyPrices'];
+        if (Schema::hasTable('station_device_mappings')) {
+            $deviceRelations[] = 'activeHardwareMappings.physicalDevice';
+            $deviceRelations[] = 'activeDisplayTv.physicalDevice';
+        }
+        $hasLocationsTable = Schema::hasTable('locations');
+        if ($hasLocationsTable) {
+            $deviceRelations[] = 'locations';
+        }
+
+        $devices = Device::sortStationsDeterministically(
+            Device::with($deviceRelations)->get()
+        );
+
+        $stationNumbers = [];
+        foreach ($devices as $device) {
+            $resolvedNumber = $device->resolveStationNumber();
+            $stationNumbers[$device->id] = $resolvedNumber;
+            $device->setAttribute('station_number', $resolvedNumber);
+        }
+
+        // Load active transactions for occupied/running devices in one batch query (no N+1)
+        $activeTransactions = collect();
+        $deviceIds = $devices->pluck('id');
+        $activeTxRelations = [
+            'playstation',
+            'custom_package.playstations',
+            'custom_package.fnbs',
+            'transactionFnbs.fnb',
+            'fnbOrders.items.fnb',
+            'invoices',
+        ];
+
+        if ($deviceIds->isNotEmpty()) {
+            if (Transaction::hasG2Schema()) {
+                $activeTransactions = Transaction::with($activeTxRelations)
+                    ->whereIn('device_id', $deviceIds)
+                    ->where('billing_status', Transaction::BILLING_RUNNING)
+                    ->latest('id_transaksi')
+                    ->get()
+                    ->groupBy('device_id')
+                    ->map
+                    ->first();
+            } else {
+                $activeTransactions = Transaction::with($activeTxRelations)
+                    ->whereIn('device_id', $deviceIds)
+                    ->where('status_transaksi', 'berjalan')
+                    ->latest('id_transaksi')
+                    ->get()
+                    ->groupBy('device_id')
+                    ->map
+                    ->first();
+            }
+
+            // Legacy fallback for occupied devices not matched by BILLING_RUNNING / berjalan
+            $occupiedWithoutActiveTx = $devices
+                ->filter(fn ($d) => $d->status === 'Digunakan' && !$activeTransactions->has($d->id))
+                ->pluck('id');
+
+            if ($occupiedWithoutActiveTx->isNotEmpty()) {
+                $today = $now->toDateString();
+                $legacyCandidates = Transaction::with($activeTxRelations)
+                    ->whereIn('device_id', $occupiedWithoutActiveTx)
+                    ->whereDate('created_at', $today)
+                    ->latest('id_transaksi')
+                    ->get()
+                    ->groupBy('device_id');
+
+                foreach ($legacyCandidates as $devId => $candidates) {
+                    $match = $candidates->first(function ($tx) use ($now) {
+                        if ($tx->status_transaksi === 'berjalan') {
+                            return true;
+                        }
+                        if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)
+                            && $tx->status_transaksi !== 'selesai'
+                            && $tx->waktu_Selesai) {
+                            $txDate = $tx->created_at->format('Y-m-d');
+                            $startDt = Carbon::parse($txDate . ' ' . $tx->waktu_mulai);
+                            $endDt = Carbon::parse($txDate . ' ' . $tx->waktu_Selesai);
+                            if ($endDt < $startDt) {
+                                $endDt->addDay();
+                            }
+                            $targetExpiresAt = $tx->expires_at ?: $endDt;
+                            return $targetExpiresAt > $now;
+                        }
+                        return false;
+                    });
+
+                    if ($match) {
+                        $activeTransactions->put($devId, $match);
+                    }
+                }
+            }
+        }
+
+        $stationStats = [
+            'total' => $devices->count(),
+            'available' => $devices->where('status', 'Tersedia')->count(),
+            'in_use' => $devices->where('status', 'Digunakan')->count(),
+            'unpaid_attention' => Transaction::where('payment_status', 'unpaid')
+                ->where('status_transaksi', '!=', 'draft')
+                ->count(),
+        ];
+
+        $customPackages = CustomPackage::active()
+            ->with(['playstations', 'fnbs', 'priceGroups'])
+            ->get();
+
+        $fnbs = Fnb::with('priceGroup')
+            ->where(function ($q) {
+                $q->where('stok', '>', 0)->orWhere('stok', -1);
+            })
+            ->orderBy('nama')
+            ->get()
+            ->map(function ($fnb) {
+                $fnb->effective_price = $fnb->priceGroup
+                    ? (float) $fnb->priceGroup->harga
+                    : (float) $fnb->harga_jual;
+                return $fnb;
+            });
+
+        $locations = $hasLocationsTable
+            ? Location::where('is_active', true)->orderBy('name')->get()
+            : collect();
+
+        $currentNow = Carbon::now();
+        $serverTimestamp = $currentNow->timestamp * 1000;
+        $serverNow = $currentNow->toIso8601String();
+
         return view('transaction.index', [
             'title' => 'Data Tansaksi',
             'active' => 'transaction',
@@ -265,6 +433,17 @@ class TransactionController extends Controller
             'unpaidCount' => $unpaidCount,
             'paymentMethodCounts' => $paymentMethodCounts,
             'paymentMethodTotals' => $paymentMethodTotals,
+            'search' => $search,
+            'activeTab' => $activeTab,
+            'devices' => $devices,
+            'stationNumbers' => $stationNumbers,
+            'activeTransactions' => $activeTransactions,
+            'stationStats' => $stationStats,
+            'customPackages' => $customPackages,
+            'fnbs' => $fnbs,
+            'locations' => $locations,
+            'serverTimestamp' => $serverTimestamp,
+            'serverNow' => $serverNow,
         ]);
     }
 
@@ -432,7 +611,7 @@ class TransactionController extends Controller
         }
 
         $validatedData = $request->validate([
-            'nama' => 'required',
+            'nama' => 'nullable|string|max:255',
             'no_telepon' => 'nullable|string|max:20',
             'device_id' => 'required_if:tipe_transaksi,prepaid,postpaid,custom_package|exists:devices,id',
             'playstation_id' => 'nullable|exists:playstations,id',
@@ -448,18 +627,19 @@ class TransactionController extends Controller
             'fnbs_qty.*' => 'nullable|integer|min:1',
             'fnbs_harga.*' => 'nullable|integer|min:0'
         ]);
+        $validatedData['nama'] = trim((string) ($validatedData['nama'] ?? '')) ?: 'Pelanggan';
 
         // Additional validation: Check if device has multiple PlayStation types and require playstation_id
         if ($request->device_id && $request->tipe_transaksi !== 'custom_package') {
             $device = Device::with('playstations')->find($request->device_id);
             if ($device && $device->playstations->count() > 1) {
                 if (!$request->playstation_id) {
-                    return redirect()->back()->with('gagal', 'Silakan pilih jenis perangkat terlebih dahulu.')->withInput();
+                    return $this->respondStoreError($request, 'Silakan pilih jenis perangkat terlebih dahulu.');
                 }
                 
                 // Validate that the selected playstation_id is associated with this device
                 if (!$device->playstations()->where('playstations.id', $request->playstation_id)->exists()) {
-                    return redirect()->back()->with('gagal', 'Jenis perangkat yang dipilih tidak valid untuk perangkat ini.')->withInput();
+                    return $this->respondStoreError($request, 'Jenis perangkat yang dipilih tidak valid untuk perangkat ini.');
                 }
             }
         }
@@ -476,7 +656,7 @@ class TransactionController extends Controller
 
             // Validate that device_id is provided and exists
             if (!$request->device_id) {
-                return redirect()->back()->with('gagal', 'Silakan pilih perangkat terlebih dahulu.')->withInput();
+                return $this->respondStoreError($request, 'Silakan pilih perangkat terlebih dahulu.');
             }
 
             // Get the selected device and validate it belongs to the package's PlayStation types
@@ -488,11 +668,11 @@ class TransactionController extends Controller
                           || (isset($selectedDevice->playstation_id) && in_array($selectedDevice->playstation_id, $playstationIds));
 
             if (!$isCompatible) {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak sesuai dengan paket custom.')->withInput();
+                return $this->respondStoreError($request, 'Perangkat yang dipilih tidak sesuai dengan paket custom.');
             }
 
             if ($selectedDevice->status !== 'Tersedia') {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.')->withInput();
+                return $this->respondStoreError($request, 'Perangkat yang dipilih tidak tersedia.');
             }
 
             $validatedData['device_id'] = $selectedDevice->id;
@@ -539,7 +719,7 @@ class TransactionController extends Controller
                               || ($device->playstation_id && $device->playstation_id == $request->playstation_id);
                 
                 if (!$isAssociated) {
-                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.')->withInput();
+                    return $this->respondStoreError($request, 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
                 }
             } else {
                 // Fallback to default PlayStation (backward compatibility)
@@ -547,10 +727,10 @@ class TransactionController extends Controller
             }
             
             if ($durationSeconds === null || $durationSeconds <= 0) {
-                return redirect()->back()->with('gagal', 'Durasi bermain harus lebih dari 0 detik.')->withInput();
+                return $this->respondStoreError($request, 'Durasi bermain harus lebih dari 0 detik.');
             }
             if ($durationSeconds > 86400) {
-                return redirect()->back()->with('gagal', 'Durasi bermain maksimal 24 jam.')->withInput();
+                return $this->respondStoreError($request, 'Durasi bermain maksimal 24 jam.');
             }
 
             $totalPs = $playstation->calculateCustomPrice($durationSeconds);
@@ -591,7 +771,7 @@ class TransactionController extends Controller
             // Postpaid (Lost Time) - device is now required
             $device = Device::findOrFail($request->device_id);
             if ($device->status !== 'Tersedia') {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.')->withInput();
+                return $this->respondStoreError($request, 'Perangkat yang dipilih tidak tersedia.');
             }
             
             // Use selected PlayStation if provided, otherwise fallback to default
@@ -603,7 +783,7 @@ class TransactionController extends Controller
                               || ($device->playstation_id && $device->playstation_id == $request->playstation_id);
                 
                 if (!$isAssociated) {
-                    return redirect()->back()->with('gagal', 'Playstation yang dipilih tidak terkait dengan perangkat ini.')->withInput();
+                    return $this->respondStoreError($request, 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
                 }
             } else {
                 // Fallback to default PlayStation (backward compatibility)
@@ -649,7 +829,7 @@ class TransactionController extends Controller
             $targetDevice = Device::where('id', $validatedData['device_id'])->lockForUpdate()->firstOrFail();
             if ($targetDevice->status !== 'Tersedia') {
                 \DB::rollBack();
-                return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').')->withInput();
+                return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').');
             }
 
             if (Transaction::hasG2Schema()) {
@@ -665,7 +845,7 @@ class TransactionController extends Controller
                     ->exists();
                 if ($activeExisting) {
                     \DB::rollBack();
-                    return redirect()->back()->with('gagal', 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.')->withInput();
+                    return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.');
                 }
 
                 if (!$isPaket) {
@@ -692,7 +872,7 @@ class TransactionController extends Controller
                         // Check stock only if not unlimited (stok != -1)
                         if ($fnb->stok != -1 && $fnb->stok < $request->fnbs_qty[$index]) {
                             \DB::rollBack();
-                            return back()->with('gagal', 'Stok FnB tidak cukup untuk ' . $fnb->nama);
+                            return $this->respondStoreError($request, 'Stok FnB tidak cukup untuk ' . $fnb->nama, 422, false);
                         }
     
                         TransactionFnb::create([
@@ -766,21 +946,57 @@ class TransactionController extends Controller
             \DB::rollBack();
             \Log::error('Transaction Store Error: ' . $e->getMessage());
             \Log::error($e->getTraceAsString());
-            return redirect()->back()->with('gagal', 'Gagal menyimpan transaksi: ' . $e->getMessage());
+            return $this->respondStoreError($request, 'Gagal menyimpan transaksi: ' . $e->getMessage(), 422, false);
         }
 
-        if ($isPaket) {
-            return redirect()->route('transaction.showPayment', $transaction->id_transaksi);
+        if ($isPaket || $request->action === 'bayar') {
+            return $this->respondStoreSuccess(
+                $request,
+                $transaction,
+                route('transaction.showPayment', $transaction->id_transaksi)
+            );
         }
 
-        // Handle different actions for postpaid
-        if ($request->action === 'bayar') {
-            // Redirect to payment page for immediate payment
-            return redirect()->route('transaction.showPayment', $transaction->id_transaksi);
-        } else {
-            // Save transaction and redirect to transaction list
-            return redirect('transaction')->with('success', 'Data transaksi berhasil disimpan.');
+        return $this->respondStoreSuccess(
+            $request,
+            $transaction,
+            route('transaction.index'),
+            'Data transaksi berhasil disimpan.',
+            true
+        );
+    }
+
+    private function respondStoreError(Request $request, string $message, int $status = 422, bool $withInput = true)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+            ], $status);
         }
+
+        $redirect = redirect()->back()->with('gagal', $message);
+        return $withInput ? $redirect->withInput() : $redirect;
+    }
+
+    private function respondStoreSuccess(
+        Request $request,
+        Transaction $transaction,
+        string $redirectUrl,
+        string $message = 'Data transaksi berhasil disimpan.',
+        bool $withSuccessFlash = false
+    ) {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'transaction_id' => $transaction->id_transaksi,
+                'redirect_url' => $redirectUrl,
+            ], 201);
+        }
+
+        $redirect = redirect($redirectUrl);
+        return $withSuccessFlash ? $redirect->with('success', $message) : $redirect;
     }
 
     /**

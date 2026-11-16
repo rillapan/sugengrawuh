@@ -454,14 +454,11 @@
         <!-- Card Header - Dropdown -->
         <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
             <h6 class="m-0 font-weight-bold text-primary">
-                Data Perangkat
+                Monitoring & Kontrol Hardware Perangkat
             </h6>
-            <div class="dropdown no-arrow">
-                <a class="dropdown-toggle" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown"
-                    aria-haspopup="true" aria-expanded="false">
-                </a>
-
-                @if (auth()->user()->role === 'admin')
+            <div class="d-flex align-items-center">
+                <a href="{{ route('transaction.index') }}" class="btn btn-outline-primary btn-sm mr-2"><i class="fas fa-cash-register mr-1" aria-hidden="true"></i> Dashboard Kasir</a>
+                @if (auth()->user()->isAdmin())
                     <a href="{{ route('device.create') }}" class="btn btn-primary btn-sm">Tambah Data</a>
                 @endif
             </div>
@@ -852,51 +849,18 @@
                                 </div>
 
                                 <div class="stitch-actions-group">
-                                    @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
-                                        <button type="button" class="btn-stitch-action btn-stitch-customer" data-toggle="modal" data-target="#customerModal" data-bs-toggle="modal" data-bs-target="#customerModal"
-                                            data-id-transaksi="{{ $customers[$device->id]['id_transaksi'] }}"
-                                            data-nama="{{ $customers[$device->id]['nama'] }}"
-                                            data-nama-perangkat="{{ $customers[$device->id]['nama_perangkat'] }}"
-                                            data-jenis-playstation="{{ $customers[$device->id]['jenis_playstation'] }}"
-                                            data-jam-main="{{ $customers[$device->id]['jam_main'] }}"
-                                            data-waktu-mulai="{{ $customers[$device->id]['waktu_mulai'] }}"
-                                            data-waktu-selesai="{{ $customers[$device->id]['waktu_selesai'] }}"
-                                            data-total="{{ $customers[$device->id]['total'] }}"
-                                            data-tanggal="{{ $customers[$device->id]['tanggal'] }}"
-                                            title="Lihat Pelanggan">
-                                            <i class="fas fa-eye mr-1"></i> Lihat Pelanggan
-                                        </button>
-                                    @endif
-
-                                    @if (auth()->user()->role === 'admin' || auth()->user()->role === 'kasir')
-                                        @if ($device->status === 'Digunakan')
-                                            <button type="button" class="btn-stitch-action btn-stitch-stop" 
-                                                onclick="confirmStopDevice({{ $device->id }}, '{{ $device->nama }}')"
-                                                title="Hentikan timer dan ubah status menjadi tersedia">
-                                                <i class="fas fa-stop mr-1"></i> Berhenti
-                                            </button>
+                                    @if (auth()->user()->isAdmin() || auth()->user()->isKasir())
+                                        <a href="{{ route('transaction.index') }}" class="btn-stitch-action btn-stitch-customer" title="Kelola transaksi di Dashboard Kasir"><i class="fas fa-cash-register mr-1" aria-hidden="true"></i> Kelola di Kasir</a>
+                                        @if (auth()->user()->isAdmin())
+                                            <a href="/device/{{ $device->id }}/edit" class="btn-stitch-icon btn-stitch-edit" title="Edit Stasiun"><i class="fas fa-edit"></i></a>
+                                            <form action="/device/{{ $device->id }}" method="post" class="d-inline m-0 p-0">
+                                                @method('delete')
+                                                @csrf
+                                                <button class="btn-stitch-icon btn-stitch-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus perangkat ini?')" title="Hapus Stasiun">
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </button>
+                                            </form>
                                         @endif
-                                        @if (isset($customers[$device->id]) && $customers[$device->id]['tipe_transaksi'] === 'postpaid' && $customers[$device->id]['status_transaksi'] === 'berjalan')
-                                            <button type="button" class="btn-stitch-action btn-stitch-finish" 
-                                                data-toggle="modal" 
-                                                data-target="#finishTransactionModal"
-                                                data-bs-toggle="modal" 
-                                                data-bs-target="#finishTransactionModal"
-                                                data-action="{{ route('transaction.end', $customers[$device->id]['id_transaksi']) }}"
-                                                data-device-id="{{ $device->id }}"
-                                                data-device-info="{{ $device->playstation->nama ?? 'Unknown' }} | {{ $device->nama }}"
-                                                title="Selesaikan Transaksi">
-                                                <i class="fas fa-check mr-1"></i> Selesai
-                                            </button>
-                                        @endif
-                                        <a href="/device/{{ $device->id }}/edit" class="btn-stitch-icon btn-stitch-edit" title="Edit Stasiun"><i class="fas fa-edit"></i></a>
-                                        <form action="/device/{{ $device->id }}" method="post" class="d-inline m-0 p-0">
-                                            @method('delete')
-                                            @csrf
-                                            <button class="btn-stitch-icon btn-stitch-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus perangkat ini?')" title="Hapus Stasiun">
-                                                <i class="fas fa-trash-alt"></i>
-                                            </button>
-                                        </form>
                                     @else
                                         <a href="/booking/{{ $device->id }}" class="btn-stitch-action btn-stitch-edit">Lihat Jadwal</a>
                                     @endif
@@ -910,85 +874,6 @@
         </div>
     </div>
 
-    <!-- Customer Info Modal -->
-    <div class="modal fade" id="customerModal" tabindex="-1" role="dialog" aria-labelledby="customerModalLabel" aria-hidden="true">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="customerModalLabel">Informasi Pelanggan</h5>
-                    <button type="button" class="close btn-close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p><strong>ID Transaksi:</strong> <span id="modal-id-transaksi">Tidak tersedia</span></p>
-                    <p><strong>Nama Pelanggan:</strong> <span id="modal-nama">Tidak tersedia</span></p>
-                    <p><strong>Nama Perangkat:</strong> <span id="modal-nama-perangkat">Tidak tersedia</span></p>
-                    <p><strong>Jenis Playstation:</strong> <span id="modal-jenis-playstation">Tidak tersedia</span></p>
-                    <p><strong>Jam Main:</strong> <span id="modal-jam-main">Tidak tersedia</span></p>
-                    <p><strong>Waktu Mulai:</strong> <span id="modal-waktu-mulai">Tidak tersedia</span></p>
-                    <p><strong>Waktu Selesai:</strong> <span id="modal-waktu-selesai">Tidak tersedia</span></p>
-                    <p><strong>Total:</strong> <span id="modal-total">Tidak tersedia</span></p>
-                    <p><strong>Tanggal:</strong> <span id="modal-tanggal">Tidak tersedia</span></p>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Tutup</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Stop Device Confirmation Modal -->
-    <div class="modal fade" id="stopDeviceModal" tabindex="-1" role="dialog" aria-labelledby="stopDeviceModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="stopDeviceModalLabel">Konfirmasi Berhenti</h5>
-                    <button type="button" class="close btn-close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body text-center">
-                    <h5>Apakah Anda yakin ingin menghentikan timer perangkat ini?</h5>
-                    <p class="mb-0"><strong id="stop-device-name">Nama Perangkat</strong></p>
-                    <p class="text-muted">Timer akan dihentikan dan status perangkat akan diubah menjadi "Tersedia"</p>
-                </div>
-                <div class="modal-footer justify-content-center">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Batal</button>
-                    <form id="stopDeviceForm" method="POST" action="">
-                        @csrf
-                        <button type="submit" class="btn btn-warning"><i class="fas fa-stop"></i> Ya, Berhenti</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Finish Transaction Modal -->
-    <div class="modal fade" id="finishTransactionModal" tabindex="-1" role="dialog" aria-labelledby="finishTransactionModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="finishTransactionModalLabel">Konfirmasi Selesai</h5>
-                    <button type="button" class="close btn-close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <div class="modal-body text-center">
-                    <h5>Apakah Anda yakin ingin menyelesaikan transaksi ini?</h5>
-                    <h2 id="modal-finish-timer" class="text-primary my-3 font-weight-bold">00:00:00</h2>
-                    <p class="mb-0 text-muted font-weight-bold" id="modal-finish-device">Jenis PS | Nama Perangkat</p>
-                </div>
-                <div class="modal-footer justify-content-center">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">Batal</button>
-                    <form id="finishTransactionForm" method="POST" action="">
-                        @csrf
-                        <button type="submit" class="btn btn-success"><i class="fas fa-check"></i> Ya, Selesai</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- SR-HARDWARE-POWER-001: Confirm Hardware Power OFF Modal -->
     <div class="modal fade" id="confirmPowerOffModal" tabindex="-1" role="dialog" aria-labelledby="confirmPowerOffModalLabel" aria-hidden="true">
@@ -1465,205 +1350,6 @@
             }, 4000);
         }
 
-        // Modal population script
-        function populateCustomerModal(button) {
-            if (!button) return;
-            var idTransaksi = button.getAttribute('data-id-transaksi');
-            var nama = button.getAttribute('data-nama');
-            var namaPerangkat = button.getAttribute('data-nama-perangkat');
-            var jenisPlaystation = button.getAttribute('data-jenis-playstation');
-            var jamMain = button.getAttribute('data-jam-main');
-            var waktuMulai = button.getAttribute('data-waktu-mulai');
-            var waktuSelesai = button.getAttribute('data-waktu-selesai');
-            var total = button.getAttribute('data-total');
-            var tanggal = button.getAttribute('data-tanggal');
-
-            var setVal = function(id, val) {
-                var el = document.getElementById(id);
-                if (el) el.textContent = val || 'Tidak tersedia';
-            };
-
-            setVal('modal-id-transaksi', idTransaksi);
-            setVal('modal-nama', nama);
-            setVal('modal-nama-perangkat', namaPerangkat);
-            setVal('modal-jenis-playstation', jenisPlaystation);
-            setVal('modal-jam-main', jamMain);
-            setVal('modal-waktu-mulai', waktuMulai);
-            setVal('modal-waktu-selesai', waktuSelesai);
-            setVal('modal-total', total);
-            setVal('modal-tanggal', tanggal);
-        }
-
-        var customerModal = document.getElementById('customerModal');
-        if (customerModal) {
-            customerModal.addEventListener('show.bs.modal', function (event) {
-                populateCustomerModal(event.relatedTarget);
-            });
-            if (window.jQuery) {
-                window.jQuery(customerModal).on('show.bs.modal', function (event) {
-                    populateCustomerModal(event.relatedTarget);
-                });
-            }
-        }
-
-        // Finish Transaction Modal Script
-        function populateFinishModal(button) {
-            if (!button) return;
-            var actionUrl = button.getAttribute('data-action');
-            var deviceId = button.getAttribute('data-device-id');
-            var deviceInfo = button.getAttribute('data-device-info');
-
-            var form = document.getElementById('finishTransactionForm');
-            if (form) form.action = actionUrl;
-
-            var devEl = document.getElementById('modal-finish-device');
-            if (devEl) devEl.textContent = deviceInfo;
-
-            var timerElement = document.getElementById('timer-' + deviceId);
-            var timerValue = '00:00:00';
-            if (timerElement) {
-                timerValue = timerElement.innerText.trim();
-            }
-            var timerSnapshot = document.getElementById('modal-finish-timer');
-            if (timerSnapshot) timerSnapshot.textContent = timerValue;
-        }
-
-        var finishTransactionModal = document.getElementById('finishTransactionModal');
-        if (finishTransactionModal) {
-            finishTransactionModal.addEventListener('show.bs.modal', function (event) {
-                populateFinishModal(event.relatedTarget);
-            });
-            if (window.jQuery) {
-                window.jQuery(finishTransactionModal).on('show.bs.modal', function (event) {
-                    populateFinishModal(event.relatedTarget);
-                });
-            }
-        }
-
-        // Stop Device Confirmation Function
-        function confirmStopDevice(deviceId, deviceName) {
-            console.log('Stopping device:', deviceId, deviceName);
-            
-            var nameEl = document.getElementById('stop-device-name');
-            if (nameEl) nameEl.textContent = deviceName;
-            
-            var form = document.getElementById('stopDeviceForm');
-            if (form) form.action = '/device/' + deviceId + '/stop';
-            
-            safeShowModal('stopDeviceModal');
-        }
-
-        // Handle Stop Device Form Submission with duplicate request protection
-        var isStopSubmitting = false;
-        var stopDeviceFormEl = document.getElementById('stopDeviceForm');
-        if (stopDeviceFormEl) {
-            stopDeviceFormEl.addEventListener('submit', function(e) {
-                e.preventDefault();
-                
-                if (isStopSubmitting) {
-                    return; // Prevent duplicate request
-                }
-                
-                var form = e.target;
-                var submitButton = form.querySelector('button[type="submit"]');
-                var originalButtonText = submitButton ? submitButton.innerHTML : 'Ya, Berhenti';
-                
-                isStopSubmitting = true;
-                if (submitButton) {
-                    submitButton.disabled = true;
-                    submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses...';
-                }
-                
-                var csrfToken = document.querySelector('meta[name="csrf-token"]');
-                if (!csrfToken) {
-                    console.error('CSRF token meta tag not found');
-                    isStopSubmitting = false;
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.innerHTML = originalButtonText;
-                    }
-                    showFeedbackAlert('danger', 'CSRF token tidak ditemukan. Silakan refresh halaman.');
-                    return;
-                }
-                
-                var formData = new FormData(form);
-                
-                fetch(form.action, {
-                    method: 'POST',
-                    body: formData,
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken.getAttribute('content'),
-                        'Accept': 'application/json'
-                    }
-                })
-                .then(function(response) {
-                    return response.json().then(function(data) {
-                        return { ok: response.ok, status: response.status, data: data };
-                    });
-                })
-                .then(function(res) {
-                    var data = res.data;
-                    console.log('Stop device response:', res.status, data);
-
-                    if (res.ok && data.success) {
-                        // 1. Close confirmation modal safely
-                        safeHideModal('stopDeviceModal');
-                        
-                        // 2. Immediately update device status in DOM without waiting for reload
-                        var deviceId = data.device_id;
-                        try {
-                            var statusElement = document.getElementById('status-' + deviceId);
-                            if (statusElement) {
-                                statusElement.innerHTML = '<i class="fa fa-circle text-success" aria-hidden="true"></i> Tersedia';
-                            }
-                            
-                            var timerElement = document.getElementById('timer-' + deviceId);
-                            if (timerElement) {
-                                timerElement.textContent = '-';
-                                timerElement.removeAttribute('data-lost-time-start');
-                            }
-                            
-                            var stopButton = document.querySelector('button[onclick*="confirmStopDevice(' + deviceId + '"]');
-                            if (stopButton) {
-                                stopButton.remove();
-                            }
-                        } catch (domErr) {
-                            console.warn('DOM update error ignored:', domErr);
-                        }
-
-                        // 3. Show success alert
-                        showFeedbackAlert('success', data.message || 'Timer perangkat berhasil dihentikan dan status diubah menjadi tersedia.');
-
-                        // 4. Smooth reload to sync counters and server cards
-                        setTimeout(function() {
-                            window.location.reload();
-                        }, 1200);
-
-                    } else {
-                        safeHideModal('stopDeviceModal');
-                        showFeedbackAlert('warning', data.message || 'Gagal menghentikan perangkat.');
-
-                        if (data.message && (data.message.includes('sudah selesai') || data.message.includes('Tidak ada transaksi'))) {
-                            setTimeout(function() {
-                                window.location.reload();
-                            }, 1000);
-                        }
-                    }
-                })
-                .catch(function(error) {
-                    console.error('Network or fetch error:', error);
-                    safeHideModal('stopDeviceModal');
-                    showFeedbackAlert('danger', 'Terjadi kesalahan koneksi saat menghubungi server. Silakan coba lagi.');
-                })
-                .finally(function() {
-                    isStopSubmitting = false;
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.innerHTML = originalButtonText;
-                    }
-                });
-            });
-        }
 
         // G5-B Automation Live Status Poller & Manual Action
         function pollAutomationStatus() {

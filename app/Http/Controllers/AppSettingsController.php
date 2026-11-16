@@ -24,6 +24,7 @@ class AppSettingsController extends Controller
         ]);
     }
 
+    
     /**
      * Reset transaksi telah dinonaktifkan demi integritas data keuangan dan kepatuhan audit.
      */

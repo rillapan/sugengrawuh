@@ -1,461 +1,457 @@
 @extends('layouts.app')
 
 @section('content')
-    <!-- Content Row -->
-    @if (session()->has('success'))
-        <div class="alert alert-success col-lg-8" role="alert">
-            {{ session('success') }}
-        </div>
-    @endif
+    @php
+        $currentTab = in_array($activeTab ?? 'stations', ['stations', 'history'], true) ? $activeTab : 'stations';
+        $canOperate = auth()->user()->isAdmin() || auth()->user()->isKasir();
+        $isAdmin = auth()->user()->isAdmin();
 
-    @if (session()->has('gagal'))
-        <div class="alert alert-danger col-lg-8" role="alert">
-            {{ session('gagal') }}
-        </div>
-    @endif
+        $devicesPayload = $devices->map(function ($device) use ($stationNumbers) {
+            $psList = ($device->playstations && $device->playstations->isNotEmpty())
+                ? $device->playstations
+                : ($device->playstation ? collect([$device->playstation]) : collect());
 
-    <!-- Summary Cards Section -->
-    <div class="row mb-4">
-        <!-- Transaction Types Row -->
-        <div class="col-md-12 mb-3">
-            <h5 class="mb-3">Jenis Transaksi</h5>
-            <div class="row">
-                <div class="col-md-4">
-                    <div class="card border-left-primary shadow h-100 py-2">
-                        <div class="card-body d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Lost Time</div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $postpaidCount }}</div>
-                            </div>
-                            <div>
-                                <i class="fas fa-clock fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
+            $defaultLocation = null;
+            if ($device->relationLoaded('locations')) {
+                $defaultLocation = $device->locations->first(function ($loc) {
+                    return $loc->type === 'station' && (bool) $loc->is_active;
+                }) ?: $device->locations->first(function ($loc) {
+                    return (bool) $loc->is_active;
+                });
+            }
+
+            return [
+                'id' => (int) $device->id,
+                'station_number' => $stationNumbers[$device->id] ?? null,
+                'nama' => (string) $device->nama,
+                'status' => (string) $device->status,
+                'playstation_id' => $device->playstation_id ? (int) $device->playstation_id : null,
+                'default_location_id' => $defaultLocation ? (int) $defaultLocation->id : null,
+                'playstations' => $psList->map(function ($ps) {
+                    $presets = $ps->relationLoaded('hourlyPrices')
+                        ? $ps->hourlyPrices->sortBy('effective_duration_seconds')->values()
+                        : collect();
+
+                    $durations = $presets->map(function ($p) {
+                        $sec = (int) $p->effective_duration_seconds;
+                        return [
+                            'id' => (int) $p->id,
+                            'duration_seconds' => $sec,
+                            'formatted' => \App\Models\HourlyPrice::formatSeconds($sec),
+                            'human' => \App\Models\HourlyPrice::humanizeSeconds($sec),
+                            'hours' => intdiv($sec, 3600),
+                            'price' => (int) $p->price,
+                        ];
+                    })->values()->all();
+
+                    if (empty($durations) && (int) ($ps->harga ?? 0) > 0) {
+                        $base = (int) $ps->harga;
+                        for ($h = 1; $h <= 5; $h++) {
+                            $sec = $h * 3600;
+                            $durations[] = [
+                                'id' => null,
+                                'duration_seconds' => $sec,
+                                'formatted' => \App\Models\HourlyPrice::formatSeconds($sec),
+                                'human' => $h . ' jam',
+                                'hours' => $h,
+                                'price' => $base * $h,
+                            ];
+                        }
+                    }
+
+                    return [
+                        'id' => (int) $ps->id,
+                        'nama' => (string) $ps->nama,
+                        'harga' => (int) ($ps->harga ?? 0),
+                        'durations' => $durations,
+                    ];
+                })->values()->all(),
+            ];
+        })->values()->all();
+
+        $devicesById = $devices->keyBy('id');
+        $txSummaries = [];
+        $activeTxPayload = [];
+
+        foreach ($activeTransactions as $devId => $tx) {
+            $txDevice = $devicesById->get((int) $devId);
+            $packageFnbs = [];
+            if ($tx->tipe_transaksi === 'custom_package' && $tx->custom_package) {
+                foreach ($tx->custom_package->fnbs as $pFnb) {
+                    $packageFnbs[(int) $pFnb->id] = (int) ($pFnb->pivot->quantity ?? 0);
+                }
+            }
+
+            $extraLegacyFnbTotal = 0.0;
+            $fnbItems = [];
+            foreach ($tx->transactionFnbs as $tf) {
+                $qtyInPkg = $packageFnbs[(int) $tf->fnb_id] ?? 0;
+                $chargeableQty = ($tx->tipe_transaksi === 'custom_package')
+                    ? max(0, (int) $tf->qty - $qtyInPkg)
+                    : (int) $tf->qty;
+                $extraSubtotal = $chargeableQty * (float) $tf->harga_jual;
+                $extraLegacyFnbTotal += $extraSubtotal;
+
+                $fnbItems[] = [
+                    'source' => 'legacy',
+                    'order_number' => null,
+                    'order_status' => null,
+                    'payment_status' => (string) $tx->payment_status,
+                    'fnb_id' => (int) $tf->fnb_id,
+                    'nama' => (string) (optional($tf->fnb)->nama ?? 'Item FnB'),
+                    'qty' => (int) $tf->qty,
+                    'harga_jual' => (float) $tf->harga_jual,
+                    'subtotal' => (float) ($tf->qty * $tf->harga_jual),
+                    'chargeable_qty' => $chargeableQty,
+                    'chargeable_subtotal' => $extraSubtotal,
+                    'is_package_included' => ($tx->tipe_transaksi === 'custom_package' && $qtyInPkg > 0),
+                ];
+            }
+
+            foreach ($tx->fnbOrders as $order) {
+                if (in_array($order->status, [\App\Models\FnbOrder::STATUS_CANCELLED, \App\Models\FnbOrder::STATUS_EXPIRED], true)) {
+                    continue;
+                }
+                foreach ($order->items as $orderItem) {
+                    $itemPaid = ($orderItem->payment_status === 'paid' || $order->payment_status === 'paid') ? 'paid' : 'unpaid';
+                    $fnbItems[] = [
+                        'source' => 'fnb_order',
+                        'order_number' => (string) $order->order_number,
+                        'order_status' => (string) $order->status,
+                        'payment_status' => $itemPaid,
+                        'fnb_id' => (int) $orderItem->fnb_id,
+                        'nama' => (string) (optional($orderItem->fnb)->nama ?? 'Item FnB'),
+                        'qty' => (int) $orderItem->qty,
+                        'harga_jual' => (float) $orderItem->unit_price_jual,
+                        'subtotal' => (float) $orderItem->subtotal,
+                    ];
+                }
+            }
+
+            $unpaidOrderFnbTotal = (float) $tx->unpaid_fnb_order_total;
+            $paidOrderFnbTotal = (float) $tx->paid_fnb_order_total;
+            $fnbPaidTotal = $paidOrderFnbTotal + ($tx->payment_status === 'paid' ? $extraLegacyFnbTotal : 0.0);
+            $fnbUnpaidTotal = $unpaidOrderFnbTotal + ($tx->payment_status === 'paid' ? 0.0 : $extraLegacyFnbTotal);
+            $totalFnbDisplay = $fnbPaidTotal + $fnbUnpaidTotal;
+
+            if ($tx->tipe_transaksi === 'custom_package') {
+                $rentalSubtotal = (float) ($tx->harga ?: $tx->total);
+            } elseif ($tx->tipe_transaksi === 'prepaid') {
+                $rentalSubtotal = max(0.0, (float) $tx->total - $extraLegacyFnbTotal);
+            } else {
+                $rentalSubtotal = 0.0;
+            }
+
+            $txSummaries[(int) $devId] = [
+                'rental_subtotal' => $rentalSubtotal,
+                'fnb_paid_total' => $fnbPaidTotal,
+                'fnb_unpaid_total' => $fnbUnpaidTotal,
+                'total_fnb_display' => $totalFnbDisplay,
+            ];
+
+            $customPkgData = null;
+            if ($tx->custom_package) {
+                $customPkgData = [
+                    'id' => (int) $tx->custom_package->id,
+                    'nama_paket' => (string) $tx->custom_package->nama_paket,
+                    'harga_total' => (float) $tx->custom_package->harga_total,
+                    'playstations' => $tx->custom_package->playstations->map(fn ($p) => [
+                        'id' => (int) $p->id,
+                        'nama' => (string) $p->nama,
+                        'lama_main' => (int) ($p->pivot->lama_main ?? 0),
+                    ])->values()->all(),
+                    'fnbs' => $tx->custom_package->fnbs->map(fn ($f) => [
+                        'id' => (int) $f->id,
+                        'nama' => (string) $f->nama,
+                        'quantity' => (int) ($f->pivot->quantity ?? 1),
+                    ])->values()->all(),
+                ];
+            }
+
+            $resolvedPsNama = optional($tx->playstation)->nama ?: (optional($txDevice)->playstation_names ?: null);
+
+            $activeTxPayload[(string) $devId] = [
+                'id_transaksi' => (int) $tx->id_transaksi,
+                'device_id' => (int) $tx->device_id,
+                'playstation_id' => $tx->playstation_id ? (int) $tx->playstation_id : null,
+                'playstation_nama' => $resolvedPsNama,
+                'nama' => (string) $tx->nama,
+                'no_telepon' => $tx->no_telepon ? (string) $tx->no_telepon : null,
+                'tipe_transaksi' => (string) $tx->tipe_transaksi,
+                'status_transaksi' => (string) $tx->status_transaksi,
+                'payment_status' => (string) $tx->payment_status,
+                'payment_method' => $tx->payment_method ? (string) $tx->payment_method : null,
+                'waktu_mulai' => (string) $tx->waktu_mulai,
+                'waktu_Selesai' => $tx->waktu_Selesai ? (string) $tx->waktu_Selesai : null,
+                'started_at' => optional($tx->started_at)->toIso8601String()
+                    ?: ($tx->created_at ? $tx->created_at->toDateString() . 'T' . (strlen((string) $tx->waktu_mulai) === 5 ? $tx->waktu_mulai . ':00' : $tx->waktu_mulai) : null),
+                'expires_at' => optional($tx->expires_at)->toIso8601String(),
+                'lost_time_start' => optional($tx->lost_time_start)->toIso8601String(),
+                'display_duration' => (string) $tx->display_duration,
+                'harga' => (float) ($tx->harga ?? 0),
+                'diskon' => (float) ($tx->diskon ?? 0),
+                'total' => (float) ($tx->total ?? 0),
+                'rental_subtotal' => $rentalSubtotal,
+                'fnb_unpaid_total' => $fnbUnpaidTotal,
+                'fnb_paid_total' => $fnbPaidTotal,
+                'fnb_items' => $fnbItems,
+                'custom_package' => $customPkgData,
+            ];
+        }
+
+        $customPackagesPayload = $customPackages->map(function ($pkg) {
+            return [
+                'id' => (int) $pkg->id,
+                'nama_paket' => (string) $pkg->nama_paket,
+                'harga_total' => (float) $pkg->harga_total,
+                'deskripsi' => $pkg->deskripsi ? (string) $pkg->deskripsi : null,
+                'price_group_id' => $pkg->price_group_id ? (int) $pkg->price_group_id : null,
+                'playstations' => $pkg->playstations->map(fn ($p) => [
+                    'id' => (int) $p->id,
+                    'nama' => (string) $p->nama,
+                    'lama_main' => (int) ($p->pivot->lama_main ?? 0),
+                ])->values()->all(),
+                'fnbs' => $pkg->fnbs->map(fn ($f) => [
+                    'id' => (int) $f->id,
+                    'nama' => (string) $f->nama,
+                    'quantity' => (int) ($f->pivot->quantity ?? 1),
+                ])->values()->all(),
+            ];
+        })->values()->all();
+
+        $fnbsPayload = $fnbs->map(function ($fnb) {
+            return [
+                'id' => (int) $fnb->id,
+                'nama' => (string) $fnb->nama,
+                'harga_jual' => (float) $fnb->harga_jual,
+                'effective_price' => (float) ($fnb->effective_price ?? $fnb->harga_jual),
+                'stok' => (int) $fnb->stok,
+                'price_group_id' => $fnb->price_group_id ? (int) $fnb->price_group_id : null,
+            ];
+        })->values()->all();
+
+        $locationsPayload = $locations->map(function ($loc) {
+            return [
+                'id' => (int) $loc->id,
+                'name' => (string) $loc->name,
+                'code' => (string) $loc->code,
+                'type' => (string) $loc->type,
+                'device_id' => $loc->device_id ? (int) $loc->device_id : null,
+            ];
+        })->values()->all();
+
+        $posBootstrap = [
+            'serverTimestamp' => (int) $serverTimestamp,
+            'serverNow' => (string) $serverNow,
+            'csrfToken' => csrf_token(),
+            'canOperate' => $canOperate,
+            'routes' => [
+                'storeTransaction' => route('transaction.store'),
+                'fnbStore' => route('fnb.orders.store'),
+                'timersSync' => route('device.timers'),
+                'apiHourlyPrices' => url('/api/get-hourly-prices'),
+                'apiCalcDurationPrice' => url('/api/calculate-duration-price'),
+                'deviceStopTemplate' => url('/device/__DEVICE_ID__/stop'),
+                'transactionEndTemplate' => url('/transaction/__TX_ID__/end'),
+                'paymentTemplate' => url('/transaction/__TX_ID__/payment'),
+                'editTemplate' => url('/transaction/__TX_ID__/edit'),
+                'printTemplate' => url('/transaction/__TX_ID__/print'),
+                'fnbQueue' => route('fnb.queue.index'),
+                'fnbInvoiceTemplate' => url('/fnb/invoices/__INVOICE_ID__'),
+            ],
+            'devices' => $devicesPayload,
+            'activeTransactions' => $activeTxPayload,
+            'customPackages' => $customPackagesPayload,
+            'fnbs' => $fnbsPayload,
+            'locations' => $locationsPayload,
+        ];
+    @endphp
+
+    @include('transaction.partials._styles')
+
+    <div class="container-fluid px-3 px-md-4 pos-shell">
+        @if (session()->has('success'))
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                {{ session('success') }}
+                <button type="button" class="close" data-dismiss="alert" aria-label="Tutup">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+        @endif
+
+        @if (session()->has('gagal'))
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                {{ session('gagal') }}
+                <button type="button" class="close" data-dismiss="alert" aria-label="Tutup">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+        @endif
+
+        @if ($errors->any())
+            <div class="alert alert-danger" role="alert">
+                <ul class="mb-0 pl-3">
+                    @foreach ($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
+        <div id="pos-feedback-banner" class="pos-feedback-banner" role="status" aria-live="polite" hidden>
+            <span id="pos-feedback-message"></span>
+        </div>
+
+        <header class="pos-header">
+            <div class="pos-header-top">
+                <div>
+                    <h1 class="pos-title">Operasional Kasir</h1>
+                    <p class="pos-subtitle">Kontrol billing stasiun real-time, order cafe, dan riwayat transaksi.</p>
                 </div>
-                <div class="col-md-4">
-                    <div class="card border-left-success shadow h-100 py-2">
-                        <div class="card-body d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Paket</div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $prepaidCount }}</div>
-                            </div>
-                            <div>
-                                <i class="fas fa-credit-card fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card border-left-warning shadow h-100 py-2">
-                        <div class="card-body d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Custom Paket</div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $customPackageCount }}</div>
-                            </div>
-                            <div>
-                                <i class="fas fa-box fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
+
+                <div class="pos-header-actions">
+                    <a href="{{ route('device.index') }}" class="pos-btn pos-btn-outline-secondary">
+                        <i class="fas fa-desktop" aria-hidden="true"></i>
+                        <span>Kontrol Hardware</span>
+                    </a>
+
+                    @if ($canOperate)
+                        <a href="{{ route('transaction.create') }}" class="pos-btn pos-btn-outline-primary">
+                            <i class="fas fa-file-alt" aria-hidden="true"></i>
+                            <span>Form Lengkap</span>
+                        </a>
+                        <button type="button" id="btn-standalone-cafe" class="pos-btn pos-btn-accent">
+                            <i class="fas fa-coffee" aria-hidden="true"></i>
+                            <span>Order Cafe Mandiri</span>
+                        </button>
+                    @endif
                 </div>
             </div>
-        </div>
-        
-        <!-- Payment Status Row -->
-        <div class="col-md-12">
-            <h5 class="mb-3">Status Pembayaran</h5>
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="card border-left-info shadow h-100 py-2">
-                        <div class="card-body d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Paid</div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $paidCount }}</div>
-                            </div>
-                            <div>
-                                <button type="button" class="btn btn-sm btn-info" data-bs-toggle="modal" data-bs-target="#paymentDetailModal" title="Lihat Detail Pembayaran">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                            </div>
-                        </div>
+
+            <div class="pos-stats-strip" aria-label="Ringkasan Status Stasiun">
+                <div class="pos-stat-item pos-stat-total">
+                    <div>
+                        <div class="pos-stat-label">Total Stasiun</div>
+                        <div class="pos-stat-value" id="stat-total-stations">{{ $stationStats['total'] ?? 0 }}</div>
                     </div>
+                    <span class="pos-stat-icon" aria-hidden="true">
+                        <i class="fas fa-gamepad"></i>
+                    </span>
                 </div>
-                <div class="col-md-6">
-                    <div class="card border-left-warning shadow h-100 py-2">
-                        <div class="card-body d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Unpaid</div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $unpaidCount }}</div>
-                            </div>
-                            <div>
-                                <i class="fas fa-exclamation-triangle fa-2x text-gray-300"></i>
-                            </div>
-                        </div>
+
+                <div class="pos-stat-item pos-stat-available">
+                    <div>
+                        <div class="pos-stat-label">Tersedia</div>
+                        <div class="pos-stat-value" id="stat-available-stations">{{ $stationStats['available'] ?? 0 }}</div>
                     </div>
+                    <span class="pos-stat-icon" aria-hidden="true">
+                        <i class="fas fa-check-circle"></i>
+                    </span>
+                </div>
+
+                <div class="pos-stat-item pos-stat-inuse">
+                    <div>
+                        <div class="pos-stat-label">Sedang Bermain</div>
+                        <div class="pos-stat-value" id="stat-inuse-stations">{{ $stationStats['in_use'] ?? 0 }}</div>
+                    </div>
+                    <span class="pos-stat-icon" aria-hidden="true">
+                        <i class="fas fa-play-circle"></i>
+                    </span>
+                </div>
+
+                <div class="pos-stat-item pos-stat-unpaid">
+                    <div>
+                        <div class="pos-stat-label">Belum Lunas</div>
+                        <div class="pos-stat-value" id="stat-unpaid-attention">{{ $stationStats['unpaid_attention'] ?? 0 }}</div>
+                    </div>
+                    <span class="pos-stat-icon" aria-hidden="true">
+                        <i class="fas fa-receipt"></i>
+                    </span>
                 </div>
             </div>
-        </div>
-    </div>
+        </header>
 
-    <div class="card shadow mb-4">
-        <!-- Card Header - Dropdown -->
-        <div class="card-header py-3">
-            <div class="d-flex justify-content-between align-items-center">
-                <div class="d-flex align-items-center">
-                    <form method="GET" action="{{ route('transaction.index') }}" class="d-flex mr-2">
-                        <select name="type" class="form-control form-control-sm mr-2">
-                            <option value="all" {{ $currentType == 'all' ? 'selected' : '' }}>Semua</option>
-                            <option value="prepaid" {{ $currentType == 'prepaid' ? 'selected' : '' }}>Paket</option>
-                            <option value="postpaid" {{ $currentType == 'postpaid' ? 'selected' : '' }}>Lost Time</option>
-                            <option value="custom_package" {{ $currentType == 'custom_package' ? 'selected' : '' }}>Custom Paket</option>
-                        </select>
-                        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
-                    </form>
-                </div>
-                
-                <div class="d-flex align-items-center">
-                    @if (auth()->user()->isAdmin() || auth()->user()->isKasir())
-                        <a href="{{ route('transaction.create') }}" class="btn btn-primary btn-sm">
-                            <i class="fas fa-plus"></i> Tambah Data Pesanan
+        <div class="pos-tablist-wrap">
+            <div class="pos-tablist" role="tablist" aria-label="Navigasi Operasional Kasir">
+                <button
+                    type="button"
+                    role="tab"
+                    id="tab-stations"
+                    class="pos-tab"
+                    data-tab="stations"
+                    aria-selected="{{ $currentTab === 'stations' ? 'true' : 'false' }}"
+                    tabindex="{{ $currentTab === 'stations' ? '0' : '-1' }}"
+                >
+                    <span>Stasiun</span>
+                    <span class="pos-tab-badge">{{ $stationStats['total'] ?? 0 }}</span>
+                </button>
+                <button
+                    type="button"
+                    role="tab"
+                    id="tab-history"
+                    class="pos-tab"
+                    data-tab="history"
+                    aria-selected="{{ $currentTab === 'history' ? 'true' : 'false' }}"
+                    tabindex="{{ $currentTab === 'history' ? '0' : '-1' }}"
+                >
+                    <span>Riwayat Transaksi</span>
+                </button>
+            </div>
+        </div>
+
+        <section
+            id="panel-stations"
+            role="tabpanel"
+            aria-labelledby="tab-stations"
+            class="pos-tabpanel"
+            @if ($currentTab !== 'stations') hidden @endif
+        >
+            @if ($devices->isEmpty())
+                <div class="pos-empty-state">
+                    <i class="fas fa-tv fa-2x text-muted" aria-hidden="true"></i>
+                    <h2>Belum Ada Perangkat Terdaftar</h2>
+                    <p class="mb-3">
+                        Belum ada perangkat terdaftar. Tambahkan perangkat di menu Data Perangkat untuk mulai operasional.
+                    </p>
+                    @if ($isAdmin)
+                        <a href="{{ route('device.index') }}" class="pos-btn pos-btn-primary">
+                            <i class="fas fa-plus" aria-hidden="true"></i> Kelola Data Perangkat
                         </a>
                     @endif
                 </div>
-            </div>
-        </div>
-        <!-- Card Body -->
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-bordered table-hover">
-                <thead>
-                    <tr>
-                        <th scope="col">ID Transaksi</th>
-                        <th scope="col">Nama</th>
-                        <th scope="col">Data Perangkat</th>
-                        <th scope="col">Tipe</th>
-                        <th scope="col">Jam Main</th>
-                        <th scope="col">Waktu Mulai</th>
-                        <th scope="col">Waktu Selesai</th>
-                        <th scope="col">FnB</th>
-                        <th scope="col">Total</th>
-                        <th scope="col">Diskon</th>
-                        <th scope="col">Total Setelah Diskon</th>
-                        <th scope="col">Tanggal</th>
-                        <th scope="col">Status Transaksi</th>
-                        <th scope="col">Status Pembayaran</th>
-                       
-
-                        @if (auth()->user()->isAdmin() || auth()->user()->isKasir())
-                            <th scope="col">Action</th>
-                        @endif
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach ($transactions as $transaksi)
-                        <tr>
-                            <td>{{ $transaksi->id_transaksi }}</td>
-                            <td>{{ $transaksi->nama }}</td>
-                            <td>
-                                @if($transaksi->device && $transaksi->device->playstation)
-                                    {{ $transaksi->device->nama }} - {{ $transaksi->device->playstation->nama }}
-                                @else
-                                    N/A
-                                @endif
-                            </td>
-                            <td>
-                                @if($transaksi->tipe_transaksi === 'prepaid')
-                                    Paket
-                                @elseif($transaksi->tipe_transaksi === 'custom_package')
-                                    Custom Paket - {{ $transaksi->custom_package ? $transaksi->custom_package->nama_paket : 'N/A' }}
-                                @else
-                                    Lost Time
-                                @endif
-                            </td>
-                            <td>
-                                {{ $transaksi->display_duration }}
-                            </td>
-                            <td>{{ $transaksi->waktu_mulai }}</td>
-                            <td>{{ $transaksi->waktu_Selesai ?: '-' }}</td>
-                            <td>
-                                @if($transaksi->transactionFnbs->isEmpty())
-                                    -
-                                @else
-                                    @foreach($transaksi->transactionFnbs as $fnbItem)
-                                        {{ $fnbItem->fnb->nama }} ({{ $fnbItem->qty }} x Rp {{ number_format($fnbItem->harga_jual, 0, ',', '.') }})
-                                        @if(!$loop->last), @endif
-                                    @endforeach
-                                @endif
-                            </td>
-                            <td>{{ 'Rp ' . number_format($transaksi->total, 0, ',', '.') }}</td>
-                            <td>
-                                @if($transaksi->diskon && $transaksi->diskon > 0)
-                                    {{ $transaksi->diskon }}%
-                                @else
-                                    -
-                                @endif
-                            </td>
-                            <td>
-                                @if($transaksi->diskon && $transaksi->diskon > 0)
-                                    {{ 'Rp ' . number_format($transaksi->total - ($transaksi->total * $transaksi->diskon / 100), 0, ',', '.') }}
-                                @else
-                                    {{ 'Rp ' . number_format($transaksi->total, 0, ',', '.') }}
-                                @endif
-                            </td>
-                            <td>{{ $transaksi->created_at }}</td>
-                            <td>{{ ucfirst($transaksi->status_transaksi) }}</td>
-                            <td>
-                                @if($transaksi->payment_status === 'paid')
-                                    Paid - 
-                                    @if($transaksi->payment_method === 'tunai')
-                                        Pembayaran Tunai
-                                    @elseif($transaksi->payment_method === 'e-wallet')
-                                        Pembayaran Menggunakan E-Wallet
-                                    @elseif($transaksi->payment_method === 'transfer_bank')
-                                        Transfer Bank
-                                    @else
-                                        {{ ucfirst($transaksi->payment_method ?? 'N/A') }}
-                                    @endif
-                                @else
-                                    {{ ucfirst($transaksi->payment_status) }}
-                                @endif
-                            </td>
-
-
-                            @if ((auth()->user()->isAdmin() || auth()->user()->isKasir()) && $transaksi->device)
-                                <td>
-                                    <div class="btn-group" role="group" aria-label="Action Buttons">
-                                        <a href="{{ route('transaction.show', ['transaction' => $transaksi->id_transaksi]) }}" class="btn btn-info btn-sm" title="Detail">
-                                            <i class="fas fa-eye"></i>
-                                        </a>
-                                        @if($transaksi->payment_status === 'paid')
-                                            <a href="{{ route('transaction.print', $transaksi->id_transaksi) }}" class="btn btn-secondary btn-sm" title="Cetak Struk" target="_blank">
-                                                <i class="fas fa-print"></i>
-                                            </a>
-                                        @endif
-                                        @if($transaksi->payment_status === 'unpaid')
-                                            <a href="{{ route('transaction.showPayment', ['id' => $transaksi->id_transaksi]) }}" class="btn btn-success btn-sm" title="Bayar">
-                                                <i class="fas fa-credit-card"></i> Bayar
-                                            </a>
-                                        @endif
-                                        @if($transaksi->payment_status === 'unpaid')
-                                            <a href="{{ route('transaction.edit', $transaksi->id_transaksi) }}" class="btn btn-warning btn-sm" title="Edit">
-                                                <i class="fas fa-edit"></i> Edit
-                                            </a>
-                                        @endif
-                                        @if($transaksi->payment_status === 'unpaid')
-                                            <a href="{{ route('transaction.add-order', $transaksi->id_transaksi) }}" class="btn btn-primary btn-sm" title="Tambah Pesanan">
-                                                <i class="fas fa-plus"></i> Tambah Pesanan
-                                            </a>
-                                        @endif
-
-                                        <form action="/transaction/{{ $transaksi->id }}/update" method="post" class="d-inline">
-                                            @method('put')
-                                            @csrf
-                                            <input type="hidden" name="device_id" value="{{ $transaksi->device->id }}">
-                                            <input type="hidden" name="status" value="digunakan">
-                                            <input type="hidden" name="status_transaksi" value="sukses">
-                                            {{-- <button class="btn btn-success btn-sm" onclick="return confirm('Are you sure?')" title="Update Status">
-                                                <i class="fa fa-check-square fa-lg" aria-hidden="true"></i>
-                                            </button> --}}
-                                        </form>
-                                        @if($transaksi->status_transaksi === 'berjalan' && $transaksi->id)
-                                            <form action="{{ route('transaction.end', ['transaction' => $transaksi->id_transaksi]) }}" method="post" class="d-inline">
-                                                @csrf
-                                                <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Apakah Anda yakin ingin mengakhiri transaksi ini?')" title="Selesai">
-                                                    <i class="fas fa-stop-circle"></i> Selesai
-                                                </button>
-                                            </form>
-                                        @endif
-                                        <form action="/transaction/{{ $transaksi->id }}" method="post" class="d-inline">
-                                            @method('delete')
-                                            @csrf
-                                            {{-- <button class="btn btn-danger btn-sm" onclick="return confirm('Are you sure?')" title="Hapus">
-                                                <i class="fas fa-trash-alt fa-lg"></i>
-                                            </button> --}}
-                                        </form>
-                                    </div>
-                                </td>
-                            @endif
-                        </tr>
+            @else
+                <div class="pos-station-grid" id="pos-station-grid">
+                    @foreach ($devices as $device)
+                        @include('transaction.partials._station_card', [
+                            'device' => $device,
+                            'stationNum' => $stationNumbers[$device->id] ?? null,
+                            'activeTx' => $activeTransactions->get($device->id),
+                            'txSummary' => $txSummaries[$device->id] ?? null,
+                            'canOperate' => $canOperate,
+                        ])
                     @endforeach
-                </tbody>
-                </table>
-            </div>
-            {{ $transactions->links() }}
-        </div>
-    </div>
-    </div>
-<style>
-    .btn-group .btn {
-        margin-right: 4px;
-    }
-    .btn-group .btn:last-child {
-        margin-right: 0;
-    }
-    .timer {
-        font-weight: 600;
-        color: #333;
-    }
-    .timer-display {
-        font-family: monospace;
-    }
-    table.table-bordered {
-        border: 1px solid #dee2e6;
-    }
-    table.table-bordered th,
-    table.table-bordered td {
-        border: 1px solid #dee2e6;
-        vertical-align: middle;
-    }
-</style>
-<script>
-    function updateTimers() {
-        const timers = document.querySelectorAll('.timer');
-        timers.forEach(timer => {
-            const start = timer.getAttribute('data-start');
-            const transactionId = timer.getAttribute('data-transaction-id');
-            const displayElement = timer.querySelector('.timer-display');
-
-            if (!start || !displayElement) {
-                return;
-            }
-
-            const startTime = new Date(start);
-            const now = new Date();
-            let diff = Math.floor((now - startTime) / 1000); // difference in seconds
-
-            if (diff < 0) {
-                diff = 0;
-            }
-
-            const hours = Math.floor(diff / 3600);
-            const minutes = Math.floor((diff % 3600) / 60);
-            const seconds = diff % 60;
-
-            const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            const durationString = `${hours} jam ${minutes} menit`;
-
-            displayElement.textContent = `Lama Main: ${timeString} (${durationString})`;
-        });
-    }
-
-    // Update timers every second
-    setInterval(updateTimers, 1000);
-
-    // Initial update when page loads
-    document.addEventListener('DOMContentLoaded', updateTimers);
-
-    // Handle STOP button clicks to stop timer immediately
-    document.addEventListener('submit', function(e) {
-        if (e.target.matches('form[action*="end"]')) {
-            e.preventDefault();
-
-            const form = e.target;
-            const transactionId = form.action.split('/').pop();
-
-            // Stop the timer immediately
-            const timer = document.querySelector(`.timer[data-transaction-id="${transactionId}"]`);
-            if (timer) {
-                const displayElement = timer.querySelector('.timer-display');
-                if (displayElement) {
-                    displayElement.textContent = 'Menghentikan...';
-                }
-            }
-
-            // Submit the form
-            fetch(form.action, {
-                method: 'POST',
-                body: new FormData(form),
-                headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                }
-            }).then(response => {
-                if (response.ok) {
-                    window.location.reload();
-                } else {
-                    alert('Terjadi kesalahan saat mengakhiri transaksi');
-                    // Restart timer if failed
-                    updateTimers();
-                }
-            }).catch(error => {
-                alert('Terjadi kesalahan saat mengakhiri transaksi');
-                // Restart timer if failed
-                updateTimers();
-            });
-        }
-    });
-</script>
-
-<!-- Payment Detail Modal -->
-<div class="modal fade" id="paymentDetailModal" tabindex="-1" aria-labelledby="paymentDetailModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="paymentDetailModalLabel">Detail Pembayaran</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="text-center mb-3">
-                    <h4 class="text-info">Total Transaksi Paid</h4>
-                    <h2 class="font-weight-bold">{{ $paidCount }}</h2>
                 </div>
-                
-                <hr>
-                
-                <div class="payment-method-details">
-                    <h6 class="text-muted mb-3">Jenis Pembayaran:</h6>
-                    
-                    @if($paymentMethodCounts['tunai'] > 0)
-                    <div class="payment-method-item mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="fw-bold">Pembayaran Tunai</span>
-                            <span class="badge bg-primary">{{ $paymentMethodCounts['tunai'] }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="text-muted">Total Uang</span>
-                            <span class="fw-bold text-success">Rp {{ number_format($paymentMethodTotals['tunai'], 0, ',', '.') }}</span>
-                        </div>
-                    </div>
-                    @endif
-                    
-                    @if($paymentMethodCounts['e-wallet'] > 0)
-                    <div class="payment-method-item mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="fw-bold">Pembayaran E-Wallet</span>
-                            <span class="badge bg-success">{{ $paymentMethodCounts['e-wallet'] }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="text-muted">Total Uang</span>
-                            <span class="fw-bold text-success">Rp {{ number_format($paymentMethodTotals['e-wallet'], 0, ',', '.') }}</span>
-                        </div>
-                    </div>
-                    @endif
-                    
-                    @if($paymentMethodCounts['transfer_bank'] > 0)
-                    <div class="payment-method-item mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="fw-bold">Pembayaran Transfer Bank</span>
-                            <span class="badge bg-warning">{{ $paymentMethodCounts['transfer_bank'] }}</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="text-muted">Total Uang</span>
-                            <span class="fw-bold text-success">Rp {{ number_format($paymentMethodTotals['transfer_bank'], 0, ',', '.') }}</span>
-                        </div>
-                    </div>
-                    @endif
-                    
-                    @if($paidCount == 0)
-                    <div class="text-center text-muted">
-                        <i class="fas fa-info-circle fa-3x mb-3"></i>
-                        <p>Belum ada pembayaran</p>
-                    </div>
-                    @endif
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
-            </div>
-        </div>
+            @endif
+        </section>
+
+        <section
+            id="panel-history"
+            role="tabpanel"
+            aria-labelledby="tab-history"
+            class="pos-tabpanel"
+            @if ($currentTab !== 'history') hidden @endif
+        >
+            @include('transaction.partials._history_tab', [
+                'canOperate' => $canOperate,
+            ])
+        </section>
     </div>
-</div>
+
+    <script type="application/json" id="pos-bootstrap-data">{!! json_encode($posBootstrap, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) !!}</script>
+
+    @include('transaction.partials._modals')
+@endsection
+
+@section('scripts')
+    <script src="{{ asset('js/transaction-dashboard.js') }}" defer></script>
 @endsection

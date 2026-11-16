@@ -8,7 +8,9 @@ use App\Models\Playstation;
 use App\Models\Transaction;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class DeviceController extends Controller
 {
@@ -139,21 +141,31 @@ class DeviceController extends Controller
             $device->update(['status' => $newStatus]);
         }
 
-        $latestTransactionsSub = Transaction::select('device_id', DB::raw('MAX(created_at) as latest_transaction_at'))
-            ->groupBy('device_id');
-
         $withRelations = ['playstations', 'playstation'];
-        if (\Illuminate\Support\Facades\Schema::hasTable('station_device_mappings')) {
+        if (Schema::hasTable('station_device_mappings')) {
             $withRelations[] = 'activeHardwareMappings.physicalDevice';
             $withRelations[] = 'activeDisplayTv.physicalDevice';
         }
+        if (Schema::hasTable('locations')) {
+            $withRelations[] = 'locations';
+        }
 
-        $devices = Device::select('devices.*')
-            ->leftJoinSub($latestTransactionsSub, 'latest_transactions', 'devices.id', '=', 'latest_transactions.device_id')
-            ->orderByRaw('CASE WHEN devices.status = "Digunakan" THEN 0 ELSE 1 END')
-            ->orderBy('latest_transactions.latest_transaction_at', 'desc')
-            ->with($withRelations)
-            ->paginate(12);
+        $sortedDevices = Device::sortStationsDeterministically(
+            Device::with($withRelations)->get()
+        );
+
+        $perPage = 25;
+        $currentPage = LengthAwarePaginator::resolveCurrentPage();
+        $devices = new LengthAwarePaginator(
+            $sortedDevices->forPage($currentPage, $perPage)->values(),
+            $sortedDevices->count(),
+            $perPage,
+            $currentPage,
+            [
+                'path' => request()->url(),
+                'query' => request()->query(),
+            ]
+        );
 
         // Count devices by status
         $countAvailable = Device::where('status', 'Tersedia')->count();
