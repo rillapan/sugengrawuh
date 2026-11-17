@@ -318,12 +318,12 @@
                 
                 <div class="transaction-types">
                     <div class="transaction-card">
-                        <h3><i class="fas fa-box"></i> Transaksi Paket</h3>
+                        <h3><i class="fas fa-box"></i> Transaksi Timer</h3>
                         <ul>
                             <li>Pelanggan menyewa perangkat berdasarkan paket waktu yang telah ditentukan pada data jenis perangkat.</li>
                             <li>Perangkat yang dibooking akan berstatus "Digunakan".</li>
                             <li>Setelah waktu bermain habis, status akan otomatis kembali menjadi "Tersedia".</li>
-                            <li>Timer akan menghitung mundur sesuai durasi paket.</li>
+                            <li>Timer akan menghitung mundur sesuai durasi timer.</li>
                             <li>Pembayaran dapat dilakukan di awal atau di akhir.</li>
                         </ul>
                     </div>

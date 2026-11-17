@@ -436,7 +436,7 @@
                 </div>
                 <div class="pos-legend-item">
                     <span class="pos-hw-dot" style="background-color: #4f46e5;" aria-hidden="true"></span>
-                    <span>Bermain (Paket)</span>
+                    <span>Bermain (Timer)</span>
                 </div>
                 <div class="pos-legend-item">
                     <span class="pos-hw-dot" style="background-color: var(--pos-red);" aria-hidden="true"></span>

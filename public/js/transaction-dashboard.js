@@ -1331,7 +1331,7 @@
                             return;
                         }
                         if (seq === paketSubmitSeq) {
-                            showDialogError(errorEl, extractErrorMessage(res.data, 'Gagal memproses transaksi paket.'));
+                            showDialogError(errorEl, extractErrorMessage(res.data, 'Gagal memproses transaksi timer.'));
                             setPaketSubmittingState(false);
                         }
                     })
@@ -1592,7 +1592,7 @@
                 }
 
                 var txTypeLabel = tx.tipe_transaksi === 'prepaid'
-                    ? 'Paket'
+                    ? 'Timer'
                     : (tx.tipe_transaksi === 'custom_package' ? 'Custom Paket' : 'Lost Time');
                 var isRunningPostpaid = (tx.tipe_transaksi === 'postpaid' && tx.status_transaksi === 'berjalan');
                 var fnbSubtotal = Number(tx.fnb_paid_total || 0) + Number(tx.fnb_unpaid_total || 0);

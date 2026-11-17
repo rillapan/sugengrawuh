@@ -59,7 +59,7 @@
                             <label for="tipe_transaksi" class="form-label">Tipe Transaksi <span class="text-danger">*</span></label>
                             <select class="form-control" id="tipe_transaksi" name="tipe_transaksi" required>
                                 <option value="postpaid" {{ $transaction->tipe_transaksi === 'postpaid' ? 'selected' : '' }}>Lost Time</option>
-                                <option value="prepaid" {{ $transaction->tipe_transaksi === 'prepaid' ? 'selected' : '' }}>Paket</option>
+                                <option value="prepaid" {{ $transaction->tipe_transaksi === 'prepaid' ? 'selected' : '' }}>Timer</option>
                                 <option value="custom_package" {{ $transaction->tipe_transaksi === 'custom_package' ? 'selected' : '' }}>Custom Paket</option>
                             </select>
                             <small class="text-muted">Anda dapat mengubah tipe transaksi. Timer akan tetap berjalan.</small>
@@ -78,7 +78,7 @@
                                                 <span class="timer-value">00:00:00</span>
                                             </div>
                                             <small class="text-muted" id="current_timer_type">
-                                                {{ $transaction->tipe_transaksi === 'postpaid' ? 'Lost Time (Count Up)' : 'Paket (Countdown)' }}
+                                                {{ $transaction->tipe_transaksi === 'postpaid' ? 'Lost Time (Count Up)' : 'Timer (Countdown)' }}
                                             </small>
                                         </div>
                                     </div>
@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const totalSeconds = currentJamMain * 3600;
             const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
             currentTimerEl.textContent = formatTime(remainingSeconds);
-            currentTimerTypeEl.textContent = 'Paket (Countdown ⏳)';
+            currentTimerTypeEl.textContent = 'Timer (Countdown ⏳)';
         } else {
             // Custom Package
             const totalSeconds = currentJamMain * 60; // jam_main is in minutes for custom package
@@ -404,7 +404,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             newTimerEl.textContent = formatTime(remainingSeconds);
-            newTimerTypeEl.textContent = 'Paket (Countdown ⏳)';
+            newTimerTypeEl.textContent = 'Timer (Countdown ⏳)';
             
             const hours = Math.floor(elapsedMinutes / 60);
             const mins = elapsedMinutes % 60;
@@ -412,9 +412,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const remMins = Math.floor((remainingSeconds % 3600) / 60);
             
             if (remainingSeconds === 0) {
-                explanationEl.innerHTML = `<strong class="text-danger">⚠️ Overtime!</strong> Waktu sudah terpakai ${hours} jam ${mins} menit, melebihi paket ${jamMain} jam. Timer akan menunjukkan 00:00:00.`;
+                explanationEl.innerHTML = `<strong class="text-danger">⚠️ Overtime!</strong> Waktu sudah terpakai ${hours} jam ${mins} menit, melebihi timer ${jamMain} jam. Timer akan menunjukkan 00:00:00.`;
             } else {
-                explanationEl.innerHTML = `<strong>Paket → Countdown:</strong> Dari ${jamMain} jam, sudah terpakai ${hours} jam ${mins} menit. Sisa waktu: ${remHours} jam ${remMins} menit.`;
+                explanationEl.innerHTML = `<strong>Timer → Countdown:</strong> Dari ${jamMain} jam, sudah terpakai ${hours} jam ${mins} menit. Sisa waktu: ${remHours} jam ${remMins} menit.`;
             }
             
         } else if (selectedTipe === 'custom_package') {

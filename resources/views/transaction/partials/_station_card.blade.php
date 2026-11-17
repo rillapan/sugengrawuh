@@ -120,7 +120,7 @@
                     data-device-id="{{ $device->id }}"
                 >
                     <i class="fas fa-calendar-alt mr-1" aria-hidden="true"></i>
-                    <span>Paket</span>
+                    <span>Timer</span>
                 </button>
                 <button
                     type="button"
@@ -176,7 +176,7 @@
 
             $isPaid = ($activeTx->payment_status === 'paid');
             $txTypeLabel = match ($activeTx->tipe_transaksi) {
-                'prepaid' => 'Paket',
+                'prepaid' => 'Timer',
                 'custom_package' => 'Custom Paket',
                 default => 'Lost Time',
             };

@@ -44,7 +44,7 @@
                                 </tr>
                                 <tr>
                                     <td><strong>Tipe Transaksi:</strong></td>
-                                   <td>{{ $transaction->tipe_transaksi === 'prepaid' ? 'Paket' : 'Lost Time' }}</td>
+                                   <td>{{ $transaction->tipe_transaksi === 'prepaid' ? 'Timer' : ($transaction->tipe_transaksi === 'custom_package' ? 'Custom Paket' : 'Lost Time') }}</td>
                                 </tr>
                                 
                                 <tr>

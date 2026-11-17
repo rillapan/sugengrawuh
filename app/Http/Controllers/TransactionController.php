@@ -1030,7 +1030,7 @@ class TransactionController extends Controller
                 $request,
                 $transaction,
                 route('transaction.index', ['tab' => 'stations']),
-                'Transaksi paket berhasil disimpan dan sesi dimulai.',
+                'Transaksi timer berhasil disimpan dan sesi dimulai.',
                 true
             );
         }

@@ -252,7 +252,7 @@
                                     @foreach($activeTransactions as $tx)
                                         @php
                                             $isPaket = ($tx->tipe_transaksi !== 'postpaid');
-                                            $txTypeLabel = $isPaket ? 'Paket' : 'Lost Time';
+                                            $txTypeLabel = $isPaket ? 'Timer' : 'Lost Time';
                                             $matchingLoc = $locations->firstWhere('device_id', $tx->device_id);
                                             $txPaymentStatus = strtolower((string) ($tx->payment_status ?? 'unpaid'));
                                         @endphp
@@ -1088,7 +1088,7 @@
             if (customerTypePlaying && customerTypePlaying.checked) {
                 const selectedTx = txSelect ? txSelect.options[txSelect.selectedIndex] : null;
                 const isPaket = selectedTx && selectedTx.getAttribute('data-is-paket') === '1';
-                summaryCustomerType.innerText = 'Aktif Bermain — ' + (isPaket ? 'Paket' : 'Lost Time');
+                summaryCustomerType.innerText = 'Aktif Bermain — ' + (isPaket ? 'Timer' : 'Lost Time');
             } else {
                 const diningOpt = document.querySelector('input[name="dining_option"]:checked');
                 const diningLabel = diningOpt && diningOpt.value === 'takeaway' ? 'Takeaway' : 'Dine-in';

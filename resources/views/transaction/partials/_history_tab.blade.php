@@ -21,7 +21,7 @@
                 <div class="card border-left-success shadow h-100 py-2">
                     <div class="card-body d-flex justify-content-between align-items-center">
                         <div>
-                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Paket</div>
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Timer</div>
                             <div class="h5 mb-0 font-weight-bold text-gray-800">{{ $prepaidCount }}</div>
                         </div>
                         <div>
@@ -109,7 +109,7 @@
                     <label for="history-type" class="sr-only">Filter Tipe Transaksi</label>
                     <select id="history-type" name="type" class="form-control form-control-sm">
                         <option value="all" {{ $currentType == 'all' ? 'selected' : '' }}>Semua</option>
-                        <option value="prepaid" {{ $currentType == 'prepaid' ? 'selected' : '' }}>Paket</option>
+                        <option value="prepaid" {{ $currentType == 'prepaid' ? 'selected' : '' }}>Timer</option>
                         <option value="postpaid" {{ $currentType == 'postpaid' ? 'selected' : '' }}>Lost Time</option>
                         <option value="custom_package" {{ $currentType == 'custom_package' ? 'selected' : '' }}>Custom Paket</option>
                     </select>
@@ -170,7 +170,7 @@
                             </td>
                             <td>
                                 @if ($transaksi->tipe_transaksi === 'prepaid')
-                                    Paket
+                                    Timer
                                 @elseif ($transaksi->tipe_transaksi === 'custom_package')
                                     Custom Paket - {{ $transaksi->custom_package ? $transaksi->custom_package->nama_paket : 'N/A' }}
                                 @else

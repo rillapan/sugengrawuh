@@ -104,7 +104,7 @@
             </div>
             <div class="pos-modal-title-wrap">
                 <div class="pos-modal-title-row">
-                    <h2 id="paketDialogTitle" class="pos-dialog-title">Mulai Sesi Paket</h2>
+                    <h2 id="paketDialogTitle" class="pos-dialog-title">Mulai Sesi Timer</h2>
                     <span class="pos-dialog-badge is-blue">Auto-Sync</span>
                 </div>
                 <div id="paket-station-label" class="pos-dialog-subtitle">Stasiun</div>
@@ -147,8 +147,8 @@
                 </div>
             </div>
 
-            <div class="pos-mode-switch" role="group" aria-label="Pilih Jenis Paket">
-                <button type="button" class="pos-mode-btn" id="btn-mode-prepaid" data-paket-mode="prepaid" aria-pressed="true" autofocus>Paket Reguler</button>
+            <div class="pos-mode-switch" role="group" aria-label="Pilih Jenis Timer">
+                <button type="button" class="pos-mode-btn" id="btn-mode-prepaid" data-paket-mode="prepaid" aria-pressed="true" autofocus>Timer Reguler</button>
                 <button type="button" class="pos-mode-btn" id="btn-mode-custom" data-paket-mode="custom_package" aria-pressed="false">Custom Paket</button>
             </div>
 

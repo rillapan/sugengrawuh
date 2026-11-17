@@ -55,7 +55,7 @@
                             <div class="form-check form-check-inline">
                                 <input class="form-check-input" type="radio" name="tipe_transaksi" id="prepaid" value="prepaid" checked onchange="toggleFields()">
                                 <label class="form-check-label" for="prepaid">
-                                    Paket
+                                    Timer
                                 </label>
                             </div>
                             <div class="form-check form-check-inline">
@@ -567,7 +567,7 @@
 
         function populateDurationOptions(durations, prices) {
             const jamMainSelect = document.getElementById('jam_main_select');
-            jamMainSelect.innerHTML = '<option value="">Pilih durasi paket yang tersedia</option>';
+            jamMainSelect.innerHTML = '<option value="">Pilih durasi timer yang tersedia</option>';
 
             if (durations && durations.length > 0) {
                 durations.forEach(d => {
@@ -1452,7 +1452,7 @@
 
             // Check transaction type
             if (!tipeTransaksi) {
-                errors.push('Silakan pilih jenis transaksi (Paket, Lost Time, atau Custom Paket)');
+                errors.push('Silakan pilih jenis transaksi (Timer, Lost Time, atau Custom Paket)');
             }
 
             // Check required name
@@ -1472,7 +1472,7 @@
                 }
             } else if (tipeTransaksi && tipeTransaksi.value === 'prepaid') {
                 if (!jamMainSelect) {
-                    errors.push('Silakan pilih durasi paket atau masukkan durasi secara manual');
+                    errors.push('Silakan pilih durasi timer atau masukkan durasi secara manual');
                 } else if (jamMainSelect === 'custom') {
                     const cH = parseInt(document.getElementById('custom_hours')?.value) || 0;
                     const cM = parseInt(document.getElementById('custom_minutes')?.value) || 0;

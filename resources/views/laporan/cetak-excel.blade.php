@@ -123,7 +123,7 @@
                     </td>
                     <td>
                         @if($transaksi->tipe_transaksi === 'prepaid')
-                            Paket
+                            Timer
                         @elseif($transaksi->tipe_transaksi === 'custom_package')
                             Custom Paket
                         @else

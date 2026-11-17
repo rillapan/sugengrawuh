@@ -482,7 +482,7 @@
                                         @else stitch-badge-tx-postpaid
                                         @endif">
                                         @if($customers[$device->id]['tipe_transaksi'] === 'prepaid')
-                                            Paket
+                                            Timer
                                         @elseif($customers[$device->id]['tipe_transaksi'] === 'custom_package')
                                             Custom Paket
                                         @else

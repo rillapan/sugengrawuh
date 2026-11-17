@@ -31,7 +31,7 @@
                             <td><strong>Tipe Transaksi:</strong></td>
                             <td>
                                 @if($transaction->tipe_transaksi === 'prepaid')
-                                    Paket
+                                    Timer
                                 @elseif($transaction->tipe_transaksi === 'custom_package')
                                     Custom Paket
                                 @else
