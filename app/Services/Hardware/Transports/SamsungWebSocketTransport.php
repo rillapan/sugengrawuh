@@ -187,6 +187,13 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
 
             $this->connected = true;
 
+            // On modern Samsung Tizen (2020-2024), opening an idle WebSocket channel without a token
+            // does not trigger the on-screen "Allow connection?" prompt.
+            // Dispatching a non-intrusive remote key (KEY_INFO) prompts the TV to display the dialog.
+            if (empty($token)) {
+                $this->sendKey('KEY_INFO');
+            }
+
             // Read message frames — wait for ms.channel.connect or ms.channel.unauthorized.
             // When pairing (no token), allow up to 30s for the user to press 'Allow' on TV remote.
             // When executing operational commands with a token, cap at 5s to avoid blocking callers.
@@ -195,6 +202,9 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
                 ? max(1.0, min(30.0, (float) $timeoutSeconds))
                 : max(1.0, min(5.0, (float) $timeoutSeconds));
             $frame = null;
+
+            // Set socket read timeout to 1 second per check so the loop can poll frames responsively
+            stream_set_timeout($this->socket, 1);
 
             while ((microtime(true) - $startTime) < $maxWaitSeconds) {
                 $frame = $this->readFrame();
@@ -228,10 +238,12 @@ class SamsungWebSocketTransport implements SamsungTransportInterface
             }
 
             return [
-                'success' => true,
-                'status' => !empty($this->lastToken) ? 'PAIRED' : 'CONNECTED',
+                'success' => !empty($this->lastToken),
+                'status' => !empty($this->lastToken) ? 'PAIRED' : (empty($token) ? 'TOKEN_NOT_RECEIVED' : 'CONNECTED'),
                 'token' => $this->lastToken,
-                'message' => 'WebSocket terhubung ke Samsung Remote Channel',
+                'message' => !empty($this->lastToken)
+                    ? 'WebSocket terhubung dan channel pairing aktif'
+                    : (empty($token) ? 'Waktu pairing habis: Token otorisasi belum diterima dari TV' : 'WebSocket terhubung ke Samsung Remote Channel'),
                 'event' => $frame['event'] ?? 'connected',
             ];
         } catch (HardwareSafetyException $e) {

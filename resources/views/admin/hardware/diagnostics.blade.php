@@ -130,13 +130,16 @@
                     <div class="card-body">
                         <div class="form-group mb-3">
                             <label class="font-weight-bold small text-gray-700">Pilihan Transport Layer</label>
+                            @php
+                                $isRealDefault = config('hardware.driver') === 'real';
+                            @endphp
                             <div class="btn-group btn-group-toggle d-flex" data-toggle="buttons">
-                                <label class="btn btn-outline-primary active w-50" id="btnModeFake">
-                                    <input type="radio" name="transportMode" id="optFake" value="fake" checked>
+                                <label class="btn btn-outline-primary {{ $isRealDefault ? '' : 'active' }} w-50" id="btnModeFake">
+                                    <input type="radio" name="transportMode" id="optFake" value="fake" {{ $isRealDefault ? '' : 'checked' }}>
                                     <i class="fas fa-vial mr-1"></i> Fake Transport
                                 </label>
-                                <label class="btn btn-outline-success w-50" id="btnModeReal" title="Uji jaringan nyata ke IP LAN">
-                                    <input type="radio" name="transportMode" id="optReal" value="real">
+                                <label class="btn btn-outline-success {{ $isRealDefault ? 'active' : '' }} w-50" id="btnModeReal" title="Uji jaringan nyata ke IP LAN">
+                                    <input type="radio" name="transportMode" id="optReal" value="real" {{ $isRealDefault ? 'checked' : '' }}>
                                     <i class="fas fa-network-wired mr-1"></i> Real Network
                                 </label>
                             </div>
@@ -146,7 +149,7 @@
                         </div>
 
                         <!-- Scenario Selector for Fake Transport -->
-                        <div class="form-group mb-3" id="groupFakeScenario">
+                        <div class="form-group mb-3" id="groupFakeScenario" style="{{ $isRealDefault ? 'display: none;' : '' }}">
                             <label for="fakeScenarioSelect" class="font-weight-bold small text-gray-700">Skenario Simulasi (Fake Transport)</label>
                             <select id="fakeScenarioSelect" class="form-control form-control-sm">
                                 <option value="SUCCESS">SUCCESS — Perangkat Normal & Responsif</option>

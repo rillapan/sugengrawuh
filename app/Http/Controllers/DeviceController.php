@@ -3,9 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Device;
+use App\Models\HardwarePowerCommandLog;
 use App\Models\Member;
 use App\Models\Playstation;
+use App\Models\StationDeviceMapping;
 use App\Models\Transaction;
+use App\Models\TvAlertEvent;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -647,12 +650,27 @@ class DeviceController extends Controller
                 ], 404);
             }
 
-            // Find any active transaction for this device today
-            $today = Carbon::now()->toDateString();
+            // Find active running transaction for this device, prioritizing running sessions across midnight
             $activeTransaction = Transaction::where('device_id', $id)
-                ->whereDate('created_at', $today)
-                ->latest()
+                ->where(function ($q) {
+                    if (Transaction::hasG2Schema()) {
+                        $q->where('billing_status', Transaction::BILLING_RUNNING);
+                    } else {
+                        $q->where('status_transaksi', '!=', 'selesai');
+                    }
+                })
+                ->latest('id_transaksi')
                 ->first();
+
+            // Fallback for legacy records created today if billing_status was not set
+            if (!$activeTransaction) {
+                $today = Carbon::now()->toDateString();
+                $activeTransaction = Transaction::where('device_id', $id)
+                    ->whereDate('created_at', $today)
+                    ->where('status_transaksi', '!=', 'selesai')
+                    ->latest('id_transaksi')
+                    ->first();
+            }
 
             if (!$activeTransaction) {
                 return response()->json([
@@ -702,7 +720,42 @@ class DeviceController extends Controller
      */
     public function destroy($id)
     {
-        Device::destroy($id);
+        $device = Device::findOrFail($id);
+
+        // Prevent deletion if there are active or unpaid transactions
+        $hasActiveTransactions = Transaction::where('device_id', $id)
+            ->where(function ($q) {
+                $q->whereNull('status_pembayaran')
+                  ->orWhere('status_pembayaran', 'belum_lunas');
+            })
+            ->where('created_at', '>=', now()->subHours(24))
+            ->exists();
+
+        if ($hasActiveTransactions) {
+            return redirect('device')->with('error', 'Perangkat tidak dapat dihapus karena masih memiliki transaksi yang sedang berjalan atau belum lunas.');
+        }
+
+        DB::transaction(function () use ($device, $id) {
+            // Clean up related hardware mappings
+            StationDeviceMapping::where('station_id', $id)->delete();
+
+            // Clean up hardware command logs
+            HardwarePowerCommandLog::where('station_id', $id)->delete();
+
+            // Clean up TV alerts & automation intents if any
+            TvAlertEvent::where('station_id', $id)->delete();
+            DB::table('automation_intents')->where('station_id', $id)->delete();
+            DB::table('automation_execution_logs')->where('station_id', $id)->delete();
+
+            // Detach playstation pivot
+            $device->playstations()->detach();
+
+            // Delete locations
+            $device->locations()->delete();
+
+            // Delete device
+            $device->delete();
+        });
 
         return redirect('device')->with('success', 'Data perangkat berhasil dihapus.');
     }
@@ -905,39 +958,43 @@ class DeviceController extends Controller
         $deviceData = [];
 
         foreach ($devices as $dev) {
-            $txQuery = Transaction::where('device_id', $dev->id);
-            if (Transaction::hasG2Schema()) {
-                $txQuery->where('billing_status', Transaction::BILLING_RUNNING);
-            } else {
-                $txQuery->where('status_transaksi', '!=', 'selesai');
-            }
-            $activeTx = $txQuery->latest()->first();
-
             $txInfo = null;
-            if ($activeTx) {
-                $hasG2 = Transaction::hasG2Schema();
-                $remainingSeconds = 0;
-                if ($hasG2 && $activeTx->expires_at) {
-                    $remainingSeconds = max(0, $now->diffInSeconds($activeTx->expires_at, false));
-                }
 
-                $elapsedSeconds = 0;
-                $started = ($hasG2 && $activeTx->started_at) ? $activeTx->started_at : Carbon::parse($activeTx->created_at->toDateString() . ' ' . $activeTx->waktu_mulai);
-                if ($started) {
-                    $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
+            // Only evaluate active transaction if the device is currently in use
+            if ($dev->status === 'Digunakan') {
+                $txQuery = Transaction::where('device_id', $dev->id);
+                if (Transaction::hasG2Schema()) {
+                    $txQuery->where('billing_status', Transaction::BILLING_RUNNING);
+                } else {
+                    $txQuery->where('status_transaksi', '!=', 'selesai');
                 }
+                $activeTx = $txQuery->latest('id_transaksi')->first();
 
-                $txInfo = [
-                    'id_transaksi' => $activeTx->id_transaksi,
-                    'nama' => $activeTx->nama,
-                    'tipe_transaksi' => $activeTx->tipe_transaksi,
-                    'billing_status' => $hasG2 ? $activeTx->billing_status : 'RUNNING',
-                    'started_at' => ($hasG2 && $activeTx->started_at) ? $activeTx->started_at->toIso8601String() : null,
-                    'expires_at' => ($hasG2 && $activeTx->expires_at) ? $activeTx->expires_at->toIso8601String() : null,
-                    'remaining_seconds' => $remainingSeconds,
-                    'elapsed_seconds' => $elapsedSeconds,
-                    'is_expired' => ($hasG2 && $activeTx->expires_at) ? $now->greaterThanOrEqualTo($activeTx->expires_at) : false,
-                ];
+                if ($activeTx) {
+                    $hasG2 = Transaction::hasG2Schema();
+                    $remainingSeconds = 0;
+                    if ($hasG2 && $activeTx->expires_at) {
+                        $remainingSeconds = max(0, $now->diffInSeconds($activeTx->expires_at, false));
+                    }
+
+                    $elapsedSeconds = 0;
+                    $started = ($hasG2 && $activeTx->started_at) ? $activeTx->started_at : Carbon::parse($activeTx->created_at->toDateString() . ' ' . $activeTx->waktu_mulai);
+                    if ($started) {
+                        $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
+                    }
+
+                    $txInfo = [
+                        'id_transaksi' => $activeTx->id_transaksi,
+                        'nama' => $activeTx->nama,
+                        'tipe_transaksi' => $activeTx->tipe_transaksi,
+                        'billing_status' => $hasG2 ? $activeTx->billing_status : 'RUNNING',
+                        'started_at' => ($hasG2 && $activeTx->started_at) ? $activeTx->started_at->toIso8601String() : null,
+                        'expires_at' => ($hasG2 && $activeTx->expires_at) ? $activeTx->expires_at->toIso8601String() : null,
+                        'remaining_seconds' => $remainingSeconds,
+                        'elapsed_seconds' => $elapsedSeconds,
+                        'is_expired' => ($hasG2 && $activeTx->expires_at) ? $now->greaterThanOrEqualTo($activeTx->expires_at) : false,
+                    ];
+                }
             }
 
             $deviceData[] = [

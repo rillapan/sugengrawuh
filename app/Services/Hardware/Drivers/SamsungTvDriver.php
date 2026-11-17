@@ -193,19 +193,33 @@ class SamsungTvDriver implements HardwareDriverInterface
 
         $token = $response['token'] ?? null;
         if (!empty($token)) {
-            $this->statusService->recordSuccessfulPairing($device, $token, $this->isRealVerifiedMode, $isAuthorizedPairing);
-        }
-        // No token received — do not set PAIRING_PAIRED without evidence of successful authentication.
+            $saved = $this->statusService->recordSuccessfulPairing($device, $token, $this->isRealVerifiedMode, $isAuthorizedPairing);
 
-        return HardwareCommandResult::createRealResult(
+            $msg = ($this->isRealVerifiedMode || $isAuthorizedPairing)
+                ? 'Pairing handshake dengan Samsung Smart TV fisik berhasil diselesaikan dan token telah tersimpan.'
+                : '[SIMULASI] Handshake pairing simulasi berhasil (Mode Fake Transport - Token tidak disimpan ke TV fisik).';
+
+            return HardwareCommandResult::createRealResult(
+                $device->id,
+                self::DRIVER_TYPE,
+                'PAIR',
+                true,
+                'PAIRED',
+                $msg,
+                ['ip' => $device->ip_address, 'pairing_status' => 'PAIRED'],
+                ['token_secured' => true, 'event' => $response['event'] ?? 'ms.channel.connect']
+            );
+        }
+
+        // No token received — do not set PAIRING_PAIRED without evidence of successful authentication.
+        return HardwareCommandResult::createError(
             $device->id,
             self::DRIVER_TYPE,
             'PAIR',
-            true,
-            'PAIRED',
-            'Pairing handshake dengan Samsung Smart TV berhasil diselesaikan',
-            ['ip' => $device->ip_address, 'pairing_status' => 'PAIRED'],
-            ['token_secured' => true, 'event' => $response['event'] ?? 'ms.channel.connect']
+            $response['message'] ?? 'Pairing belum selesai: Tidak ada token otorisasi yang diterima dari TV. Pastikan Anda menekan tombol "Izinkan" pada remote fisik TV.',
+            'TOKEN_NOT_RECEIVED',
+            ['ip' => $device->ip_address, 'pairing_status' => 'UNPAIRED'],
+            false
         );
     }
 

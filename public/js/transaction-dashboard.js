@@ -453,8 +453,10 @@
                             var serverIsUsed = dev.status === 'Digunakan';
 
                             var timerEl = card.querySelector('.js-pos-timer');
-                            var domTxId = (timerEl && timerEl.dataset.txId) ? Number(timerEl.dataset.txId) : null;
-                            var serverTxId = (dev.transaction && dev.transaction.id_transaksi)
+                            var domTxId = (domIsUsed && timerEl && timerEl.dataset.txId)
+                                ? Number(timerEl.dataset.txId)
+                                : null;
+                            var serverTxId = (serverIsUsed && dev.transaction && dev.transaction.id_transaksi)
                                 ? Number(dev.transaction.id_transaksi)
                                 : null;
 
