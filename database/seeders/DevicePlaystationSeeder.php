@@ -15,6 +15,11 @@ class DevicePlaystationSeeder extends Seeder
      */
     public function run()
     {
+        // Guard against recreating sample devices when inventory already exists
+        if (Device::count() > 0) {
+            return;
+        }
+
         // Create a sample device with multiple PlayStation types
         $device = Device::create([
             'nama' => 'Meja 1 - Billiard',

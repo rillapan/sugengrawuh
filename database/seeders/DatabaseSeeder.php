@@ -3,9 +3,9 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\SugengRawuhHardwareSeeder;
 use Database\Seeders\UserSeeder;
 use Database\Seeders\BookingSeeder;
-use Database\Seeders\DevicePlaystationSeeder;
 use Database\Seeders\WorkShiftSeeder;
 use Database\Seeders\PlaystationSeeder;
 
@@ -23,7 +23,7 @@ class DatabaseSeeder extends Seeder
             PlaystationSeeder::class,
             UserSeeder::class,
             BookingSeeder::class,
-            DevicePlaystationSeeder::class,
+            SugengRawuhHardwareSeeder::class,
         ]);
 
         // Buat user admin

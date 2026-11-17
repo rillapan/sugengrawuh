@@ -1,6 +1,106 @@
 @extends('layouts.app', ['title' => $title ?? 'Antrean Order F&B', 'active' => 'fnb-queue'])
 
 @section('content')
+<style>
+    /* Styling Kolom Aksi Antrean F&B */
+    .table-fnb-queue th,
+    .table-fnb-queue td {
+        vertical-align: middle;
+    }
+    .fnb-action-col {
+        width: 175px;
+        min-width: 165px;
+        text-align: center;
+    }
+    .fnb-action-cell {
+        vertical-align: middle !important;
+        text-align: center;
+        padding: 0.55rem 0.5rem !important;
+    }
+    .fnb-actions-wrapper {
+        width: 100%;
+        max-width: 170px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+    .fnb-btn-pay {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.775rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        line-height: 1.25;
+        border: none;
+        background-color: #10b981;
+        color: #ffffff;
+        box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+        transition: background-color 0.15s ease, transform 0.1s ease;
+    }
+    .fnb-btn-pay:hover {
+        background-color: #059669;
+        color: #ffffff;
+        transform: translateY(-1px);
+    }
+    .fnb-btn-pay:active {
+        background-color: #047857;
+        transform: translateY(0);
+    }
+    .fnb-actions-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+        width: 100%;
+    }
+    .fnb-actions-grid.single-action {
+        grid-template-columns: 1fr;
+    }
+    .fnb-action-form {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        width: 100%;
+    }
+    .fnb-act-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.35rem 0.25rem;
+        border-radius: 6px;
+        white-space: nowrap;
+        line-height: 1.25;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        transition: filter 0.15s ease, transform 0.1s ease;
+    }
+    .fnb-act-btn:hover:not(:disabled) {
+        filter: brightness(0.95);
+        transform: translateY(-1px);
+    }
+    .fnb-act-btn:active:not(:disabled) {
+        transform: translateY(0);
+    }
+    .fnb-act-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        box-shadow: none;
+    }
+    .fnb-terminal-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.3rem 0.6rem;
+        border-radius: 6px;
+    }
+</style>
 <div class="container-fluid">
     <div class="d-sm-flex align-items-center justify-content-between mb-4">
         <h1 class="h3 mb-0 text-gray-800">
@@ -60,7 +160,7 @@
         </div>
         <div class="card-body">
             <div class="table-responsive">
-                <table class="table table-bordered table-hover align-middle" width="100%" cellspacing="0">
+                <table class="table table-bordered table-hover align-middle table-fnb-queue" width="100%" cellspacing="0">
                     <thead class="thead-light">
                         <tr>
                             <th>No. Order</th>
@@ -71,7 +171,7 @@
                             <th class="text-right">Total</th>
                             <th>Pembayaran</th>
                             <th>Status Dapur</th>
-                            <th>Aksi</th>
+                            <th class="fnb-action-col">Aksi</th>
                         </tr>
                     </thead>
                     <tbody id="fnbQueueTableBody">
@@ -176,57 +276,96 @@
                                         {{ $order->status }}
                                     </span>
                                 </td>
-                                <td>
+                                <td class="fnb-action-cell">
                                     @if(!auth()->user()->isOwner())
-                                        @if($order->payment_status === 'unpaid' && !in_array($order->status, ['CANCELLED', 'EXPIRED']))
-                                            <button type="button"
-                                                class="btn btn-sm btn-success mb-1"
-                                                data-toggle="modal"
-                                                data-target="#modalPayOrder"
-                                                onclick="preparePayModal({{ $order->id }}, '{{ $order->order_number }}', {{ (float) $order->total_amount }})">
-                                                <i class="fas fa-cash-register mr-1"></i> Bayar
-                                            </button>
-                                        @endif
+                                        @php
+                                            $hasPayButton = ($order->payment_status === 'unpaid' && !in_array($order->status, ['CANCELLED', 'EXPIRED']));
+                                            $hasKitchenAction = in_array($order->status, ['PENDING', 'ACCEPTED', 'PREPARING', 'READY']);
+                                            $hasCancelAction = !in_array($order->status, ['DELIVERED', 'CANCELLED', 'EXPIRED']);
+                                            $gridClass = ($hasKitchenAction && $hasCancelAction) ? '' : 'single-action';
+                                        @endphp
 
-                                        @if($order->status === 'PENDING')
-                                            <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="d-inline">
-                                                @csrf
-                                                <input type="hidden" name="status" value="ACCEPTED">
-                                                <button type="submit"
-                                                    class="btn btn-sm btn-info mb-1"
-                                                    {{ $isBlockedUpfront ? 'disabled title=Wajib_lunas_terlebih_dahulu' : '' }}>
-                                                    Terima
+                                        <div class="fnb-actions-wrapper">
+                                            @if($hasPayButton)
+                                                <button type="button"
+                                                    class="btn btn-sm btn-success btn-block fnb-btn-pay"
+                                                    data-toggle="modal"
+                                                    data-target="#modalPayOrder"
+                                                    onclick="preparePayModal({{ $order->id }}, '{{ $order->order_number }}', {{ (float) $order->total_amount }})">
+                                                    <i class="fas fa-cash-register mr-1"></i> Bayar
                                                 </button>
-                                            </form>
-                                        @elseif($order->status === 'ACCEPTED')
-                                            <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="d-inline">
-                                                @csrf
-                                                <input type="hidden" name="status" value="PREPARING">
-                                                <button type="submit" class="btn btn-sm btn-primary mb-1">Proses</button>
-                                            </form>
-                                        @elseif($order->status === 'PREPARING')
-                                            <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="d-inline">
-                                                @csrf
-                                                <input type="hidden" name="status" value="READY">
-                                                <button type="submit" class="btn btn-sm btn-success mb-1">Siap</button>
-                                            </form>
-                                        @elseif($order->status === 'READY')
-                                            <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="d-inline">
-                                                @csrf
-                                                <input type="hidden" name="status" value="DELIVERED">
-                                                <button type="submit" class="btn btn-sm btn-secondary mb-1">Selesai</button>
-                                            </form>
-                                        @endif
+                                            @endif
 
-                                        @if(!in_array($order->status, ['DELIVERED', 'CANCELLED', 'EXPIRED']))
-                                            <form action="{{ route('fnb.queue.cancel', $order->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Batalkan pesanan ini?');">
-                                                @csrf
-                                                <input type="hidden" name="reason" value="Dibatalkan oleh petugas">
-                                                <button type="submit" class="btn btn-sm btn-danger mb-1">Batal</button>
-                                            </form>
-                                        @endif
+                                            @if($hasKitchenAction || $hasCancelAction)
+                                                <div class="fnb-actions-grid {{ $gridClass }}">
+                                                    @if($order->status === 'PENDING')
+                                                        <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="fnb-action-form">
+                                                            @csrf
+                                                            <input type="hidden" name="status" value="ACCEPTED">
+                                                            <button type="submit"
+                                                                class="btn btn-sm btn-info fnb-act-btn"
+                                                                {{ $isBlockedUpfront ? 'disabled title=Wajib_lunas_terlebih_dahulu' : '' }}>
+                                                                <i class="fas fa-check mr-1"></i>Terima
+                                                            </button>
+                                                        </form>
+                                                    @elseif($order->status === 'ACCEPTED')
+                                                        <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="fnb-action-form">
+                                                            @csrf
+                                                            <input type="hidden" name="status" value="PREPARING">
+                                                            <button type="submit" class="btn btn-sm btn-primary fnb-act-btn">
+                                                                <i class="fas fa-fire mr-1"></i>Proses
+                                                            </button>
+                                                        </form>
+                                                    @elseif($order->status === 'PREPARING')
+                                                        <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="fnb-action-form">
+                                                            @csrf
+                                                            <input type="hidden" name="status" value="READY">
+                                                            <button type="submit" class="btn btn-sm btn-success fnb-act-btn">
+                                                                <i class="fas fa-bell mr-1"></i>Siap
+                                                            </button>
+                                                        </form>
+                                                    @elseif($order->status === 'READY')
+                                                        <form action="{{ route('fnb.queue.status', $order->id) }}" method="POST" class="fnb-action-form">
+                                                            @csrf
+                                                            <input type="hidden" name="status" value="DELIVERED">
+                                                            <button type="submit" class="btn btn-sm btn-secondary fnb-act-btn">
+                                                                <i class="fas fa-check-double mr-1"></i>Selesai
+                                                            </button>
+                                                        </form>
+                                                    @endif
+
+                                                    @if($hasCancelAction)
+                                                        <form action="{{ route('fnb.queue.cancel', $order->id) }}" method="POST" class="fnb-action-form" onsubmit="return confirm('Batalkan pesanan ini?');">
+                                                            @csrf
+                                                            <input type="hidden" name="reason" value="Dibatalkan oleh petugas">
+                                                            <button type="submit" class="btn btn-sm btn-danger fnb-act-btn" title="Batalkan Pesanan">
+                                                                <i class="fas fa-times mr-1"></i>Batal
+                                                            </button>
+                                                        </form>
+                                                    @endif
+                                                </div>
+                                            @elseif(!$hasPayButton)
+                                                @if($order->status === 'DELIVERED')
+                                                    <span class="badge badge-light border text-success fnb-terminal-badge">
+                                                        <i class="fas fa-check-circle mr-1"></i>Selesai
+                                                    </span>
+                                                @elseif($order->status === 'CANCELLED')
+                                                    <span class="badge badge-light border text-danger fnb-terminal-badge">
+                                                        <i class="fas fa-times-circle mr-1"></i>Batal
+                                                    </span>
+                                                @elseif($order->status === 'EXPIRED')
+                                                    <span class="badge badge-light border text-secondary fnb-terminal-badge">
+                                                        <i class="fas fa-clock mr-1"></i>Kedaluwarsa
+                                                    </span>
+                                                @else
+                                                    <span class="text-muted small">-</span>
+                                                @endif
+                                            @endif
+                                        </div>
                                     @else
-                                        <span class="text-muted small">Monitoring</span>
+                                        <span class="badge badge-light border text-muted fnb-terminal-badge">
+                                            <i class="fas fa-eye mr-1"></i>Monitoring
+                                        </span>
                                     @endif
                                 </td>
                             </tr>
