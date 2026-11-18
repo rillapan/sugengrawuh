@@ -43,4 +43,9 @@ class Fnb extends Model
     {
         return $this->hasMany(TransactionFnb::class);
     }
+
+    public function fnbOrderItems()
+    {
+        return $this->hasMany(FnbOrderItem::class, 'fnb_id');
+    }
 }

@@ -50,6 +50,15 @@
         </div>
     @endif
 
+    @if (session('error'))
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            {{ session('error') }}
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                <span aria-hidden="true">&times;</span>
+            </button>
+        </div>
+    @endif
+
     @if ($errors->any())
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
             <ul class="mb-0">
@@ -80,7 +89,7 @@
                             <th>Perangkat Terhubung</th>
                             <th style="width: 120px;" class="text-center">Preview QR</th>
                             <th style="width: 90px;" class="text-center">Status</th>
-                            <th style="min-width: 175px; width: 175px;" class="text-center">Aksi</th>
+                            <th style="min-width: 220px; width: 220px;" class="text-center">Aksi</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -129,6 +138,13 @@
                                                 title="Edit Lokasi">
                                             <i class="fas fa-edit"></i> Edit
                                         </button>
+                                        <form action="{{ route('admin.locations.destroy', $loc->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Apakah Anda yakin ingin menghapus lokasi {{ $loc->name }}?')">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-danger btn-sm" title="Hapus Lokasi">
+                                                <i class="fas fa-trash"></i> Hapus
+                                            </button>
+                                        </form>
                                     </div>
                                 </td>
                             </tr>

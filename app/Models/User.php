@@ -62,6 +62,11 @@ class User extends Authenticatable
         return $this->hasOne(Member::class);
     }
 
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class, 'cashier_user_id');
+    }
+
     /**
      * Check if user is admin
      */

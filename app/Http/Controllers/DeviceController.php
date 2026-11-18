@@ -725,8 +725,12 @@ class DeviceController extends Controller
         // Prevent deletion if there are active or unpaid transactions
         $hasActiveTransactions = Transaction::where('device_id', $id)
             ->where(function ($q) {
-                $q->whereNull('status_pembayaran')
-                  ->orWhere('status_pembayaran', 'belum_lunas');
+                if (Transaction::hasG2Schema()) {
+                    $q->where('billing_status', Transaction::BILLING_RUNNING);
+                } else {
+                    $q->where('status_transaksi', '!=', 'selesai');
+                }
+                $q->orWhere('payment_status', 'unpaid');
             })
             ->where('created_at', '>=', now()->subHours(24))
             ->exists();
@@ -969,6 +973,33 @@ class DeviceController extends Controller
                     $txQuery->where('status_transaksi', '!=', 'selesai');
                 }
                 $activeTx = $txQuery->latest('id_transaksi')->first();
+
+                // Fallback for occupied devices without BILLING_RUNNING (e.g. legacy or uncompleted prepaid sessions)
+                if (!$activeTx) {
+                    $today = $now->toDateString();
+                    $activeTx = Transaction::where('device_id', $dev->id)
+                        ->whereDate('created_at', $today)
+                        ->latest('id_transaksi')
+                        ->get()
+                        ->first(function ($tx) use ($now) {
+                            if ($tx->status_transaksi === 'berjalan') {
+                                return true;
+                            }
+                            if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)
+                                && !in_array($tx->status_transaksi, ['selesai', 'draft'], true)
+                                && $tx->waktu_Selesai) {
+                                $txDate = $tx->created_at->format('Y-m-d');
+                                $startDt = Carbon::parse($txDate . ' ' . $tx->waktu_mulai);
+                                $endDt = Carbon::parse($txDate . ' ' . $tx->waktu_Selesai);
+                                if ($endDt < $startDt) {
+                                    $endDt->addDay();
+                                }
+                                $targetExpiresAt = $tx->expires_at ?: $endDt;
+                                return $targetExpiresAt > $now;
+                            }
+                            return false;
+                        });
+                }
 
                 if ($activeTx) {
                     $hasG2 = Transaction::hasG2Schema();

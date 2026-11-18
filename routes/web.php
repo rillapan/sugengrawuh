@@ -237,6 +237,7 @@ Route::middleware(['auth', 'check_role:admin'])->group(function () {
     Route::get('/admin/locations', [App\Http\Controllers\Admin\LocationQrController::class, 'index'])->name('admin.locations.index');
     Route::post('/admin/locations', [App\Http\Controllers\Admin\LocationQrController::class, 'store'])->name('admin.locations.store');
     Route::put('/admin/locations/{id}', [App\Http\Controllers\Admin\LocationQrController::class, 'update'])->name('admin.locations.update');
+    Route::delete('/admin/locations/{id}', [App\Http\Controllers\Admin\LocationQrController::class, 'destroy'])->name('admin.locations.destroy');
     Route::get('/admin/locations/{id}/print', [App\Http\Controllers\Admin\LocationQrController::class, 'print'])->name('admin.locations.print');
 
     // Physical Device Registry Mutations (Admin Only)

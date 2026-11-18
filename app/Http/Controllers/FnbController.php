@@ -6,6 +6,7 @@ use App\Models\Fnb;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\PriceGroup;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -192,10 +193,23 @@ class FnbController extends Controller
     public function destroy($id)
     {
         $fnb = Fnb::findOrFail($id);
-        if ($fnb->image && Storage::disk('public')->exists($fnb->image)) {
-            Storage::disk('public')->delete($fnb->image);
+
+        if ($fnb->fnbOrderItems()->exists() || $fnb->transactionFnbs()->exists()) {
+            return redirect('/fnb')->with('gagal', 'Barang tidak dapat dihapus karena sudah digunakan dalam transaksi atau pesanan FnB.');
         }
-        $fnb->delete();
+
+        $imagePath = $fnb->image;
+
+        try {
+            $fnb->delete();
+        } catch (QueryException $e) {
+            return redirect('/fnb')->with('gagal', 'Barang tidak dapat dihapus karena masih terhubung dengan data lain.');
+        }
+
+        if ($imagePath && Storage::disk('public')->exists($imagePath)) {
+            Storage::disk('public')->delete($imagePath);
+        }
+
         return redirect('/fnb')->with('success', 'Barang berhasil dihapus.');
     }
 

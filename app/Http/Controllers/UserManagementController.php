@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\WorkShift;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -138,7 +139,16 @@ class UserManagementController extends Controller
             return redirect()->route('users.index')->with('error', 'Anda tidak dapat menghapus akun Anda sendiri.');
         }
 
-        $user->delete();
+        // Check if user has related invoices or transactions
+        if ($user->invoices()->exists() || $user->transaction()->exists()) {
+            return redirect()->route('users.index')->with('error', 'User tidak dapat dihapus karena masih memiliki riwayat transaksi atau invoice.');
+        }
+
+        try {
+            $user->delete();
+        } catch (QueryException $e) {
+            return redirect()->route('users.index')->with('error', 'User tidak dapat dihapus karena masih terhubung dengan data lain di sistem.');
+        }
 
         return redirect()->route('users.index')->with('success', 'User berhasil dihapus');
     }

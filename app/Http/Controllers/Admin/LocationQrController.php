@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Device;
 use App\Models\Location;
 use App\Services\Qr\QrCodeSvgService;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 
 class LocationQrController extends Controller
@@ -80,6 +81,29 @@ class LocationQrController extends Controller
 
         return redirect()->route('admin.locations.index')
             ->with('success', 'Lokasi berhasil diperbarui.');
+    }
+
+    /**
+     * Remove the specified location from storage.
+     */
+    public function destroy($id)
+    {
+        $location = Location::findOrFail($id);
+
+        if ($location->fnbOrders()->exists()) {
+            return redirect()->route('admin.locations.index')
+                ->with('error', 'Lokasi tidak dapat dihapus karena masih memiliki riwayat pesanan FnB.');
+        }
+
+        try {
+            $location->delete();
+        } catch (QueryException $e) {
+            return redirect()->route('admin.locations.index')
+                ->with('error', 'Lokasi tidak dapat dihapus karena masih terhubung dengan data lain.');
+        }
+
+        return redirect()->route('admin.locations.index')
+            ->with('success', 'Lokasi berhasil dihapus.');
     }
 
     /**

@@ -132,18 +132,49 @@ class AdminLocationQrTest extends TestCase
     }
 
     /** @test */
+    public function test_admin_can_delete_unused_location()
+    {
+        $response = $this->actingAs($this->admin)->delete(route('admin.locations.destroy', $this->location->id));
+
+        $response->assertRedirect(route('admin.locations.index'));
+        $response->assertSessionHas('success', 'Lokasi berhasil dihapus.');
+        $this->assertDatabaseMissing('locations', ['id' => $this->location->id]);
+    }
+
+    /** @test */
+    public function test_admin_cannot_delete_location_referenced_by_fnb_orders()
+    {
+        \App\Models\FnbOrder::create([
+            'order_number' => 'ORD-TEST-LOC',
+            'location_id' => $this->location->id,
+            'source' => 'QR',
+            'customer_name' => 'John',
+            'status' => 'PENDING',
+            'payment_status' => 'unpaid',
+        ]);
+
+        $response = $this->actingAs($this->admin)->delete(route('admin.locations.destroy', $this->location->id));
+
+        $response->assertRedirect(route('admin.locations.index'));
+        $response->assertSessionHas('error');
+        $this->assertDatabaseHas('locations', ['id' => $this->location->id]);
+    }
+
+    /** @test */
     public function test_kasir_and_owner_cannot_access_admin_location_routes()
     {
         // Kasir
         $this->actingAs($this->kasir)->get(route('admin.locations.index'))->assertStatus(403);
         $this->actingAs($this->kasir)->post(route('admin.locations.store'), ['name' => 'Test'])->assertStatus(403);
         $this->actingAs($this->kasir)->put(route('admin.locations.update', $this->location->id), ['name' => 'Test'])->assertStatus(403);
+        $this->actingAs($this->kasir)->delete(route('admin.locations.destroy', $this->location->id))->assertStatus(403);
         $this->actingAs($this->kasir)->get(route('admin.locations.print', $this->location->id))->assertStatus(403);
 
         // Owner
         $this->actingAs($this->owner)->get(route('admin.locations.index'))->assertStatus(403);
         $this->actingAs($this->owner)->post(route('admin.locations.store'), ['name' => 'Test'])->assertStatus(403);
         $this->actingAs($this->owner)->put(route('admin.locations.update', $this->location->id), ['name' => 'Test'])->assertStatus(403);
+        $this->actingAs($this->owner)->delete(route('admin.locations.destroy', $this->location->id))->assertStatus(403);
         $this->actingAs($this->owner)->get(route('admin.locations.print', $this->location->id))->assertStatus(403);
     }
 }

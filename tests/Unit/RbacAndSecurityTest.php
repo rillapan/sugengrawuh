@@ -101,21 +101,20 @@ class RbacAndSecurityTest extends TestCase
     }
 
     /**
-     * Test AppSettingsController::resetTransactions is neutralized and returns redirect with error.
+     * Test AppSettingsController::resetTransactions requires password and agreement.
      *
      * @return void
      */
-    public function test_reset_transactions_endpoint_is_neutralized()
+    public function test_reset_transactions_endpoint_requires_confirmation()
     {
         $this->withoutMiddleware(\App\Http\Middleware\VerifyCsrfToken::class);
 
-        $admin = new User(['id' => 1, 'name' => 'Admin', 'role' => 'admin']);
+        $admin = new User(['id' => 1, 'name' => 'Admin', 'role' => 'admin', 'password' => bcrypt('password')]);
         $this->actingAs($admin);
 
-        $response = $this->post('/settings/reset-transactions');
+        $response = $this->post('/settings/reset-transactions', []);
 
-        $response->assertRedirect(route('settings.index'));
-        $response->assertSessionHas('gagal', 'Operasi reset data transaksi telah dinonaktifkan demi integritas data dan keamanan operasional.');
+        $response->assertSessionHasErrors(['confirm_delete', 'password']);
     }
 
     /**

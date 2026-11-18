@@ -402,7 +402,7 @@ class TransactionController extends Controller
                             return true;
                         }
                         if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)
-                            && $tx->status_transaksi !== 'selesai'
+                            && !in_array($tx->status_transaksi, ['selesai', 'draft'], true)
                             && $tx->waktu_Selesai) {
                             $txDate = $tx->created_at->format('Y-m-d');
                             $startDt = Carbon::parse($txDate . ' ' . $tx->waktu_mulai);
