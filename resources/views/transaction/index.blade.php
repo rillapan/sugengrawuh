@@ -70,86 +70,24 @@
         })->values()->all();
 
         $devicesById = $devices->keyBy('id');
-        $txSummaries = [];
+        $billingService = app(\App\Services\BillingService::class);
+        $txSummaries = $txSummaries ?? [];
+        $outstandingUnpaidByDevice = $outstandingUnpaidByDevice ?? collect();
+        $outstandingSummaries = $outstandingSummaries ?? [];
         $activeTxPayload = [];
 
         foreach ($activeTransactions as $devId => $tx) {
             $txDevice = $devicesById->get((int) $devId);
-            $packageFnbs = [];
-            if ($tx->tipe_transaksi === 'custom_package' && $tx->custom_package) {
-                foreach ($tx->custom_package->fnbs as $pFnb) {
-                    $packageFnbs[(int) $pFnb->id] = (int) ($pFnb->pivot->quantity ?? 0);
-                }
+            $summary = $txSummaries[(int) $devId] ?? null;
+            if (!is_array($summary)) {
+                $summary = $billingService->summarizeTransactionBilling($tx);
+                $txSummaries[(int) $devId] = $summary;
             }
 
-            $extraLegacyFnbTotal = 0.0;
-            $fnbItems = [];
-            foreach ($tx->transactionFnbs as $tf) {
-                $qtyInPkg = $packageFnbs[(int) $tf->fnb_id] ?? 0;
-                $chargeableQty = ($tx->tipe_transaksi === 'custom_package')
-                    ? max(0, (int) $tf->qty - $qtyInPkg)
-                    : (int) $tf->qty;
-                $extraSubtotal = $chargeableQty * (float) $tf->harga_jual;
-                $extraLegacyFnbTotal += $extraSubtotal;
-
-                $fnbItems[] = [
-                    'source' => 'legacy',
-                    'order_number' => null,
-                    'order_status' => null,
-                    'payment_status' => (string) $tx->payment_status,
-                    'fnb_id' => (int) $tf->fnb_id,
-                    'nama' => (string) (optional($tf->fnb)->nama ?? 'Item FnB'),
-                    'qty' => (int) $tf->qty,
-                    'harga_jual' => (float) $tf->harga_jual,
-                    'subtotal' => (float) ($tf->qty * $tf->harga_jual),
-                    'chargeable_qty' => $chargeableQty,
-                    'chargeable_subtotal' => $extraSubtotal,
-                    'is_package_included' => ($tx->tipe_transaksi === 'custom_package' && $qtyInPkg > 0),
-                ];
-            }
-
-            foreach ($tx->fnbOrders as $order) {
-                if (in_array($order->status, [\App\Models\FnbOrder::STATUS_CANCELLED, \App\Models\FnbOrder::STATUS_EXPIRED], true)) {
-                    continue;
-                }
-                foreach ($order->items as $orderItem) {
-                    $itemPaid = ($orderItem->payment_status === 'paid' || $order->payment_status === 'paid') ? 'paid' : 'unpaid';
-                    $fnbItems[] = [
-                        'source' => 'fnb_order',
-                        'order_number' => (string) $order->order_number,
-                        'order_status' => (string) $order->status,
-                        'payment_status' => $itemPaid,
-                        'fnb_id' => (int) $orderItem->fnb_id,
-                        'nama' => (string) (optional($orderItem->fnb)->nama ?? 'Item FnB'),
-                        'qty' => (int) $orderItem->qty,
-                        'harga_jual' => (float) $orderItem->unit_price_jual,
-                        'subtotal' => (float) $orderItem->subtotal,
-                    ];
-                }
-            }
-
-            $unpaidOrderFnbTotal = (float) $tx->unpaid_fnb_order_total;
-            $paidOrderFnbTotal = (float) $tx->paid_fnb_order_total;
-            $fnbPaidTotal = $paidOrderFnbTotal + ($tx->payment_status === 'paid' ? $extraLegacyFnbTotal : 0.0);
-            $fnbUnpaidTotal = $unpaidOrderFnbTotal + ($tx->payment_status === 'paid' ? 0.0 : $extraLegacyFnbTotal);
-            $totalFnbDisplay = $fnbPaidTotal + $fnbUnpaidTotal;
-
-            if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
-                $rentalSubtotal = method_exists($tx, 'resolvePaketRentalTotal')
-                    ? (float) $tx->resolvePaketRentalTotal()
-                    : ($tx->tipe_transaksi === 'custom_package'
-                        ? (float) ($tx->harga ?: $tx->total)
-                        : max(0.0, (float) $tx->total - $extraLegacyFnbTotal));
-            } else {
-                $rentalSubtotal = 0.0;
-            }
-
-            $txSummaries[(int) $devId] = [
-                'rental_subtotal' => $rentalSubtotal,
-                'fnb_paid_total' => $fnbPaidTotal,
-                'fnb_unpaid_total' => $fnbUnpaidTotal,
-                'total_fnb_display' => $totalFnbDisplay,
-            ];
+            $rentalSubtotal = (float) ($summary['rental_subtotal'] ?? 0);
+            $fnbPaidTotal = (float) ($summary['fnb_paid_total'] ?? 0);
+            $fnbUnpaidTotal = (float) ($summary['fnb_unpaid_total'] ?? 0);
+            $fnbItems = $summary['fnb_items'] ?? [];
 
             $customPkgData = null;
             if ($tx->custom_package) {
@@ -243,6 +181,30 @@
             ];
         })->values()->all();
 
+        $outstandingUnpaidPayload = [];
+        foreach ($outstandingUnpaidByDevice as $devId => $unpaidGroup) {
+            $items = [];
+            foreach ($unpaidGroup as $unpaidTx) {
+                $uSummary = $outstandingSummaries[(int) $unpaidTx->id_transaksi] ?? null;
+                if (!is_array($uSummary)) {
+                    $uSummary = $billingService->summarizeTransactionBilling($unpaidTx);
+                    $outstandingSummaries[(int) $unpaidTx->id_transaksi] = $uSummary;
+                }
+                $items[] = [
+                    'id_transaksi' => (int) $unpaidTx->id_transaksi,
+                    'nama' => (string) ($unpaidTx->nama ?: 'Pelanggan'),
+                    'tipe_transaksi' => (string) $unpaidTx->tipe_transaksi,
+                    'waktu_mulai' => (string) ($unpaidTx->waktu_mulai ?? ''),
+                    'waktu_Selesai' => $unpaidTx->waktu_Selesai ? (string) $unpaidTx->waktu_Selesai : null,
+                    'payable_total' => (float) ($uSummary['payable_total'] ?? 0),
+                    'payment_url' => $canOperate ? route('transaction.showPayment', $unpaidTx->id_transaksi) : null,
+                ];
+            }
+            if (!empty($items)) {
+                $outstandingUnpaidPayload[(string) $devId] = $items;
+            }
+        }
+
         $posBootstrap = [
             'serverTimestamp' => (int) $serverTimestamp,
             'serverNow' => (string) $serverNow,
@@ -264,6 +226,7 @@
             ],
             'devices' => $devicesPayload,
             'activeTransactions' => $activeTxPayload,
+            'outstandingUnpaidTransactions' => $outstandingUnpaidPayload,
             'customPackages' => $customPackagesPayload,
             'fnbs' => $fnbsPayload,
             'locations' => $locationsPayload,
@@ -472,8 +435,10 @@
                         @include('transaction.partials._station_card', [
                             'device' => $device,
                             'stationNum' => $stationNumbers[$device->id] ?? null,
-                            'activeTx' => $activeTransactions->get($device->id),
-                            'txSummary' => $txSummaries[$device->id] ?? null,
+                            'activeTx' => $activeTransactions->get((int) $device->id),
+                            'txSummary' => $txSummaries[(int) $device->id] ?? null,
+                            'outstandingUnpaidTxs' => $outstandingUnpaidByDevice->get((int) $device->id, collect()),
+                            'outstandingSummaries' => $outstandingSummaries,
                             'canOperate' => $canOperate,
                         ])
                     @endforeach

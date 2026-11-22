@@ -821,11 +821,17 @@ class DeviceController extends Controller
 
         $devices = Device::all();
         $hasG2 = Transaction::hasG2Schema();
-        $activeSessions = app(\App\Services\BillingService::class)->resolveActiveSessionsByDevice(
+        $billingService = app(\App\Services\BillingService::class);
+        $activeSessions = $billingService->resolveActiveSessionsByDevice(
             $devices->pluck('id'),
             $now,
             [],
             $devices
+        );
+        $outstandingUnpaidByDevice = $billingService->resolveOutstandingUnpaidTransactionsByDevice(
+            $devices->pluck('id'),
+            [],
+            $activeSessions->pluck('id_transaksi')->filter()->values()
         );
 
         $deviceData = [];
@@ -859,6 +865,12 @@ class DeviceController extends Controller
                 'nama' => $dev->nama,
                 'status' => $effectiveStatus,
                 'transaction' => $txInfo,
+                'unpaid_transaction_ids' => $outstandingUnpaidByDevice
+                    ->get((int) $dev->id, collect())
+                    ->pluck('id_transaksi')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all(),
             ];
         }
 

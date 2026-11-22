@@ -7,6 +7,8 @@ use App\Models\Playstation;
 use App\Models\Transaction;
 use App\Models\CustomPackage;
 use App\Models\Fnb;
+use App\Models\FnbOrder;
+use App\Models\Invoice;
 use App\Models\TransactionFnb;
 use App\Models\StockMutation;
 use App\Models\AutomationIntent;
@@ -48,11 +50,7 @@ class BillingService
 
         $normalizedIds = null;
         if ($deviceIds !== null) {
-            $normalizedIds = $deviceIds
-                ->map(fn ($id) => (int) $id)
-                ->filter(fn (int $id) => $id > 0)
-                ->unique()
-                ->values();
+            $normalizedIds = $this->normalizePositiveIds($deviceIds);
 
             if ($normalizedIds->isEmpty()) {
                 return collect();
@@ -178,6 +176,370 @@ class BillingService
     public function resolveActiveSessionForDevice(int $deviceId, ?Carbon $now = null, array $relations = []): ?Transaction
     {
         return $this->resolveActiveSessionsByDevice(collect([$deviceId]), $now, $relations)->get($deviceId);
+    }
+
+    /**
+     * Resolve outstanding unpaid non-draft transactions grouped by device_id (int => Collection<int, Transaction>).
+     * Includes cross-midnight bills, EXPIRED_PENDING_ACTION, STOPPED_EARLY, COMPLETED, and legacy selesai bills.
+     *
+     * @param Collection<int, int|string>|null $deviceIds
+     * @param array<int, string> $relations
+     * @param Collection<int, int|string>|null $excludedTransactionIds
+     * @return Collection<int, Collection<int, Transaction>>
+     */
+    public function resolveOutstandingUnpaidTransactionsByDevice(
+        ?Collection $deviceIds = null,
+        array $relations = [],
+        ?Collection $excludedTransactionIds = null
+    ): Collection {
+        $normalizedDeviceIds = null;
+        if ($deviceIds !== null) {
+            $normalizedDeviceIds = $this->normalizePositiveIds($deviceIds);
+            if ($normalizedDeviceIds->isEmpty()) {
+                return collect();
+            }
+        }
+
+        $query = Transaction::with($relations)
+            ->whereNotNull('device_id')
+            ->where('payment_status', 'unpaid')
+            ->where(function ($q) {
+                $q->whereNull('status_transaksi')
+                    ->orWhere('status_transaksi', '!=', 'draft');
+            })
+            ->latest('id_transaksi');
+
+        if ($normalizedDeviceIds !== null) {
+            $query->whereIn('device_id', $normalizedDeviceIds);
+        }
+
+        if ($excludedTransactionIds !== null) {
+            $normalizedExcludedIds = $this->normalizePositiveIds($excludedTransactionIds);
+            if ($normalizedExcludedIds->isNotEmpty()) {
+                $query->whereNotIn('id_transaksi', $normalizedExcludedIds);
+            }
+        }
+
+        return $query->get()
+            ->filter(fn (Transaction $tx) => (int) $tx->device_id > 0)
+            ->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+    }
+
+    /**
+     * Summarize rental, F&B (paid/unpaid), and total payable billing figures for a transaction.
+     *
+     * @param Transaction $tx
+     * @param Carbon|null $now
+     * @return array{
+     *     rental_subtotal: float,
+     *     fnb_paid_total: float,
+     *     fnb_unpaid_total: float,
+     *     total_fnb_display: float,
+     *     payable_total: float,
+     *     fnb_items: array<int, array<string, mixed>>
+     * }
+     */
+    public function summarizeTransactionBilling(Transaction $tx, ?Carbon $now = null): array
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $fnbSummary = $this->summarizeTransactionFnbs($tx);
+        $rentalSubtotal = $this->resolveTransactionRentalSubtotal(
+            $tx,
+            $now,
+            $fnbSummary['fnb_unpaid_total'],
+            $fnbSummary['legacy_fnb_total']
+        );
+
+        $payableTotal = ($tx->payment_status === 'paid')
+            ? $fnbSummary['fnb_unpaid_total']
+            : ($rentalSubtotal + $fnbSummary['fnb_unpaid_total']);
+
+        return [
+            'rental_subtotal' => (float) $rentalSubtotal,
+            'fnb_paid_total' => (float) $fnbSummary['fnb_paid_total'],
+            'fnb_unpaid_total' => (float) $fnbSummary['fnb_unpaid_total'],
+            'total_fnb_display' => (float) $fnbSummary['total_fnb_display'],
+            'payable_total' => (float) $payableTotal,
+            'fnb_items' => $fnbSummary['fnb_items'],
+        ];
+    }
+
+    /**
+     * Resolve effective postpaid duration in minutes (minimum 1) using authoritative start/end timestamps.
+     */
+    public function resolvePostpaidDurationMinutes(Transaction $tx, ?Carbon $now = null): int
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $isFinishedPostpaid = $this->isFinishedPostpaid($tx);
+        $startedAt = $tx->getEffectiveStartTime();
+        $hasExplicitEnd = $tx->ended_at !== null
+            || ($tx->waktu_Selesai !== null && trim((string) $tx->waktu_Selesai) !== '');
+        $endedAt = ($isFinishedPostpaid && $hasExplicitEnd)
+            ? $tx->getEffectiveEndTime()
+            : $now;
+
+        return max(1, (int) $startedAt->diffInMinutes($endedAt, false));
+    }
+
+    private function isFinishedPostpaid(Transaction $tx): bool
+    {
+        return ($tx->status_transaksi === 'selesai')
+            || in_array($tx->billing_status, [
+                Transaction::BILLING_COMPLETED,
+                Transaction::BILLING_STOPPED_EARLY,
+                Transaction::BILLING_EXPIRED_PENDING_ACTION,
+            ], true);
+    }
+
+    /**
+     * Summarize paid/unpaid F&B totals and itemized breakdown across FnbOrders and legacy TransactionFnbs.
+     *
+     * @return array{
+     *     fnb_paid_total: float,
+     *     fnb_unpaid_total: float,
+     *     total_fnb_display: float,
+     *     legacy_fnb_total: float,
+     *     fnb_items: array<int, array<string, mixed>>
+     * }
+     */
+    private function summarizeTransactionFnbs(Transaction $tx): array
+    {
+        $packageFnbs = $this->extractCustomPackageFnbQuantities($tx);
+        $fnbOrders = $tx->relationLoaded('fnbOrders')
+            ? $tx->fnbOrders
+            : $tx->fnbOrders()->with('items.fnb')->get();
+
+        $paidOrderFnbTotal = 0.0;
+        $unpaidOrderFnbTotal = 0.0;
+        $orderFnbItems = [];
+        $cashierPaidOrderQtyByFnb = [];
+
+        foreach ($fnbOrders as $order) {
+            if (in_array($order->status, [FnbOrder::STATUS_CANCELLED, FnbOrder::STATUS_EXPIRED], true)) {
+                continue;
+            }
+
+            $items = $order->relationLoaded('items')
+                ? $order->items
+                : $order->items()->with('fnb')->get();
+
+            foreach ($items as $orderItem) {
+                $isItemPaid = ($orderItem->payment_status === 'paid' || $order->payment_status === 'paid');
+                $itemSubtotal = (float) $orderItem->subtotal;
+
+                if ($isItemPaid) {
+                    $paidOrderFnbTotal += $itemSubtotal;
+                    if ($order->source === FnbOrder::SOURCE_CASHIER && $tx->payment_status === 'paid') {
+                        $fId = (int) $orderItem->fnb_id;
+                        $cashierPaidOrderQtyByFnb[$fId] = ($cashierPaidOrderQtyByFnb[$fId] ?? 0) + (int) $orderItem->qty;
+                    }
+                } else {
+                    $unpaidOrderFnbTotal += $itemSubtotal;
+                }
+
+                $orderFnbItems[] = [
+                    'source' => 'fnb_order',
+                    'order_number' => (string) $order->order_number,
+                    'order_status' => (string) $order->status,
+                    'payment_status' => $isItemPaid ? 'paid' : 'unpaid',
+                    'fnb_id' => (int) $orderItem->fnb_id,
+                    'nama' => (string) (optional($orderItem->fnb)->nama ?? 'Item FnB'),
+                    'qty' => (int) $orderItem->qty,
+                    'harga_jual' => (float) $orderItem->unit_price_jual,
+                    'subtotal' => $itemSubtotal,
+                ];
+            }
+        }
+
+        $hasGameInvoice = false;
+        if ($tx->payment_status === 'paid') {
+            $hasGameInvoice = $tx->relationLoaded('invoices')
+                ? $tx->invoices->contains(fn ($inv) => $inv->invoice_type !== Invoice::TYPE_FNB_STANDALONE)
+                : $tx->invoices()->where('invoice_type', '!=', Invoice::TYPE_FNB_STANDALONE)->exists();
+        }
+
+        $legacyFnbs = $tx->relationLoaded('transactionFnbs')
+            ? $tx->transactionFnbs
+            : $tx->transactionFnbs()->with(['fnb', 'invoiceItem'])->get();
+
+        $paidLegacyFnbTotal = 0.0;
+        $unpaidLegacyFnbTotal = 0.0;
+        $legacyFnbItems = [];
+
+        foreach ($legacyFnbs as $tf) {
+            $qtyInPkg = $packageFnbs[(int) $tf->fnb_id] ?? 0;
+            $chargeableQty = ($tx->tipe_transaksi === 'custom_package')
+                ? max(0, (int) $tf->qty - $qtyInPkg)
+                : (int) $tf->qty;
+            $extraSubtotal = $chargeableQty * (float) $tf->harga_jual;
+
+            $hasInvoiceItem = $tf->relationLoaded('invoiceItem')
+                ? ($tf->invoiceItem !== null)
+                : $tf->invoiceItem()->exists();
+
+            // PaketBillingService converts legacy TransactionFnb rows into a SOURCE_CASHIER FnbOrder
+            // when a station location exists; avoid double-counting those items on paid transactions.
+            $fId = (int) $tf->fnb_id;
+            if (
+                $hasGameInvoice
+                && !$hasInvoiceItem
+                && $chargeableQty > 0
+                && ($cashierPaidOrderQtyByFnb[$fId] ?? 0) >= $chargeableQty
+            ) {
+                $cashierPaidOrderQtyByFnb[$fId] -= $chargeableQty;
+                continue;
+            }
+
+            $isLegacyPaid = ($tx->payment_status === 'paid') || $hasInvoiceItem;
+            if ($isLegacyPaid) {
+                $paidLegacyFnbTotal += $extraSubtotal;
+            } else {
+                $unpaidLegacyFnbTotal += $extraSubtotal;
+            }
+
+            $legacyFnbItems[] = [
+                'source' => 'legacy',
+                'order_number' => null,
+                'order_status' => null,
+                'payment_status' => $isLegacyPaid ? 'paid' : 'unpaid',
+                'fnb_id' => $fId,
+                'nama' => (string) (optional($tf->fnb)->nama ?? 'Item FnB'),
+                'qty' => (int) $tf->qty,
+                'harga_jual' => (float) $tf->harga_jual,
+                'subtotal' => (float) ($tf->qty * $tf->harga_jual),
+                'chargeable_qty' => $chargeableQty,
+                'chargeable_subtotal' => $extraSubtotal,
+                'is_package_included' => ($tx->tipe_transaksi === 'custom_package' && $qtyInPkg > 0),
+            ];
+        }
+
+        $fnbPaidTotal = $paidOrderFnbTotal + $paidLegacyFnbTotal;
+        $fnbUnpaidTotal = $unpaidOrderFnbTotal + $unpaidLegacyFnbTotal;
+
+        return [
+            'fnb_paid_total' => $fnbPaidTotal,
+            'fnb_unpaid_total' => $fnbUnpaidTotal,
+            'total_fnb_display' => $fnbPaidTotal + $fnbUnpaidTotal,
+            'legacy_fnb_total' => $paidLegacyFnbTotal + $unpaidLegacyFnbTotal,
+            'fnb_items' => array_merge($legacyFnbItems, $orderFnbItems),
+        ];
+    }
+
+    /**
+     * Extract included F&B quantities from a custom package transaction.
+     *
+     * @return array<int, int>
+     */
+    private function extractCustomPackageFnbQuantities(Transaction $tx): array
+    {
+        if ($tx->tipe_transaksi !== 'custom_package') {
+            return [];
+        }
+
+        $customPackage = $tx->relationLoaded('custom_package')
+            ? $tx->custom_package
+            : $tx->custom_package()->with('fnbs')->first();
+
+        if (!$customPackage) {
+            return [];
+        }
+
+        if (!$customPackage->relationLoaded('fnbs')) {
+            $customPackage->load('fnbs');
+        }
+
+        $quantities = [];
+        foreach ($customPackage->fnbs as $pFnb) {
+            $quantities[(int) $pFnb->id] = (int) ($pFnb->pivot->quantity ?? 0);
+        }
+
+        return $quantities;
+    }
+
+    private function resolveTransactionRentalSubtotal(
+        Transaction $tx,
+        Carbon $now,
+        float $fnbUnpaidTotal,
+        float $legacyFnbTotal
+    ): float {
+        if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+            $rentalSubtotal = (float) $tx->resolvePaketRentalTotal();
+            if ($rentalSubtotal <= 0 && (float) $tx->total > 0) {
+                $rentalSubtotal = max(0.0, (float) $tx->total - $legacyFnbTotal);
+            }
+            return $rentalSubtotal;
+        }
+
+        if ($tx->tipe_transaksi === 'postpaid') {
+            $durationMinutes = $this->resolvePostpaidDurationMinutes($tx, $now);
+            $playstation = $this->resolveTransactionPlaystation($tx);
+
+            if ($playstation) {
+                $rawPsCost = $this->calculateLostTimePrice($playstation, $durationMinutes);
+                return $this->applyLostTimeRounding($rawPsCost);
+            }
+
+            if ($this->isFinishedPostpaid($tx) && (float) $tx->total > 0) {
+                return max(0.0, (float) $tx->total - $fnbUnpaidTotal);
+            }
+
+            return 0.0;
+        }
+
+        return max(0.0, (float) $tx->total - $fnbUnpaidTotal);
+    }
+
+    /**
+     * Normalize a collection of IDs to positive unique integers.
+     *
+     * @param Collection<int, int|string> $ids
+     * @return Collection<int, int>
+     */
+    private function normalizePositiveIds(Collection $ids): Collection
+    {
+        return $ids
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+    }
+
+    /**
+     * Resolve PlayStation pricing reference for a transaction, preferring loaded relations.
+     */
+    private function resolveTransactionPlaystation(Transaction $tx): ?Playstation
+    {
+        $playstation = $tx->relationLoaded('playstation')
+            ? $tx->playstation
+            : $tx->playstation()->first();
+
+        if ($playstation) {
+            return $playstation;
+        }
+
+        $device = $tx->relationLoaded('device')
+            ? $tx->device
+            : $tx->device()->with(['playstations', 'playstation'])->first();
+
+        if (!$device) {
+            return null;
+        }
+
+        $firstPivot = $device->relationLoaded('playstations')
+            ? $device->playstations->first()
+            : $device->playstations()->first();
+
+        if ($firstPivot) {
+            return $firstPivot;
+        }
+
+        return $device->relationLoaded('playstation')
+            ? $device->playstation
+            : $device->playstation()->first();
     }
 
     /**
@@ -737,7 +1099,14 @@ class BillingService
                     ]);
 
                     if ($lockedTx->device) {
-                        $lockedTx->device->update(['status' => 'Tersedia']);
+                        $hasOtherRunning = Transaction::where('device_id', $lockedTx->device_id)
+                            ->where('billing_status', Transaction::BILLING_RUNNING)
+                            ->where('id_transaksi', '!=', $lockedTx->id_transaksi)
+                            ->exists();
+
+                        if (!$hasOtherRunning) {
+                            $lockedTx->device->update(['status' => 'Tersedia']);
+                        }
 
                         if ($this->isAutomationActive()) {
                             // Idempotent safety net: ensure BILLING_EXPIRED intent exists

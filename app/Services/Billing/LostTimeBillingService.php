@@ -266,6 +266,22 @@ class LostTimeBillingService
                 $unpaidFnbTotal += (float) ($lFnb->qty * $lFnb->harga_jual);
             }
 
+            $isFinishedPostpaid = ($transaction->status_transaksi === 'selesai')
+                || in_array($transaction->billing_status, [
+                    Transaction::BILLING_COMPLETED,
+                    Transaction::BILLING_STOPPED_EARLY,
+                    Transaction::BILLING_EXPIRED_PENDING_ACTION,
+                ], true);
+
+            if (
+                $transaction->billing_status !== Transaction::BILLING_RUNNING
+                && $isFinishedPostpaid
+                && !$playstation
+                && (float) $transaction->total > 0
+            ) {
+                $psCost = max(0.0, (float) $transaction->total - $unpaidFnbTotal);
+            }
+
             $subtotal = $psCost + $unpaidFnbTotal;
             $discountPercent = (float) ($paymentData['discount'] ?? $transaction->diskon ?? 0);
             if ($discountPercent < 0 || $discountPercent > 100) {
@@ -314,7 +330,7 @@ class LostTimeBillingService
                 'fnb_id' => null,
                 'fnb_order_item_id' => null,
                 'transaction_fnb_id' => null,
-                'name' => 'Rental ' . ($device->nama ?? 'PS') . ' (Lost Time)',
+                'name' => 'Rental ' . ($device?->nama ?? 'PS') . ' (Lost Time)',
                 'qty' => 1,
                 'unit_price_beli' => 0,
                 'unit_price_jual' => $psCost,

@@ -53,6 +53,9 @@
         'BILLIARD' => 'has-bg-billiard',
         default => '',
     };
+
+    $outstandingUnpaidTxs = $outstandingUnpaidTxs ?? collect();
+    $outstandingSummaries = $outstandingSummaries ?? [];
 @endphp
 
 <article
@@ -60,6 +63,7 @@
     id="station-card-{{ $device->id }}"
     data-device-id="{{ $device->id }}"
     data-station-number="{{ $stationNum ?? '' }}"
+    data-unpaid-tx-ids="{{ $outstandingUnpaidTxs->pluck('id_transaksi')->implode(',') }}"
     @if ($stationCategory) data-station-category="{{ strtolower($stationCategory) }}" @endif
 >
     @if (!$isUsed)
@@ -102,6 +106,12 @@
                     <span>{{ $hwLabel }}</span>
                 </div>
             @endif
+
+            @include('transaction.partials._unpaid_bills_section', [
+                'outstandingUnpaidTxs' => $outstandingUnpaidTxs,
+                'outstandingSummaries' => $outstandingSummaries,
+                'canOperate' => $canOperate,
+            ])
         </div>
 
         <footer class="pos-card-footer">
@@ -138,41 +148,13 @@
     @elseif ($activeTx)
         {{-- State B: Active with matched transaction --}}
         @php
-            if (isset($txSummary) && is_array($txSummary)) {
-                $rentalSubtotal = (float) ($txSummary['rental_subtotal'] ?? 0);
-                $fnbPaidTotal = (float) ($txSummary['fnb_paid_total'] ?? 0);
-                $unpaidFnbTotal = (float) ($txSummary['fnb_unpaid_total'] ?? 0);
-                $totalFnbDisplay = (float) ($txSummary['total_fnb_display'] ?? ($fnbPaidTotal + $unpaidFnbTotal));
-            } else {
-                $packageFnbs = [];
-                if ($activeTx->tipe_transaksi === 'custom_package' && $activeTx->custom_package) {
-                    foreach ($activeTx->custom_package->fnbs as $pFnb) {
-                        $packageFnbs[(int) $pFnb->id] = (int) ($pFnb->pivot->quantity ?? 0);
-                    }
-                }
-                $extraLegacyFnbTotal = 0.0;
-                foreach ($activeTx->transactionFnbs as $tf) {
-                    $qtyInPkg = $packageFnbs[(int) $tf->fnb_id] ?? 0;
-                    $chargeableQty = ($activeTx->tipe_transaksi === 'custom_package')
-                        ? max(0, (int) $tf->qty - $qtyInPkg)
-                        : (int) $tf->qty;
-                    $extraLegacyFnbTotal += $chargeableQty * (float) $tf->harga_jual;
-                }
-                $unpaidOrderFnbTotal = (float) $activeTx->unpaid_fnb_order_total;
-                $paidOrderFnbTotal = (float) $activeTx->paid_fnb_order_total;
-                $fnbPaidTotal = $paidOrderFnbTotal + ($activeTx->payment_status === 'paid' ? $extraLegacyFnbTotal : 0.0);
-                $unpaidFnbTotal = $unpaidOrderFnbTotal + ($activeTx->payment_status === 'paid' ? 0.0 : $extraLegacyFnbTotal);
-                $totalFnbDisplay = $fnbPaidTotal + $unpaidFnbTotal;
-                if (in_array($activeTx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
-                    $rentalSubtotal = method_exists($activeTx, 'resolvePaketRentalTotal')
-                        ? (float) $activeTx->resolvePaketRentalTotal()
-                        : ($activeTx->tipe_transaksi === 'custom_package'
-                            ? (float) ($activeTx->harga ?: $activeTx->total)
-                            : max(0.0, (float) $activeTx->total - $extraLegacyFnbTotal));
-                } else {
-                    $rentalSubtotal = 0.0;
-                }
-            }
+            $resolvedTxSummary = (isset($txSummary) && is_array($txSummary))
+                ? $txSummary
+                : app(\App\Services\BillingService::class)->summarizeTransactionBilling($activeTx);
+            $rentalSubtotal = (float) ($resolvedTxSummary['rental_subtotal'] ?? 0);
+            $fnbPaidTotal = (float) ($resolvedTxSummary['fnb_paid_total'] ?? 0);
+            $unpaidFnbTotal = (float) ($resolvedTxSummary['fnb_unpaid_total'] ?? 0);
+            $totalFnbDisplay = (float) ($resolvedTxSummary['total_fnb_display'] ?? ($fnbPaidTotal + $unpaidFnbTotal));
 
             $isPaid = ($activeTx->payment_status === 'paid');
             $txTypeLabel = match ($activeTx->tipe_transaksi) {
@@ -302,6 +284,12 @@
                     <span>{{ $hwLabel }}</span>
                 </div>
             @endif
+
+            @include('transaction.partials._unpaid_bills_section', [
+                'outstandingUnpaidTxs' => $outstandingUnpaidTxs,
+                'outstandingSummaries' => $outstandingSummaries,
+                'canOperate' => $canOperate,
+            ])
         </div>
 
         <footer class="pos-card-footer">
@@ -393,6 +381,12 @@
                     <span>{{ $hwLabel }}</span>
                 </div>
             @endif
+
+            @include('transaction.partials._unpaid_bills_section', [
+                'outstandingUnpaidTxs' => $outstandingUnpaidTxs,
+                'outstandingSummaries' => $outstandingSummaries,
+                'canOperate' => $canOperate,
+            ])
         </div>
 
         <footer class="pos-card-footer">

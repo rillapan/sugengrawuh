@@ -70,23 +70,38 @@ class PaketBillingService
                 if ($existingInvoice) {
                     return $existingInvoice;
                 }
+
+                throw new \InvalidArgumentException('Transaksi ini sudah lunas.');
             }
 
             $wasDraft = ($tx->status_transaksi === 'draft');
-            $isUnstartedDraft = $wasDraft || in_array($tx->billing_status, [null, Transaction::BILLING_IDLE], true);
-            $isAlreadyFinished = !$isUnstartedDraft && in_array($tx->billing_status, [
-                Transaction::BILLING_STOPPED_EARLY,
-                Transaction::BILLING_EXPIRED_PENDING_ACTION,
-                Transaction::BILLING_COMPLETED,
-            ], true);
+            $isLegacyNull = !$wasDraft && $tx->billing_status === null;
+            $isLegacyFinished = $isLegacyNull
+                && ($tx->status_transaksi === 'selesai' || $tx->ended_at !== null || !$tx->isLegacyActiveSession());
+            $isLegacyActive = $isLegacyNull && !$isLegacyFinished;
+            $isAlreadyFinished = $isLegacyFinished || (
+                !$wasDraft && in_array($tx->billing_status, [
+                    Transaction::BILLING_STOPPED_EARLY,
+                    Transaction::BILLING_EXPIRED_PENDING_ACTION,
+                    Transaction::BILLING_COMPLETED,
+                ], true)
+            );
+            $isUnstartedDraft = $wasDraft || ($tx->billing_status === Transaction::BILLING_IDLE && !$isAlreadyFinished);
             $isAlreadyStarted = !$isUnstartedDraft && !$isAlreadyFinished && (
-                $tx->billing_status === Transaction::BILLING_RUNNING && $tx->started_at !== null
+                $isLegacyActive
+                || ($tx->billing_status === Transaction::BILLING_RUNNING && $tx->started_at !== null)
             );
 
             // 2. Lock and verify device availability where applicable
-            $device = Device::where('id', $tx->device_id)->lockForUpdate()->firstOrFail();
+            $device = $tx->device_id
+                ? Device::where('id', $tx->device_id)->lockForUpdate()->firstOrFail()
+                : null;
 
             if ($isUnstartedDraft) {
+                if (!$device) {
+                    throw new \RuntimeException('Perangkat untuk transaksi ini tidak ditemukan.');
+                }
+
                 $activeOther = Transaction::where('device_id', $device->id)
                     ->where('billing_status', Transaction::BILLING_RUNNING)
                     ->where('id_transaksi', '!=', $tx->id_transaksi)
@@ -102,7 +117,7 @@ class PaketBillingService
                 if (!$isLegacyRunning && $device->status !== 'Tersedia') {
                     throw new \RuntimeException('Perangkat "' . $device->nama . '" sedang tidak tersedia (' . $device->status . ').');
                 }
-            } elseif ($isAlreadyStarted) {
+            } elseif ($isAlreadyStarted && $device) {
                 $activeOther = Transaction::where('device_id', $device->id)
                     ->where('billing_status', Transaction::BILLING_RUNNING)
                     ->where('id_transaksi', '!=', $tx->id_transaksi)
@@ -140,7 +155,7 @@ class PaketBillingService
                 if ($tx->tipe_transaksi === 'custom_package') {
                     $jamMain = (int) $tx->jam_main;
                     if ($jamMain <= 0 && $tx->custom_package) {
-                        $playstationId = $tx->playstation_id ?: $device->playstation_id;
+                        $playstationId = $tx->playstation_id ?: $device?->playstation_id;
                         $pkgPs = $tx->custom_package->playstations->where('id', $playstationId)->first();
                         $jamMain = $pkgPs ? (int) $pkgPs->pivot->lama_main : (int) $tx->custom_package->playstations->sum('pivot.lama_main');
                     }
@@ -211,7 +226,7 @@ class PaketBillingService
             }
 
             // Deduct stock once and create FnbOrder ONLY if transaction was draft
-            $location = Location::where('device_id', $device->id)->first();
+            $location = $device ? Location::where('device_id', $device->id)->first() : null;
             $orderItemsMap = [];
 
             if ($wasDraft && $tx->transactionFnbs->isNotEmpty()) {
@@ -311,7 +326,7 @@ class PaketBillingService
                 if ($tx->status_transaksi !== 'sukses') {
                     $updateData['status_transaksi'] = 'sukses';
                 }
-                if ($device->status !== 'Digunakan') {
+                if ($device && $device->status !== 'Digunakan') {
                     $device->update(['status' => 'Digunakan']);
                 }
             }

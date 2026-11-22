@@ -446,6 +446,33 @@
             var expiredSyncTxIds = {};
             var expiredSyncDebounce = null;
 
+            function normalizeUnpaidIds(rawList) {
+                var list = Array.isArray(rawList)
+                    ? rawList
+                    : (typeof rawList === 'string' && rawList.trim() !== ''
+                        ? rawList.split(',')
+                        : []);
+                var seen = {};
+                var normalized = [];
+                list.forEach(function (val) {
+                    var str = String(val === null || val === undefined ? '' : val).trim();
+                    if (str === '' || seen[str]) {
+                        return;
+                    }
+                    seen[str] = true;
+                    normalized.push(str);
+                });
+                normalized.sort(function (a, b) {
+                    var na = Number(a);
+                    var nb = Number(b);
+                    if (Number.isFinite(na) && Number.isFinite(nb)) {
+                        return na - nb;
+                    }
+                    return a.localeCompare(b);
+                });
+                return normalized.join(',');
+            }
+
             function syncTimersWithServer() {
                 if (isSyncInFlight || !bootstrap.routes || !bootstrap.routes.timersSync) {
                     return;
@@ -489,12 +516,22 @@
                                 ? Number(timerEl.dataset.txId)
                                 : null;
 
-                            if (domIsUsed !== serverIsUsed || domTxId !== serverTxId) {
+                            var hasServerUnpaid = Array.isArray(dev.unpaid_transaction_ids);
+                            var domUnpaidIds = hasServerUnpaid
+                                ? normalizeUnpaidIds(card.dataset.unpaidTxIds || '')
+                                : '';
+                            var serverUnpaidIds = hasServerUnpaid
+                                ? normalizeUnpaidIds(dev.unpaid_transaction_ids)
+                                : '';
+                            var activeChanged = (domIsUsed !== serverIsUsed || domTxId !== serverTxId);
+                            var unpaidChanged = hasServerUnpaid && (domUnpaidIds !== serverUnpaidIds);
+
+                            if (activeChanged || unpaidChanged) {
                                 statusChanged = true;
                                 mismatchParts.push(
                                     String(dev.id) + ':' +
-                                    (domIsUsed ? '1' : '0') + '/' + (domTxId !== null ? domTxId : '') + '->' +
-                                    (serverIsUsed ? '1' : '0') + '/' + (serverTxId !== null ? serverTxId : '')
+                                    (domIsUsed ? '1' : '0') + '/' + (domTxId !== null ? domTxId : '') + '/' + domUnpaidIds + '->' +
+                                    (serverIsUsed ? '1' : '0') + '/' + (serverTxId !== null ? serverTxId : '') + '/' + serverUnpaidIds
                                 );
                             }
                         }

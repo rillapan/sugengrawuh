@@ -652,6 +652,17 @@ dialog.pos-dialog :focus-visible {
     padding: 0.5rem;
 }
 
+.pos-station-card.has-bg-ps .pos-unpaid-box,
+.pos-station-card.has-bg-billiard .pos-unpaid-box {
+    background-color: rgba(255, 251, 235, 0.96);
+    backdrop-filter: blur(2px);
+}
+
+.pos-station-card.has-bg-ps .pos-unpaid-row,
+.pos-station-card.has-bg-billiard .pos-unpaid-row {
+    background-color: rgba(255, 255, 255, 0.96);
+}
+
 .pos-station-card:hover {
     box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
@@ -898,6 +909,141 @@ dialog.pos-dialog :focus-visible {
     border-radius: 0.4375rem;
     padding: 0.5rem 0.625rem;
     margin: 0;
+}
+
+/* Outstanding Unpaid Bills inside Station Card */
+.pos-unpaid-box {
+    background-color: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-left: 3px solid #d97706;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4375rem;
+}
+
+.pos-unpaid-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.pos-unpaid-title {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #78350f;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.pos-unpaid-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.35rem;
+    border-radius: 9999px;
+    background-color: #fef3c7;
+    border: 1px solid #d97706;
+    color: #78350f;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.pos-unpaid-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.pos-unpaid-row {
+    background-color: #ffffff;
+    border: 1px solid #fde68a;
+    border-radius: 0.375rem;
+    padding: 0.4375rem 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.pos-unpaid-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.pos-unpaid-identity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.78125rem;
+    line-height: 1.25;
+}
+
+.pos-unpaid-tx-id {
+    font-weight: 700;
+    color: var(--pos-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.pos-unpaid-customer {
+    font-weight: 600;
+    color: var(--pos-text);
+    overflow-wrap: anywhere;
+}
+
+.pos-unpaid-type {
+    font-size: 0.65rem;
+    padding: 0.0625rem 0.375rem;
+}
+
+.pos-unpaid-meta {
+    font-size: 0.71875rem;
+    color: var(--pos-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.pos-unpaid-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.pos-unpaid-amount {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: #92400e;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.pos-unpaid-actions .pos-btn-sm {
+    min-height: 28px;
+}
+
+@media (forced-colors: active) {
+    .pos-unpaid-box,
+    .pos-unpaid-row,
+    .pos-unpaid-count {
+        border: 1px solid CanvasText;
+    }
 }
 
 /* Card Footer Actions */

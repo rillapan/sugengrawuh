@@ -32,12 +32,13 @@ class TransactionController extends Controller
     public function showPayment($id)
     {
         $transaction = Transaction::with([
-            'device.playstation', 
+            'device.playstation',
+            'device.playstations',
             'playstation',
-            'transactionFnbs.fnb', 
+            'transactionFnbs.fnb',
             'transactionFnbs.invoiceItem',
-            'user', 
-            'custom_package.playstations', 
+            'user',
+            'custom_package.playstations',
             'custom_package.fnbs',
             'fnbOrders.items.fnb',
             'invoices.items'
@@ -48,38 +49,30 @@ class TransactionController extends Controller
                 ->with('gagal', 'Transaksi ini sudah lunas.');
         }
 
-        $isPaket = in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true);
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
+        $summary = $billingService->summarizeTransactionBilling($transaction, $now);
+
         $unpaidFnbOrdersTotal = $transaction->unpaid_fnb_order_total;
         $paidFnbOrdersTotal = $transaction->paid_fnb_order_total;
         $legacyFnbTotal = $transaction->uninvoiced_legacy_fnb_total;
-        $totalFnbToPay = $legacyFnbTotal + $unpaidFnbOrdersTotal;
+        $totalFnbToPay = (float) $summary['fnb_unpaid_total'];
+        $psCostDisplay = (float) $summary['rental_subtotal'];
+        $payableSubtotal = (float) $summary['payable_total'];
 
-        if ($isPaket && $transaction->payment_status === 'unpaid') {
-            $psCostDisplay = $transaction->resolvePaketRentalTotal();
-            $payableSubtotal = $psCostDisplay + $totalFnbToPay;
-        } elseif ($transaction->tipe_transaksi === 'postpaid') {
-            // SR-BILLING-LOSTTIME-001: Hitung biaya Lost Time dengan sumber waktu & kalkulasi terpadu
-            $startedAt = $transaction->getEffectiveStartTime();
-            $endedAt = $transaction->status_transaksi === 'selesai' ? $transaction->getEffectiveEndTime() : Carbon::now();
-            $durationMinutes = max(1, (int) $startedAt->diffInMinutes($endedAt, false));
-            $playstation = $transaction->playstation ?: ($transaction->device ? $transaction->device->playstation : null);
-            /** @var \App\Services\BillingService $billingService */
-            $billingService = app(\App\Services\BillingService::class);
-            $rawPsCost = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
-            $psCostDisplay = $billingService->applyLostTimeRounding($rawPsCost);
-            $payableSubtotal = $psCostDisplay + $totalFnbToPay;
+        if ($transaction->tipe_transaksi === 'postpaid' && $transaction->payment_status === 'unpaid') {
+            $durationMinutes = $billingService->resolvePostpaidDurationMinutes($transaction, $now);
 
             // Jika transaksi belum lunas, sinkronkan total dan durasi agar konsisten di semua tampilan
             $formattedJamMain = sprintf('%d jam %d menit', floor($durationMinutes / 60), $durationMinutes % 60);
-            if ($transaction->payment_status === 'unpaid' && ((float) $transaction->total !== $payableSubtotal || empty($transaction->jam_main))) {
+            if ((float) $transaction->total !== $payableSubtotal || empty($transaction->jam_main)) {
                 $transaction->update([
                     'total' => $payableSubtotal,
                     'jam_main' => $formattedJamMain,
                 ]);
             }
-        } else {
-            $payableSubtotal = (float) $transaction->total;
-            $psCostDisplay = max(0, $payableSubtotal - $totalFnbToPay);
         }
 
         return view('transaction.payment', [
@@ -135,16 +128,30 @@ class TransactionController extends Controller
         $amountPaid = (float) $request->input('amount_paid');
         $paymentMethod = $request->input('payment_method');
 
-        $transaction = Transaction::where('id_transaksi', $id)->firstOrFail();
+        $transaction = Transaction::with([
+            'device.playstation',
+            'device.playstations',
+            'playstation',
+            'transactionFnbs.fnb',
+            'transactionFnbs.invoiceItem',
+            'custom_package.playstations',
+            'custom_package.fnbs',
+            'fnbOrders.items.fnb',
+        ])->where('id_transaksi', $id)->firstOrFail();
 
         if ($transaction->payment_status === 'paid') {
             return redirect()->route('transaction.print', $transaction->id_transaksi)
                 ->with('gagal', 'Transaksi ini sudah lunas.');
         }
 
-        $payableSubtotal = in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true)
-            ? $transaction->paket_payable_total
-            : (float) $transaction->total;
+        if (in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+            $payableSubtotal = $transaction->paket_payable_total;
+        } elseif ($transaction->tipe_transaksi === 'postpaid') {
+            $summary = app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction);
+            $payableSubtotal = (float) $summary['payable_total'];
+        } else {
+            $payableSubtotal = (float) $transaction->total;
+        }
 
         $finalTotal = $payableSubtotal - ($payableSubtotal * $discount / 100);
 
@@ -406,10 +413,14 @@ class TransactionController extends Controller
             $device->setAttribute('station_number', $resolvedNumber);
         }
 
-        // Load active transactions for occupied/running devices in one batch query (no N+1)
+        // Load active transactions and outstanding unpaid bills in batch queries (no N+1)
+        $billingService = app(\App\Services\BillingService::class);
         $activeTransactions = collect();
+        $outstandingUnpaidByDevice = collect();
         $deviceIds = $devices->pluck('id');
         $activeTxRelations = [
+            'device.playstation',
+            'device.playstations',
             'playstation',
             'custom_package.playstations',
             'custom_package.fnbs',
@@ -420,12 +431,30 @@ class TransactionController extends Controller
         ];
 
         if ($deviceIds->isNotEmpty()) {
-            $activeTransactions = app(\App\Services\BillingService::class)->resolveActiveSessionsByDevice(
+            $activeTransactions = $billingService->resolveActiveSessionsByDevice(
                 $deviceIds,
                 $now,
                 $activeTxRelations,
                 $devices
             );
+
+            $outstandingUnpaidByDevice = $billingService->resolveOutstandingUnpaidTransactionsByDevice(
+                $deviceIds,
+                $activeTxRelations,
+                $activeTransactions->pluck('id_transaksi')->filter()->values()
+            );
+        }
+
+        $txSummaries = [];
+        foreach ($activeTransactions as $devId => $activeTx) {
+            $txSummaries[(int) $devId] = $billingService->summarizeTransactionBilling($activeTx, $now);
+        }
+
+        $outstandingSummaries = [];
+        foreach ($outstandingUnpaidByDevice as $devId => $outstandingGroup) {
+            foreach ($outstandingGroup as $outstandingTx) {
+                $outstandingSummaries[(int) $outstandingTx->id_transaksi] = $billingService->summarizeTransactionBilling($outstandingTx, $now);
+            }
         }
 
         $inUseCount = $devices->filter(
@@ -440,7 +469,10 @@ class TransactionController extends Controller
             'available' => $availableCount,
             'in_use' => $inUseCount,
             'unpaid_attention' => Transaction::where('payment_status', 'unpaid')
-                ->where('status_transaksi', '!=', 'draft')
+                ->where(function ($q) {
+                    $q->whereNull('status_transaksi')
+                        ->orWhere('status_transaksi', '!=', 'draft');
+                })
                 ->count(),
         ];
 
@@ -486,6 +518,9 @@ class TransactionController extends Controller
             'devices' => $devices,
             'stationNumbers' => $stationNumbers,
             'activeTransactions' => $activeTransactions,
+            'txSummaries' => $txSummaries,
+            'outstandingUnpaidByDevice' => $outstandingUnpaidByDevice,
+            'outstandingSummaries' => $outstandingSummaries,
             'stationStats' => $stationStats,
             'customPackages' => $customPackages,
             'fnbs' => $fnbs,
