@@ -97,17 +97,24 @@ class TransactionController extends Controller
             'custom_package.playstations', 
             'custom_package.fnbs',
             'fnbOrders.items.fnb',
-            'invoices.items'
+            'invoices.items',
+            'invoices.cashierUser',
         ])->findOrFail($id);
         
         // Retrieve temporary payment data from session if available
         $amountPaid = session('amount_paid');
         $change = session('change');
+
+        $checkoutInvoice = ($transaction->relationLoaded('invoices') && $transaction->invoices->isNotEmpty())
+            ? ($transaction->invoices->where('invoice_type', '!=', \App\Models\Invoice::TYPE_FNB_STANDALONE)->sortByDesc('id')->first() ?? $transaction->invoices->sortByDesc('id')->first())
+            : null;
         
-        // If viewing from history (no session data), assume exact payment or calculate if we had the field
+        // If viewing from history (no session data), use settled invoice historical figures
         if ($amountPaid === null) {
-            // For older transactions or re-prints, we don't have the exact amount paid recorded on this table structure yet
-            // So we display standard info
+            if ($checkoutInvoice) {
+                $transaction->bayar_nominal = $checkoutInvoice->amount_paid;
+                $transaction->kembalian = $checkoutInvoice->change_amount;
+            }
         } else {
             // Inject into transaction object temporarily for the view
             $transaction->bayar_nominal = $amountPaid;
@@ -118,7 +125,8 @@ class TransactionController extends Controller
         session()->keep(['success', 'gagal']);
 
         return view('transaction.receipt', [
-            'transaction' => $transaction
+            'transaction' => $transaction,
+            'checkoutInvoice' => $checkoutInvoice,
         ]);
     }
 
