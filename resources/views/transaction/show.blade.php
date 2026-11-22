@@ -62,7 +62,7 @@
                                 </tr>
                                 <tr>
                                     <td><strong>Jenis Playstation:</strong></td>
-                                    <td>{{ $transaction->device && $transaction->device->playstation ? $transaction->device->playstation->nama : 'N/A' }}</td>
+                                    <td>{{ optional($transaction->playstation)->nama ?: (optional(optional($transaction->device)->playstation)->nama ?: 'N/A') }}</td>
                                 </tr>
                                
                             </table>
@@ -154,6 +154,57 @@
                             </table>
                         </div>
                     </div>
+
+                    @php
+                        $showPricingSegments = $transaction->getResolvedPricingSegments();
+                        $showBillingSummary = $showPricingSegments->count() >= 2
+                            ? app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction)
+                            : null;
+                        $showSegmentRows = ($showBillingSummary && !empty($showBillingSummary['rental_segments']))
+                            ? collect($showBillingSummary['rental_segments'])
+                            : collect();
+                    @endphp
+                    @if($showPricingSegments->count() >= 2 && $showSegmentRows->count() >= 2)
+                        <hr>
+                        <h5>Rincian Segmen Tarif Permainan</h5>
+                        <div class="table-responsive mb-3">
+                            <table class="table table-sm table-bordered">
+                                <thead class="thead-light">
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Kategori</th>
+                                        <th>Waktu</th>
+                                        <th>Durasi</th>
+                                        <th>Tarif/Jam</th>
+                                        <th>Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($showSegmentRows as $segRow)
+                                        @php
+                                            $segStartStr = ($segRow['started_at'] ?? null) instanceof \Carbon\CarbonInterface
+                                                ? $segRow['started_at']->format('H:i:s')
+                                                : (string) ($segRow['started_at'] ?? '-');
+                                            $segEndStr = !empty($segRow['is_open'])
+                                                ? 'Berjalan'
+                                                : ((($segRow['ended_at'] ?? null) instanceof \Carbon\CarbonInterface)
+                                                    ? $segRow['ended_at']->format('H:i:s')
+                                                    : (string) ($segRow['ended_at'] ?? '-'));
+                                            $segDurSec = (int) ($segRow['duration_seconds'] ?? 0);
+                                        @endphp
+                                        <tr>
+                                            <td>{{ $segRow['segment_order'] ?? $loop->iteration }}</td>
+                                            <td><strong>{{ $segRow['playstation_name'] ?? 'Game' }}</strong></td>
+                                            <td>{{ $segStartStr }} - {{ $segEndStr }}</td>
+                                            <td>{{ \App\Models\HourlyPrice::humanizeSeconds($segDurSec) }}</td>
+                                            <td>Rp {{ number_format((float) ($segRow['hourly_rate'] ?? 0), 0, ',', '.') }}/jam</td>
+                                            <td>Rp {{ number_format((float) ($segRow['allocated_billed_amount'] ?? $segRow['raw_amount'] ?? 0), 0, ',', '.') }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @endif
 
                     @if($transaction->transactionFnbs->isNotEmpty())
                         <hr>

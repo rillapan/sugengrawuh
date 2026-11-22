@@ -403,17 +403,14 @@
         // ------------------------------------------------------------------
         // Server-Synced Live Timers & Polling
         // ------------------------------------------------------------------
-        function computeLostTimeEstimate(hourlyRate, elapsedSeconds, hourlyPackages) {
+        function computeLostTimeRawMinutes(hourlyRate, elapsedMinutes, hourlyPackages) {
             var rate = Number(hourlyRate || 0);
-            if (rate <= 0) {
+            var mins = Math.floor(Number(elapsedMinutes) || 0);
+            if (rate <= 0 || mins <= 0) {
                 return 0;
             }
-            var elapsedMinutes = Math.floor(elapsedSeconds / 60);
-            if (elapsedMinutes <= 0) {
-                return 0;
-            }
-            var fullHours = Math.floor(elapsedMinutes / 60);
-            var remainingMinutes = elapsedMinutes % 60;
+            var fullHours = Math.floor(mins / 60);
+            var remainingMinutes = mins % 60;
             var raw = 0;
 
             if (fullHours > 0) {
@@ -428,15 +425,30 @@
                 raw += (remainingMinutes * rate) / 60;
             }
 
-            var lowerThousand = Math.floor(raw / 1000) * 1000;
-            var diff = raw - lowerThousand;
-            if (diff === 0) {
-                return raw;
+            return raw;
+        }
+
+        function applyLostTimeRounding(rawAmount) {
+            var raw = Number(rawAmount || 0);
+            if (raw <= 0) {
+                return 0;
+            }
+            var normalized = Math.round(raw * 10000) / 10000;
+            var lowerThousand = Math.floor(normalized / 1000) * 1000;
+            var diff = normalized - lowerThousand;
+            if (diff < 0.01) {
+                return lowerThousand;
             }
             if (diff <= 500) {
                 return lowerThousand + 500;
             }
             return lowerThousand + 1000;
+        }
+
+        function computeLostTimeEstimate(hourlyRate, elapsedSeconds, hourlyPackages) {
+            var elapsedMinutes = Math.floor(Number(elapsedSeconds || 0) / 60);
+            var raw = computeLostTimeRawMinutes(hourlyRate, elapsedMinutes, hourlyPackages);
+            return applyLostTimeRounding(raw);
         }
 
         function initTimersAndPolling() {
@@ -641,7 +653,17 @@
                                     hourlyPackages = JSON.parse(timerEl.dataset.hourlyPackages);
                                 } catch (e) {}
                             }
-                            var est = computeLostTimeEstimate(timerEl.dataset.hourlyRate, elapsedSec, hourlyPackages);
+                            var est = 0;
+                            if (timerEl.dataset.hasSegments === '1') {
+                                var totalMinutes = Math.floor(elapsedSec / 60);
+                                var closedMinutes = Number(timerEl.dataset.closedMinutes || 0);
+                                var closedRawTotal = Number(timerEl.dataset.closedRawTotal || 0);
+                                var activeMinutes = Math.max(0, totalMinutes - closedMinutes);
+                                var activeRaw = computeLostTimeRawMinutes(timerEl.dataset.hourlyRate, activeMinutes, hourlyPackages);
+                                est = applyLostTimeRounding(closedRawTotal + activeRaw);
+                            } else {
+                                est = computeLostTimeEstimate(timerEl.dataset.hourlyRate, elapsedSec, hourlyPackages);
+                            }
                             estEl.textContent = formatRupiah(est);
                         }
                     } else {

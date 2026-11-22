@@ -73,6 +73,20 @@ class Playstation extends Model
             return null;
         }
 
+        if ($this->relationLoaded('hourlyPrices')) {
+            $preset = $this->hourlyPrices->first(function (HourlyPrice $p) use ($totalSeconds) {
+                if ($p->duration_seconds !== null && (int) $p->duration_seconds === $totalSeconds) {
+                    return true;
+                }
+
+                return ($totalSeconds % 3600 === 0)
+                    && $p->hour !== null
+                    && (int) $p->hour === intdiv($totalSeconds, 3600);
+            });
+
+            return $preset ? (int) $preset->price : null;
+        }
+
         $preset = $this->hourlyPrices()
             ->where(function ($query) use ($totalSeconds) {
                 $query->where('duration_seconds', $totalSeconds);

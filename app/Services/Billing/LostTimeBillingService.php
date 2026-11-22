@@ -11,6 +11,7 @@ use App\Models\FnbOrderItem;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\AutomationIntent;
+use App\Models\TransactionPricingSegment;
 use App\Services\BillingService;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\Automation\AutomationDispatcherService;
@@ -171,8 +172,18 @@ class LostTimeBillingService
         $shouldDispatchOutbox = false;
 
         $invoice = DB::transaction(function () use ($transactionId, $paymentData, &$shouldDispatchOutbox) {
+            $relations = [
+                'device.playstation.hourlyPrices',
+                'device.playstations.hourlyPrices',
+                'playstation.hourlyPrices',
+            ];
+            if (TransactionPricingSegment::hasSchema()) {
+                $relations[] = 'pricingSegments.playstation';
+            }
+
             /** @var Transaction $transaction */
-            $transaction = Transaction::where('id_transaksi', $transactionId)
+            $transaction = Transaction::with($relations)
+                ->where('id_transaksi', $transactionId)
                 ->lockForUpdate()
                 ->firstOrFail();
 
@@ -189,15 +200,10 @@ class LostTimeBillingService
 
             if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
                 // Sesi masih berjalan, hitung durasi sampai sekarang dan hentikan sesi
-                $startedAt = $transaction->getEffectiveStartTime();
-                $durationMinutes = max(1, (int) $startedAt->diffInMinutes($now, false));
-
-                $rawPsCost = $this->billingService->calculateLostTimePrice($playstation, $durationMinutes);
-                $psCost = $this->billingService->applyLostTimeRounding($rawPsCost);
-
-                $hours = floor($durationMinutes / 60);
-                $minutes = $durationMinutes % 60;
-                $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
+                $ltBreakdown = $this->billingService->finalizeLostTimeSegments($transaction, $now);
+                $durationMinutes = $ltBreakdown['total_minutes'];
+                $psCost = $ltBreakdown['rounded_total'];
+                $formattedDuration = sprintf('%d jam %d menit', floor($durationMinutes / 60), $durationMinutes % 60);
 
                 if ($device) {
                     $shouldReleaseDeviceAfterUpdate = true;
@@ -229,17 +235,10 @@ class LostTimeBillingService
                 }
             } else {
                 // Sesi sudah diakhiri sebelumnya (e.g. via endTransaction)
-                $startedAt = $transaction->getEffectiveStartTime();
-                $endedAt = $transaction->getEffectiveEndTime();
-                $durationMinutes = max(1, (int) $startedAt->diffInMinutes($endedAt, false));
-
-                $rawPsCost = $this->billingService->calculateLostTimePrice($playstation, $durationMinutes);
-                $psCost = $this->billingService->applyLostTimeRounding($rawPsCost);
-
-                $formattedDuration = $transaction->jam_main;
-                if (empty($formattedDuration)) {
-                    $formattedDuration = sprintf('%d jam %d menit', floor($durationMinutes / 60), $durationMinutes % 60);
-                }
+                $ltBreakdown = $this->billingService->calculateLostTimeWithSegments($transaction, $now, true);
+                $durationMinutes = $ltBreakdown['total_minutes'];
+                $psCost = $ltBreakdown['rounded_total'];
+                $formattedDuration = $transaction->jam_main ?: sprintf('%d jam %d menit', floor($durationMinutes / 60), $durationMinutes % 60);
             }
 
             // Ambil HANYA FnbOrders yang belum lunas dan bukan CANCELLED / EXPIRED
@@ -277,6 +276,7 @@ class LostTimeBillingService
                 $transaction->billing_status !== Transaction::BILLING_RUNNING
                 && $isFinishedPostpaid
                 && !$playstation
+                && !($ltBreakdown['has_segments'] ?? false)
                 && (float) $transaction->total > 0
             ) {
                 $psCost = max(0.0, (float) $transaction->total - $unpaidFnbTotal);
@@ -324,18 +324,53 @@ class LostTimeBillingService
             ]);
 
             // Item sewa Playstation
-            InvoiceItem::create([
-                'invoice_id' => $invoice->id,
-                'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
-                'fnb_id' => null,
-                'fnb_order_item_id' => null,
-                'transaction_fnb_id' => null,
-                'name' => 'Rental ' . ($device?->nama ?? 'PS') . ' (Lost Time)',
-                'qty' => 1,
-                'unit_price_beli' => 0,
-                'unit_price_jual' => $psCost,
-                'subtotal' => $psCost,
-            ]);
+            $billableSegments = collect($ltBreakdown['segments'] ?? [])
+                ->filter(fn ($s) => ($s['duration_seconds'] ?? 0) > 0 || ($s['allocated_billed_amount'] ?? 0) > 0)
+                ->values();
+
+            if (($ltBreakdown['has_segments'] ?? false) && $billableSegments->count() >= 2) {
+                foreach ($billableSegments as $seg) {
+                    $segMins = (int) ($seg['duration_minutes'] ?? intdiv((int) ($seg['duration_seconds'] ?? 0), 60));
+                    $segDurLabel = $segMins > 0
+                        ? sprintf('%d jam %d menit', intdiv($segMins, 60), $segMins % 60)
+                        : ((int) ($seg['duration_seconds'] ?? 0) . ' detik');
+                    $itemName = Str::limit(
+                        'Rental ' . ($seg['playstation_name'] ?? 'PS') . ($device ? ' - ' . $device->nama : '') . ' (' . $segDurLabel . ')',
+                        150,
+                        ''
+                    );
+
+                    InvoiceItem::create([
+                        'invoice_id' => $invoice->id,
+                        'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
+                        'fnb_id' => null,
+                        'fnb_order_item_id' => null,
+                        'transaction_fnb_id' => null,
+                        'name' => $itemName,
+                        'qty' => 1,
+                        'unit_price_beli' => 0,
+                        'unit_price_jual' => (float) $seg['allocated_billed_amount'],
+                        'subtotal' => (float) $seg['allocated_billed_amount'],
+                    ]);
+                }
+            } else {
+                $psName = $playstation?->nama;
+                $baseLabel = $psName ? ($psName . ($device ? ' - ' . $device->nama : '')) : ($device?->nama ?? 'PS');
+                $itemName = Str::limit('Rental ' . $baseLabel . ' (Lost Time)', 150, '');
+
+                InvoiceItem::create([
+                    'invoice_id' => $invoice->id,
+                    'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
+                    'fnb_id' => null,
+                    'fnb_order_item_id' => null,
+                    'transaction_fnb_id' => null,
+                    'name' => $itemName,
+                    'qty' => 1,
+                    'unit_price_beli' => 0,
+                    'unit_price_jual' => $psCost,
+                    'subtotal' => $psCost,
+                ]);
+            }
 
             // Item FnB dari FnbOrders yang belum lunas
             foreach ($unpaidOrders as $ord) {

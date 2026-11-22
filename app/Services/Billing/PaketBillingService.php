@@ -13,6 +13,7 @@ use App\Models\FnbOrderItem;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\AutomationIntent;
+use App\Models\TransactionPricingSegment;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\Automation\AutomationDispatcherService;
 use App\Services\Hardware\TvAlertService;
@@ -47,15 +48,20 @@ class PaketBillingService
         $shouldDispatchOutbox = false;
 
         $invoice = DB::transaction(function () use ($transactionId, $paymentData, &$shouldDispatchOutbox) {
-            /** @var Transaction $tx */
-            $tx = Transaction::with([
+            $relations = [
                 'transactionFnbs.fnb',
                 'transactionFnbs.invoiceItem',
                 'device',
                 'playstation',
                 'custom_package.playstations',
                 'custom_package.fnbs',
-            ])
+            ];
+            if (TransactionPricingSegment::hasSchema()) {
+                $relations[] = 'pricingSegments.playstation';
+            }
+
+            /** @var Transaction $tx */
+            $tx = Transaction::with($relations)
                 ->where('id_transaksi', $transactionId)
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -308,7 +314,12 @@ class PaketBillingService
             }
 
             // 5. Calculate totals and settle transaction + invoice
-            $rentalTotal = $tx->resolvePaketRentalTotal();
+            $timerBreakdown = ($tx->tipe_transaksi === 'prepaid')
+                ? $billingService->calculateTimerWithSegments($tx)
+                : ['has_segments' => false, 'segments' => []];
+            $rentalTotal = ($tx->tipe_transaksi === 'prepaid' && ($timerBreakdown['has_segments'] ?? false))
+                ? (float) $timerBreakdown['rental_total']
+                : $tx->resolvePaketRentalTotal();
             if ($rentalTotal <= 0 && (float) $tx->total > 0) {
                 $rentalTotal = max(0.0, (float) $tx->total - $legacyChargeableFnbTotal);
             }
@@ -386,25 +397,55 @@ class PaketBillingService
                 'paid_at' => $now,
             ]);
 
-            $rentalName = 'Rental ' . ($device->nama ?? 'PlayStation');
-            if ($tx->tipe_transaksi === 'custom_package' && $tx->custom_package) {
-                $rentalName = 'Paket: ' . $tx->custom_package->nama_paket;
-            } elseif ($tx->tipe_transaksi === 'prepaid') {
-                $rentalName = 'Rental ' . ($device->nama ?? 'PS') . ' (' . ($tx->jam_main ?? '') . ')';
-            }
+            $billableSegments = collect($timerBreakdown['segments'] ?? [])
+                ->filter(fn ($s) => ($s['duration_seconds'] ?? 0) > 0 || ($s['allocated_billed_amount'] ?? 0) > 0)
+                ->values();
 
-            InvoiceItem::create([
-                'invoice_id' => $invoice->id,
-                'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
-                'fnb_id' => null,
-                'fnb_order_item_id' => null,
-                'transaction_fnb_id' => null,
-                'name' => $rentalName,
-                'qty' => 1,
-                'unit_price_beli' => 0,
-                'unit_price_jual' => $rentalTotal,
-                'subtotal' => $rentalTotal,
-            ]);
+            if ($tx->tipe_transaksi === 'prepaid' && ($timerBreakdown['has_segments'] ?? false) && $billableSegments->count() >= 2) {
+                foreach ($billableSegments as $seg) {
+                    $segHuman = \App\Models\HourlyPrice::humanizeSeconds((int) ($seg['duration_seconds'] ?? 0));
+                    $itemName = Str::limit(
+                        'Rental ' . ($seg['playstation_name'] ?? 'PS') . ($device ? ' - ' . $device->nama : '') . ' (' . $segHuman . ')',
+                        150,
+                        ''
+                    );
+
+                    InvoiceItem::create([
+                        'invoice_id' => $invoice->id,
+                        'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
+                        'fnb_id' => null,
+                        'fnb_order_item_id' => null,
+                        'transaction_fnb_id' => null,
+                        'name' => $itemName,
+                        'qty' => 1,
+                        'unit_price_beli' => 0,
+                        'unit_price_jual' => (float) $seg['allocated_billed_amount'],
+                        'subtotal' => (float) $seg['allocated_billed_amount'],
+                    ]);
+                }
+            } else {
+                $psName = $tx->playstation?->nama;
+                $rentalName = 'Rental ' . ($psName ?: ($device->nama ?? 'PlayStation'));
+                if ($tx->tipe_transaksi === 'custom_package' && $tx->custom_package) {
+                    $rentalName = 'Paket: ' . $tx->custom_package->nama_paket;
+                } elseif ($tx->tipe_transaksi === 'prepaid') {
+                    $labelTarget = $psName ? ($psName . ($device ? ' - ' . $device->nama : '')) : ($device->nama ?? 'PS');
+                    $rentalName = Str::limit('Rental ' . $labelTarget . ' (' . ($tx->jam_main ?? '') . ')', 150, '');
+                }
+
+                InvoiceItem::create([
+                    'invoice_id' => $invoice->id,
+                    'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
+                    'fnb_id' => null,
+                    'fnb_order_item_id' => null,
+                    'transaction_fnb_id' => null,
+                    'name' => $rentalName,
+                    'qty' => 1,
+                    'unit_price_beli' => 0,
+                    'unit_price_jual' => $rentalTotal,
+                    'subtotal' => $rentalTotal,
+                ]);
+            }
 
             // Settle unpaid FnbOrders and create FNB InvoiceItems
             foreach ($unpaidOrders as $ord) {

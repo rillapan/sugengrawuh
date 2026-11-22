@@ -25,11 +25,12 @@
     $changeAmount = $transaction->kembalian ?? ($checkoutInvoice ? $checkoutInvoice->change_amount : max(0, $amountPaid - $finalTotal));
 
     // Rental items & cost calculation
-    $rentalItem = ($checkoutInvoice && $checkoutInvoice->relationLoaded('items'))
-        ? $checkoutInvoice->items->where('item_type', \App\Models\InvoiceItem::ITEM_TYPE_GAME_RENTAL)->first()
-        : null;
-    $rentalCost = $rentalItem 
-        ? $rentalItem->subtotal 
+    $rentalItems = ($checkoutInvoice && $checkoutInvoice->relationLoaded('items'))
+        ? $checkoutInvoice->items->where('item_type', \App\Models\InvoiceItem::ITEM_TYPE_GAME_RENTAL)->values()
+        : collect();
+    $rentalItem = $rentalItems->first();
+    $rentalCost = $rentalItems->isNotEmpty()
+        ? (float) $rentalItems->sum('subtotal')
         : max(0, $transaction->total - ($transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute()));
 
     // FnB items from invoice or transaction
@@ -114,39 +115,55 @@
                 </thead>
                 <tbody>
                     <!-- Rental Item -->
-                    <tr class="item-title-row">
-                        <td colspan="2" class="item-name">
-                            @if($transaction->tipe_transaksi === 'custom_package' && $transaction->custom_package)
-                                {{ $transaction->custom_package->nama_paket }}
-                            @else
-                                Rental {{ $transaction->device->playstation->nama ?? 'PS' }}
-                            @endif
-                            <br>
-                            <small>{{ $transaction->device->nama ?? '-' }}</small>
-                        </td>
-                    </tr>
-                    <tr class="item-detail-row">
-                        <td class="item-calc">
-                            @if($transaction->tipe_transaksi === 'postpaid')
-                                {{ $transaction->jam_main }} (Lost Time)
-                            @elseif($transaction->tipe_transaksi === 'custom_package')
-                               {{ $transaction->jam_main }} Menit
-                            @elseif($transaction->duration_seconds)
-                               {{ $transaction->display_duration }}
-                            @elseif(preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $transaction->jam_main ?? ''))
-                               {{ $transaction->jam_main }}
-                            @else
-                               {{ $transaction->jam_main }} Jam
-                            @endif
-                        </td>
-                        <td class="item-subtotal">
-                            @if($transaction->tipe_transaksi === 'custom_package')
-                                Harga Paket
-                            @else
-                                Rp {{ number_format($rentalCost, 0, ',', '.') }}
-                            @endif
-                        </td>
-                    </tr>
+                    @if($rentalItems->count() >= 2)
+                        @foreach($rentalItems as $rItem)
+                            <tr class="item-title-row">
+                                <td colspan="2" class="item-name">
+                                    {{ $rItem->name }}
+                                    <br>
+                                    <small>{{ $transaction->device->nama ?? '-' }}</small>
+                                </td>
+                            </tr>
+                            <tr class="item-detail-row">
+                                <td class="item-calc">Segmen #{{ $loop->iteration }}</td>
+                                <td class="item-subtotal">Rp {{ number_format($rItem->subtotal, 0, ',', '.') }}</td>
+                            </tr>
+                        @endforeach
+                    @else
+                        <tr class="item-title-row">
+                            <td colspan="2" class="item-name">
+                                @if($transaction->tipe_transaksi === 'custom_package' && $transaction->custom_package)
+                                    {{ $transaction->custom_package->nama_paket }}
+                                @else
+                                    Rental {{ $transaction->playstation->nama ?? $transaction->device->playstation->nama ?? 'PS' }}
+                                @endif
+                                <br>
+                                <small>{{ $transaction->device->nama ?? '-' }}</small>
+                            </td>
+                        </tr>
+                        <tr class="item-detail-row">
+                            <td class="item-calc">
+                                @if($transaction->tipe_transaksi === 'postpaid')
+                                    {{ $transaction->jam_main }} (Lost Time)
+                                @elseif($transaction->tipe_transaksi === 'custom_package')
+                                   {{ $transaction->jam_main }} Menit
+                                @elseif($transaction->duration_seconds)
+                                   {{ $transaction->display_duration }}
+                                @elseif(preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $transaction->jam_main ?? ''))
+                                   {{ $transaction->jam_main }}
+                                @else
+                                   {{ $transaction->jam_main }} Jam
+                                @endif
+                            </td>
+                            <td class="item-subtotal">
+                                @if($transaction->tipe_transaksi === 'custom_package')
+                                    Harga Paket
+                                @else
+                                    Rp {{ number_format($rentalCost, 0, ',', '.') }}
+                                @endif
+                            </td>
+                        </tr>
+                    @endif
 
                     <!-- FnB Items -->
                     @if($invoiceFnbItems && $invoiceFnbItems->isNotEmpty())

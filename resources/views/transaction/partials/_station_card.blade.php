@@ -126,11 +126,17 @@
                     $activePs = $activeTx->playstation ?: ($device->playstation ?: ($device->playstations ? $device->playstations->first() : null));
                     $hourlyPackagesJson = $activePs ? json_encode($activePs->getAvailableHoursWithPrices()) : '{}';
                     $initEst = 0;
+                    $hasSegments = false;
+                    $closedRawTotal = 0;
+                    $closedMinutes = 0;
+                    $activeSegmentStartIso = $lostTimeStartIso;
                     if ($activeTx->tipe_transaksi === 'postpaid') {
-                        $initStart = $activeTx->getEffectiveStartTime();
-                        $initElapsedMinutes = max(0, (int) $initStart->diffInMinutes(now(), false));
-                        $initRaw = app(\App\Services\BillingService::class)->calculateLostTimePrice($activePs, $initElapsedMinutes);
-                        $initEst = app(\App\Services\BillingService::class)->applyLostTimeRounding($initRaw);
+                        $ltBreakdown = app(\App\Services\BillingService::class)->calculateLostTimeWithSegments($activeTx, now(), false);
+                        $initEst = $ltBreakdown['rounded_total'];
+                        $hasSegments = (bool) ($ltBreakdown['has_segments'] ?? false);
+                        $closedRawTotal = (float) ($ltBreakdown['closed_raw_total'] ?? 0);
+                        $closedMinutes = (int) ($ltBreakdown['closed_minutes'] ?? 0);
+                        $activeSegmentStartIso = (string) ($ltBreakdown['active_segment_start_iso'] ?? $lostTimeStartIso);
                     }
                 @endphp
                 <div
@@ -142,9 +148,13 @@
                     data-started-at="{{ $startedAtIso }}"
                     data-lost-time-start="{{ $lostTimeStartIso }}"
                     data-expires-at="{{ $expiresAtIso }}"
-                    data-hourly-rate="{{ (int) ($activeTx->harga ?? ($activePs->harga ?? 0)) }}"
+                    data-hourly-rate="{{ (int) ($activePs->harga ?? ($activeTx->harga ?? 0)) }}"
                     data-hourly-packages="{{ $hourlyPackagesJson }}"
                     data-fnb-unpaid="{{ (int) $unpaidFnbTotal }}"
+                    data-has-segments="{{ $hasSegments ? '1' : '0' }}"
+                    data-closed-raw-total="{{ $closedRawTotal }}"
+                    data-closed-minutes="{{ $closedMinutes }}"
+                    data-active-segment-start="{{ $activeSegmentStartIso }}"
                 >--:--:--</div>
                 <div class="pos-timer-sub">
                     Mulai: {{ $activeTx->waktu_mulai }} | Selesai: {{ $activeTx->waktu_Selesai ?: 'Berjalan' }}

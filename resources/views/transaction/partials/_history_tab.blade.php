@@ -160,8 +160,11 @@
                             <td>{{ $transaksi->id_transaksi }}</td>
                             <td>{{ $transaksi->nama }}</td>
                             <td>
-                                @if ($transaksi->device && $transaksi->device->playstation)
-                                    {{ $transaksi->device->nama }} - {{ $transaksi->device->playstation->nama }}
+                                @php
+                                    $historyPsName = optional($transaksi->playstation)->nama ?: optional(optional($transaksi->device)->playstation)->nama;
+                                @endphp
+                                @if ($transaksi->device && $historyPsName)
+                                    {{ $transaksi->device->nama }} - {{ $historyPsName }}
                                 @elseif ($transaksi->device)
                                     {{ $transaksi->device->nama }}
                                 @else

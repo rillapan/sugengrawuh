@@ -12,6 +12,7 @@ use App\Models\Invoice;
 use App\Models\TransactionFnb;
 use App\Models\StockMutation;
 use App\Models\AutomationIntent;
+use App\Models\TransactionPricingSegment;
 use App\Models\TvAlertEvent;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\TvAlertService;
@@ -19,6 +20,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class BillingService
 {
@@ -446,7 +448,8 @@ class BillingService
      *     fnb_unpaid_total: float,
      *     total_fnb_display: float,
      *     payable_total: float,
-     *     fnb_items: array<int, array<string, mixed>>
+     *     fnb_items: array<int, array<string, mixed>>,
+     *     rental_segments: array<int, array<string, mixed>>
      * }
      */
     public function summarizeTransactionBilling(Transaction $tx, ?Carbon $now = null): array
@@ -455,12 +458,28 @@ class BillingService
         $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
 
         $fnbSummary = $this->summarizeTransactionFnbs($tx);
-        $rentalSubtotal = $this->resolveTransactionRentalSubtotal(
-            $tx,
-            $now,
-            $fnbSummary['fnb_unpaid_total'],
-            $fnbSummary['legacy_fnb_total']
-        );
+        $segments = $tx->getResolvedPricingSegments();
+        $rentalSegments = [];
+
+        if ($segments->isNotEmpty() && $tx->tipe_transaksi === 'postpaid') {
+            $ltBreakdown = $this->calculateLostTimeWithSegments($tx, $now, true);
+            $rentalSubtotal = (float) ($ltBreakdown['rounded_total'] ?? 0);
+            $rentalSegments = $ltBreakdown['segments'] ?? [];
+        } elseif ($segments->isNotEmpty() && $tx->tipe_transaksi === 'prepaid') {
+            $timerBreakdown = $this->calculateTimerWithSegments($tx);
+            $rentalSubtotal = (float) ($timerBreakdown['rental_total'] ?? 0);
+            if ($rentalSubtotal <= 0 && (float) $tx->total > 0) {
+                $rentalSubtotal = max(0.0, (float) $tx->total - $fnbSummary['legacy_fnb_total']);
+            }
+            $rentalSegments = $timerBreakdown['segments'] ?? [];
+        } else {
+            $rentalSubtotal = $this->resolveTransactionRentalSubtotal(
+                $tx,
+                $now,
+                $fnbSummary['fnb_unpaid_total'],
+                $fnbSummary['legacy_fnb_total']
+            );
+        }
 
         $payableTotal = ($tx->payment_status === 'paid')
             ? $fnbSummary['fnb_unpaid_total']
@@ -473,6 +492,7 @@ class BillingService
             'total_fnb_display' => (float) $fnbSummary['total_fnb_display'],
             'payable_total' => (float) $payableTotal,
             'fnb_items' => $fnbSummary['fnb_items'],
+            'rental_segments' => $rentalSegments,
         ];
     }
 
@@ -685,12 +705,9 @@ class BillingService
         }
 
         if ($tx->tipe_transaksi === 'postpaid') {
-            $durationMinutes = $this->resolvePostpaidDurationMinutes($tx, $now);
-            $playstation = $this->resolveTransactionPlaystation($tx);
-
-            if ($playstation) {
-                $rawPsCost = $this->calculateLostTimePrice($playstation, $durationMinutes);
-                return $this->applyLostTimeRounding($rawPsCost);
+            $ltBreakdown = $this->calculateLostTimeWithSegments($tx, $now, true);
+            if ($ltBreakdown['has_segments'] || $this->resolveTransactionPlaystation($tx)) {
+                return (float) $ltBreakdown['rounded_total'];
             }
 
             if ($this->isFinishedPostpaid($tx) && (float) $tx->total > 0) {
@@ -1131,7 +1148,46 @@ class BillingService
                     $newJamMain = \App\Models\HourlyPrice::formatSeconds($newDurationSeconds);
                 }
 
-                if ($playstation) {
+                if ($transaction->getResolvedPricingSegments()->isNotEmpty()) {
+                    $lastSeg = $transaction->pricingSegments()
+                        ->orderByDesc('segment_order')
+                        ->orderByDesc('id')
+                        ->first();
+
+                    if ($lastSeg) {
+                        $newSegDuration = (int) $lastSeg->duration_seconds + ($additionalMinutes * 60);
+                        $segPs = $lastSeg->playstation ?: $playstation;
+                        $calc = $segPs
+                            ? $this->calculateTimerSegmentRaw($segPs, $newSegDuration)
+                            : [
+                                'is_preset' => false,
+                                'raw_amount' => round((((float) $lastSeg->hourly_rate_snapshot) * $newSegDuration) / 3600, 4),
+                            ];
+
+                        $lastSeg->update([
+                            'ended_at' => $newExpiresAt,
+                            'duration_seconds' => $newSegDuration,
+                            'is_preset_price' => $calc['is_preset'],
+                            'raw_amount' => $calc['raw_amount'],
+                        ]);
+
+                        $transaction->unsetRelation('pricingSegments');
+                        $timerBreakdown = $this->calculateTimerWithSegments($transaction);
+                        foreach ($timerBreakdown['segments'] as $segData) {
+                            if (!empty($segData['segment_id'])) {
+                                TransactionPricingSegment::where('id', $segData['segment_id'])->update([
+                                    'billed_amount' => round((float) $segData['allocated_billed_amount'], 2),
+                                ]);
+                            }
+                        }
+                        $transaction->unsetRelation('pricingSegments');
+                        $newTotalPs = (float) $timerBreakdown['rental_total'];
+                    } elseif ($playstation) {
+                        $newTotalPs = (float) $playstation->calculateCustomPrice($newDurationSeconds);
+                    } else {
+                        $newTotalPs = (float) (($transaction->harga ?? 0) * ($newDurationSeconds / 3600));
+                    }
+                } elseif ($playstation) {
                     $newTotalPs = (float) $playstation->calculateCustomPrice($newDurationSeconds);
                 } else {
                     $newTotalPs = (float) (($transaction->harga ?? 0) * ($newDurationSeconds / 3600));
@@ -1145,7 +1201,7 @@ class BillingService
                 $newTotalPs = (float)$transaction->total + $addedCost;
             }
 
-            $fnbTotal = $transaction->fnb_total;
+            $fnbTotal = $transaction->uninvoiced_legacy_fnb_total + $transaction->unpaid_fnb_order_total;
             $finalTotal = $newTotalPs + $fnbTotal;
 
             $updateFields = [
@@ -1235,12 +1291,9 @@ class BillingService
             ];
 
             if ($transaction->tipe_transaksi === 'postpaid') {
-                $startedAt = $transaction->getEffectiveStartTime();
-                $durationMinutes = max(1, $startedAt->diffInMinutes($endedAt));
-
-                $playstation = $transaction->playstation ?: ($transaction->device ? $transaction->device->playstation : null);
-                $totalPs = $this->calculateLostTimePrice($playstation, $durationMinutes);
-                $roundedTotalPs = $this->applyLostTimeRounding($totalPs);
+                $ltBreakdown = $this->finalizeLostTimeSegments($transaction, $endedAt);
+                $durationMinutes = $ltBreakdown['total_minutes'];
+                $roundedTotalPs = $ltBreakdown['rounded_total'];
 
                 $hours = floor($durationMinutes / 60);
                 $minutes = $durationMinutes % 60;
@@ -1551,7 +1604,7 @@ class BillingService
 
     /**
      * Rounding rules for lost time:
-     * - Exactly 0 mod 1000 => unchanged
+     * - Exactly 0 mod 1000 (< 0.01 difference) => unchanged
      * - <= 500 => round up to nearest 500
      * - > 500 => round up to nearest 1000
      *
@@ -1560,15 +1613,1727 @@ class BillingService
      */
     public function applyLostTimeRounding(float $total): float
     {
-        $lowerThousand = floor($total / 1000) * 1000;
-        $difference = $total - $lowerThousand;
-
-        if ($difference == 0) {
-            return $total;
-        } elseif ($difference <= 500) {
-            return $lowerThousand + 500;
-        } else {
-            return $lowerThousand + 1000;
+        if ($total <= 0) {
+            return 0.0;
         }
+
+        $normalized = round($total, 4);
+        $lowerThousand = floor($normalized / 1000) * 1000;
+        $difference = $normalized - $lowerThousand;
+
+        if ($difference < 0.01) {
+            return (float) $lowerThousand;
+        } elseif ($difference <= 500.00) {
+            return (float) ($lowerThousand + 500);
+        } else {
+            return (float) ($lowerThousand + 1000);
+        }
+    }
+
+    /**
+     * Round up prorated timer amounts to the nearest Rp 500 with 4-decimal precision.
+     */
+    public function roundUpToNearest500(float $amount): float
+    {
+        if ($amount <= 0) {
+            return 0.0;
+        }
+
+        $normalized = round($amount, 4);
+        $base = floor($normalized / 500) * 500;
+        $diff = $normalized - $base;
+
+        if ($diff < 0.01) {
+            return (float) $base;
+        }
+
+        return (float) ($base + 500);
+    }
+
+    /**
+     * Calculate raw timer segment price (checking exact duration preset first, then prorated raw amount).
+     *
+     * @return array{is_preset: bool, raw_amount: float, hourly_rate: float}
+     */
+    public function calculateTimerSegmentRaw(Playstation $playstation, int $durationSeconds): array
+    {
+        $baseHourly = (float) ($playstation->harga ?? 0);
+        if ($durationSeconds <= 0) {
+            return [
+                'is_preset' => false,
+                'raw_amount' => 0.0,
+                'hourly_rate' => $baseHourly,
+            ];
+        }
+
+        $preset = $playstation->getPriceForDuration($durationSeconds);
+        if ($preset !== null) {
+            return [
+                'is_preset' => true,
+                'raw_amount' => (float) $preset,
+                'hourly_rate' => $baseHourly,
+            ];
+        }
+
+        $raw = $baseHourly > 0 ? round(($baseHourly * $durationSeconds) / 3600, 4) : 0.0;
+
+        return [
+            'is_preset' => false,
+            'raw_amount' => $raw,
+            'hourly_rate' => $baseHourly,
+        ];
+    }
+
+    /**
+     * Calculate Lost Time (postpaid) breakdown supporting multi-segment pricing with a single final rounding step.
+     */
+    public function calculateLostTimeWithSegments(
+        Transaction $tx,
+        ?Carbon $now = null,
+        bool $enforceMinOneMinute = true
+    ): array {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $isFinished = $this->isFinishedPostpaid($tx);
+        $hasExplicitEnd = $tx->ended_at !== null
+            || ($tx->waktu_Selesai !== null && trim((string) $tx->waktu_Selesai) !== '');
+        $effectiveEnd = ($isFinished && $hasExplicitEnd) ? $tx->getEffectiveEndTime() : $now;
+
+        $sessionStart = $tx->getEffectiveStartTime();
+        $rawElapsedMinutes = max(0, (int) $sessionStart->diffInMinutes($effectiveEnd, false));
+        $totalSessionMinutes = $enforceMinOneMinute ? max(1, $rawElapsedMinutes) : $rawElapsedMinutes;
+
+        $segments = $tx->getResolvedPricingSegments();
+
+        if ($segments->isEmpty()) {
+            $ps = $this->resolveTransactionPlaystation($tx);
+            $raw = $ps ? $this->calculateLostTimePrice($ps, $totalSessionMinutes) : 0.0;
+            $rounded = $this->applyLostTimeRounding($raw);
+            $durSec = max(0, (int) $sessionStart->diffInSeconds($effectiveEnd, false));
+
+            return [
+                'has_segments' => false,
+                'total_minutes' => $totalSessionMinutes,
+                'raw_total' => round($raw, 4),
+                'rounded_total' => (float) $rounded,
+                'closed_raw_total' => 0.0,
+                'closed_minutes' => 0,
+                'active_segment_start_iso' => $sessionStart->toIso8601String(),
+                'segments' => [
+                    [
+                        'segment_id' => null,
+                        'segment_order' => 1,
+                        'playstation_id' => $ps?->id,
+                        'playstation_name' => (string) ($ps?->nama ?? 'Game'),
+                        'hourly_rate' => (float) ($ps?->harga ?? $tx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'started_at' => $sessionStart,
+                        'ended_at' => $effectiveEnd,
+                        'is_open' => !$isFinished,
+                        'duration_seconds' => $durSec,
+                        'duration_minutes' => $totalSessionMinutes,
+                        'raw_amount' => round($raw, 4),
+                        'allocated_billed_amount' => (float) $rounded,
+                    ],
+                ],
+            ];
+        }
+
+        $closedRawTotal = 0.0;
+        $closedMinutes = 0;
+        $activeSegmentStartIso = $sessionStart->toIso8601String();
+        $items = [];
+        $hasOpenSegment = $segments->contains(fn ($s) => $s->ended_at === null);
+        $segCount = $segments->count();
+
+        foreach ($segments->values() as $idx => $seg) {
+            $isLast = ($idx === $segCount - 1);
+            $segStart = $seg->started_at ? $seg->started_at->copy()->setTimezone($tz) : $sessionStart;
+            $segPs = $seg->relationLoaded('playstation') ? $seg->playstation : $seg->playstation()->first();
+
+            if ($seg->ended_at !== null) {
+                $segEnd = $seg->ended_at->copy()->setTimezone($tz);
+                $segSec = $seg->duration_seconds !== null
+                    ? (int) $seg->duration_seconds
+                    : max(0, (int) $segStart->diffInSeconds($segEnd, false));
+                $segMin = max(0, intdiv($segSec, 60));
+
+                if (!$hasOpenSegment && $isLast) {
+                    if ($seg->raw_amount !== null) {
+                        $segRaw = (float) $seg->raw_amount;
+                        $segMin = max($segMin, max(0, $totalSessionMinutes - $closedMinutes));
+                    } else {
+                        $segMin = max($segMin, max(0, $totalSessionMinutes - $closedMinutes));
+                        $segRaw = $segPs
+                            ? $this->calculateLostTimePrice($segPs, $segMin)
+                            : (((float) $seg->hourly_rate_snapshot / 60) * $segMin);
+                    }
+                } else {
+                    $segRaw = $seg->raw_amount !== null
+                        ? (float) $seg->raw_amount
+                        : ($segPs
+                            ? $this->calculateLostTimePrice($segPs, $segMin)
+                            : (((float) $seg->hourly_rate_snapshot / 60) * $segMin));
+                    $closedRawTotal += $segRaw;
+                    $closedMinutes += $segMin;
+                }
+
+                $isOpen = false;
+            } else {
+                $segEnd = $effectiveEnd;
+                $segSec = max(0, (int) $segStart->diffInSeconds($effectiveEnd, false));
+                $segMin = max(0, $totalSessionMinutes - $closedMinutes);
+                $livePs = $segPs ?: $this->resolveTransactionPlaystation($tx);
+                $segRaw = $livePs
+                    ? $this->calculateLostTimePrice($livePs, $segMin)
+                    : (((float) $seg->hourly_rate_snapshot / 60) * $segMin);
+                $activeSegmentStartIso = $segStart->toIso8601String();
+                $isOpen = true;
+            }
+
+            $items[] = [
+                'segment_id' => $seg->id,
+                'segment_order' => (int) ($seg->segment_order ?: ($idx + 1)),
+                'playstation_id' => $seg->playstation_id ?: $segPs?->id,
+                'playstation_name' => (string) ($segPs?->nama ?? $seg->playstation_name_snapshot ?: 'Game'),
+                'hourly_rate' => (float) ($isOpen && $segPs ? $segPs->harga : ($seg->hourly_rate_snapshot ?: ($segPs?->harga ?? 0))),
+                'pricing_mode' => (string) ($seg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                'started_at' => $segStart,
+                'ended_at' => $segEnd,
+                'is_open' => $isOpen,
+                'duration_seconds' => $segSec,
+                'duration_minutes' => $segMin,
+                'raw_amount' => round($segRaw, 4),
+                'allocated_billed_amount' => 0.0,
+            ];
+        }
+
+        $rawTotal = round((float) collect($items)->sum('raw_amount'), 4);
+        $roundedTotal = $this->applyLostTimeRounding($rawTotal);
+
+        $lastActiveIdx = count($items) - 1;
+        for ($i = count($items) - 1; $i >= 0; $i--) {
+            if (($items[$i]['duration_seconds'] ?? 0) > 0 || ($items[$i]['raw_amount'] ?? 0) > 0) {
+                $lastActiveIdx = $i;
+                break;
+            }
+        }
+
+        $allocatedSoFar = 0.0;
+        foreach ($items as $k => &$item) {
+            if ($k < $lastActiveIdx) {
+                $amt = round((float) $item['raw_amount'], 2);
+                $item['allocated_billed_amount'] = $amt;
+                $allocatedSoFar += $amt;
+            } elseif ($k === $lastActiveIdx) {
+                $item['allocated_billed_amount'] = max(0.0, round($roundedTotal - $allocatedSoFar, 2));
+            } else {
+                $item['allocated_billed_amount'] = 0.0;
+            }
+        }
+        unset($item);
+
+        return [
+            'has_segments' => true,
+            'total_minutes' => $totalSessionMinutes,
+            'raw_total' => $rawTotal,
+            'rounded_total' => (float) $roundedTotal,
+            'closed_raw_total' => round($closedRawTotal, 4),
+            'closed_minutes' => $closedMinutes,
+            'active_segment_start_iso' => $activeSegmentStartIso,
+            'segments' => $items,
+        ];
+    }
+
+    /**
+     * Calculate Timer (prepaid) breakdown supporting multi-segment pricing with a single final rounding step.
+     */
+    public function calculateTimerWithSegments(Transaction $tx): array
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $segments = $tx->getResolvedPricingSegments();
+
+        if ($segments->isEmpty()) {
+            $totalSec = (int) ($tx->resolveTotalDurationSeconds() ?? 0);
+            $ps = $this->resolveTransactionPlaystation($tx);
+            $price = ($ps && $totalSec > 0)
+                ? (float) $ps->calculateCustomPrice($totalSec)
+                : (float) ($tx->harga ?? 0);
+            $sessionStart = $tx->getEffectiveStartTime();
+            $expiresAt = $tx->resolveLegacyExpiresAt()
+                ?: ($totalSec > 0 ? $sessionStart->copy()->addSeconds($totalSec) : $sessionStart);
+
+            return [
+                'has_segments' => false,
+                'total_seconds' => $totalSec,
+                'rental_total' => (float) $price,
+                'segments' => [
+                    [
+                        'segment_id' => null,
+                        'segment_order' => 1,
+                        'playstation_id' => $ps?->id,
+                        'playstation_name' => (string) ($ps?->nama ?? 'Game'),
+                        'hourly_rate' => (float) ($ps?->harga ?? $tx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => ($ps && $totalSec > 0) ? ($ps->getPriceForDuration($totalSec) !== null) : false,
+                        'started_at' => $sessionStart,
+                        'ended_at' => $expiresAt,
+                        'duration_seconds' => $totalSec,
+                        'raw_amount' => (float) $price,
+                        'allocated_billed_amount' => (float) $price,
+                    ],
+                ],
+            ];
+        }
+
+        $items = [];
+        $presetSum = 0.0;
+        $proratedRawSum = 0.0;
+        $nonPresetIndices = [];
+        $sessionStart = $tx->getEffectiveStartTime();
+
+        foreach ($segments->values() as $idx => $seg) {
+            $segPs = $seg->relationLoaded('playstation') ? $seg->playstation : $seg->playstation()->first();
+            $durSec = (int) ($seg->duration_seconds ?? 0);
+            $raw = (float) ($seg->raw_amount ?? $seg->billed_amount ?? 0);
+            $isPreset = (bool) $seg->is_preset_price;
+
+            if ($isPreset) {
+                $presetSum += $raw;
+            } else {
+                $proratedRawSum += $raw;
+                $nonPresetIndices[] = $idx;
+            }
+
+            $segStart = $seg->started_at ? $seg->started_at->copy()->setTimezone($tz) : $sessionStart;
+            $segEnd = $seg->ended_at ? $seg->ended_at->copy()->setTimezone($tz) : $segStart->copy()->addSeconds($durSec);
+
+            $items[] = [
+                'segment_id' => $seg->id,
+                'segment_order' => (int) ($seg->segment_order ?: ($idx + 1)),
+                'playstation_id' => $seg->playstation_id ?: $segPs?->id,
+                'playstation_name' => (string) ($segPs?->nama ?? $seg->playstation_name_snapshot ?: 'Game'),
+                'hourly_rate' => (float) ($seg->hourly_rate_snapshot ?: ($segPs?->harga ?? 0)),
+                'pricing_mode' => (string) ($seg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                'is_preset_price' => $isPreset,
+                'started_at' => $segStart,
+                'ended_at' => $segEnd,
+                'duration_seconds' => $durSec,
+                'raw_amount' => round($raw, 4),
+                'allocated_billed_amount' => 0.0,
+            ];
+        }
+
+        $roundedProrated = $this->roundUpToNearest500($proratedRawSum);
+        $rentalTotal = round($presetSum + $roundedProrated, 2);
+
+        $lastNonPresetIdx = !empty($nonPresetIndices) ? end($nonPresetIndices) : null;
+        if (!empty($nonPresetIndices)) {
+            for ($i = count($nonPresetIndices) - 1; $i >= 0; $i--) {
+                $candidateIdx = $nonPresetIndices[$i];
+                if (($items[$candidateIdx]['duration_seconds'] ?? 0) > 0 || ($items[$candidateIdx]['raw_amount'] ?? 0) > 0) {
+                    $lastNonPresetIdx = $candidateIdx;
+                    break;
+                }
+            }
+        }
+
+        $nonPresetAllocatedSoFar = 0.0;
+        foreach ($items as $idx => &$item) {
+            if ($item['is_preset_price']) {
+                $item['allocated_billed_amount'] = round((float) $item['raw_amount'], 2);
+            } else {
+                if ($lastNonPresetIdx !== null && $idx < $lastNonPresetIdx) {
+                    $amt = round((float) $item['raw_amount'], 2);
+                    $item['allocated_billed_amount'] = $amt;
+                    $nonPresetAllocatedSoFar += $amt;
+                } elseif ($lastNonPresetIdx !== null && $idx === $lastNonPresetIdx) {
+                    $item['allocated_billed_amount'] = max(0.0, round($roundedProrated - $nonPresetAllocatedSoFar, 2));
+                } else {
+                    $item['allocated_billed_amount'] = 0.0;
+                }
+            }
+        }
+        unset($item);
+
+        return [
+            'has_segments' => true,
+            'total_seconds' => (int) collect($items)->sum('duration_seconds'),
+            'rental_total' => (float) $rentalTotal,
+            'segments' => $items,
+        ];
+    }
+
+    /**
+     * Close and persist finalized duration, raw_amount, and billed_amount on Lost Time segments when session ends.
+     */
+    public function finalizeLostTimeSegments(Transaction $tx, Carbon $endedAt): array
+    {
+        $breakdown = $this->calculateLostTimeWithSegments($tx, $endedAt, true);
+
+        if ($breakdown['has_segments'] && TransactionPricingSegment::hasSchema()) {
+            foreach ($breakdown['segments'] as $segData) {
+                if (!empty($segData['segment_id'])) {
+                    TransactionPricingSegment::where('id', $segData['segment_id'])->update([
+                        'ended_at' => $segData['ended_at'],
+                        'duration_seconds' => $segData['duration_seconds'],
+                        'raw_amount' => round((float) $segData['raw_amount'], 4),
+                        'billed_amount' => round((float) $segData['allocated_billed_amount'], 2),
+                    ]);
+                }
+            }
+            $tx->unsetRelation('pricingSegments');
+        }
+
+        return $breakdown;
+    }
+
+    /**
+     * Parse prepaid duration in seconds from duration_seconds or jam_main input.
+     * Returns null when neither is provided, or -1 if provided input is invalid.
+     */
+    public function parsePrepaidDurationSeconds(mixed $rawJamMain, ?int $durationSecondsInput = null): ?int
+    {
+        if ($durationSecondsInput !== null && (int) $durationSecondsInput > 0) {
+            return (int) $durationSecondsInput;
+        }
+
+        if ($rawJamMain === null || $rawJamMain === '') {
+            return null;
+        }
+
+        if (is_numeric($rawJamMain)) {
+            $val = (float) $rawJamMain;
+            return $val > 0 ? (int) round($val * 3600) : -1;
+        }
+
+        if (is_string($rawJamMain) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', trim($rawJamMain), $m)) {
+            $sec = ((int) $m[1] * 3600) + ((int) $m[2] * 60) + (isset($m[3]) ? (int) $m[3] : 0);
+            return $sec > 0 ? $sec : -1;
+        }
+
+        return -1;
+    }
+
+    /**
+     * Resolve requested prepaid duration in seconds during transaction edit, handling legacy jam_main vs duration_seconds.
+     */
+    private function resolveRequestedPrepaidDurationSeconds(
+        Transaction $tx,
+        array $input,
+        bool $typeChanged,
+        ?int $oldDurationSeconds
+    ): int {
+        $rawDurSec = isset($input['duration_seconds']) && $input['duration_seconds'] !== ''
+            ? (int) $input['duration_seconds']
+            : null;
+        $rawJamMain = $input['jam_main'] ?? null;
+        $parsedJamMain = ($rawJamMain !== null && $rawJamMain !== '')
+            ? $this->parsePrepaidDurationSeconds($rawJamMain, null)
+            : null;
+
+        if (!$typeChanged) {
+            if ($rawDurSec !== null && $parsedJamMain !== null) {
+                if ($parsedJamMain <= 0) {
+                    return -1;
+                }
+                if ($oldDurationSeconds !== null && $rawDurSec === (int) $oldDurationSeconds && $parsedJamMain !== (int) $oldDurationSeconds) {
+                    return $parsedJamMain;
+                }
+                return $rawDurSec;
+            }
+
+            if ($rawDurSec !== null) {
+                return $rawDurSec;
+            }
+
+            if ($parsedJamMain !== null) {
+                return $parsedJamMain;
+            }
+
+            return $oldDurationSeconds ?: 3600;
+        }
+
+        $parsed = $this->parsePrepaidDurationSeconds($rawJamMain, $rawDurSec);
+        if ($parsed === -1) {
+            return -1;
+        }
+
+        return $parsed ?: 3600;
+    }
+
+    /**
+     * Pure read-only preview calculation for editing an active unpaid transaction (ZERO database writes).
+     */
+    public function previewTransactionEdit(Transaction $tx, array $input, ?Carbon $now = null): array
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $startedAt = $tx->getEffectiveStartTime();
+        $effectiveExpiresAt = $tx->resolveLegacyExpiresAt();
+        $elapsedSeconds = max(0, (int) $startedAt->diffInSeconds($now, false));
+        $currentPlaystation = $tx->resolveCurrentPlaystation();
+        $currentSummary = $this->summarizeTransactionBilling($tx, $now);
+
+        $pricingMode = in_array($input['pricing_mode'] ?? null, ['correction', 'from_now'], true)
+            ? (string) $input['pricing_mode']
+            : 'from_now';
+        $pricingModeLabel = $pricingMode === 'correction'
+            ? 'Koreksi dari Awal (Koreksi Kategori)'
+            : 'Mulai Sekarang (Pindah Permainan Saat Berjalan)';
+
+        $currentCatData = [
+            'id' => $currentPlaystation?->id ? (int) $currentPlaystation->id : null,
+            'nama' => (string) ($currentPlaystation?->nama ?? 'Tidak Tersedia'),
+            'harga' => (float) ($currentPlaystation?->harga ?? $tx->harga ?? 0),
+        ];
+
+        $base = [
+            'valid' => false,
+            'error' => null,
+            'error_code' => null,
+            'current_category' => $currentCatData,
+            'new_category' => $currentCatData,
+            'category_changed' => false,
+            'device_changed' => false,
+            'type_changed' => false,
+            'duration_changed' => false,
+            'pricing_mode' => $pricingMode,
+            'pricing_mode_label' => $pricingModeLabel,
+            'elapsed_seconds' => $elapsedSeconds,
+            'remaining_seconds' => $effectiveExpiresAt ? max(0, (int) $now->diffInSeconds($effectiveExpiresAt, false)) : null,
+            'total_duration_seconds' => $tx->resolveTotalDurationSeconds(),
+            'started_at' => $startedAt->toIso8601String(),
+            'expires_at' => $effectiveExpiresAt?->toIso8601String(),
+            'current_rental_estimate' => (float) $currentSummary['rental_subtotal'],
+            'new_rental_estimate' => (float) $currentSummary['rental_subtotal'],
+            'price_difference' => 0.0,
+            'fnb_unpaid_total' => (float) $currentSummary['fnb_unpaid_total'],
+            'fnb_paid_total' => (float) $currentSummary['fnb_paid_total'],
+            'current_payable_total' => (float) $currentSummary['payable_total'],
+            'new_payable_total' => (float) $currentSummary['payable_total'],
+            'segments_preview' => [],
+        ];
+
+        if ($tx->payment_status !== 'unpaid' || $tx->hasGameSettlementInvoice()) {
+            return array_merge($base, [
+                'valid' => false,
+                'error' => 'Transaksi yang sudah lunas atau sudah memiliki settlement pembayaran tidak dapat diedit.',
+                'error_code' => 'payment_locked',
+            ]);
+        }
+
+        $isTimerExpired = in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)
+            && $effectiveExpiresAt !== null
+            && $effectiveExpiresAt->lte($now);
+        $isSessionEnded = in_array($tx->billing_status, [
+            Transaction::BILLING_EXPIRED_PENDING_ACTION,
+            Transaction::BILLING_COMPLETED,
+            Transaction::BILLING_STOPPED_EARLY,
+        ], true) || $tx->status_transaksi === 'selesai' || $isTimerExpired;
+
+        if ($isSessionEnded) {
+            return array_merge($base, [
+                'valid' => false,
+                'error' => 'Sesi transaksi sudah berakhir atau kedaluwarsa dan tidak dapat diaktifkan kembali.',
+                'error_code' => 'session_ended',
+            ]);
+        }
+
+        $targetDeviceId = isset($input['device_id']) && $input['device_id'] !== ''
+            ? (int) $input['device_id']
+            : (int) $tx->device_id;
+
+        $newDevice = ($tx->relationLoaded('device') && $tx->device && (int) $tx->device->id === $targetDeviceId)
+            ? $tx->device
+            : Device::with(['playstations.hourlyPrices', 'playstation.hourlyPrices'])->find($targetDeviceId);
+
+        if (!$newDevice) {
+            return array_merge($base, [
+                'valid' => false,
+                'error' => 'Perangkat tidak ditemukan.',
+                'error_code' => 'device_not_found',
+            ]);
+        }
+
+        $newTipe = (string) ($input['tipe_transaksi'] ?? $tx->tipe_transaksi);
+        if (!in_array($newTipe, ['prepaid', 'postpaid', 'custom_package'], true)) {
+            return array_merge($base, [
+                'valid' => false,
+                'error' => 'Tipe transaksi tidak valid.',
+                'error_code' => 'invalid_type',
+            ]);
+        }
+
+        $newPlaystation = null;
+        if ($newTipe !== 'custom_package') {
+            $requestedPsId = isset($input['playstation_id']) && $input['playstation_id'] !== ''
+                ? (int) $input['playstation_id']
+                : null;
+
+            if ($requestedPsId !== null) {
+                if (!$newDevice->supportsPlaystation($requestedPsId)) {
+                    return array_merge($base, [
+                        'valid' => false,
+                        'error' => 'Kategori permainan yang dipilih tidak kompatibel dengan perangkat ' . $newDevice->nama . '.',
+                        'error_code' => 'invalid_category',
+                    ]);
+                }
+                $newPlaystation = $newDevice->getAvailableCategories()->firstWhere('id', $requestedPsId)
+                    ?: Playstation::with('hourlyPrices')->find($requestedPsId);
+            } else {
+                $avail = $newDevice->getAvailableCategories();
+                if (((int) $newDevice->id === (int) $tx->device_id) && $tx->playstation_id) {
+                    if ($newDevice->supportsPlaystation((int) $tx->playstation_id)) {
+                        $newPlaystation = $avail->firstWhere('id', (int) $tx->playstation_id) ?: $currentPlaystation;
+                    } else {
+                        return array_merge($base, [
+                            'valid' => false,
+                            'error' => 'Silakan pilih kategori permainan yang valid untuk perangkat ini.',
+                            'error_code' => 'category_required',
+                        ]);
+                    }
+                } elseif ($avail->count() === 1) {
+                    $newPlaystation = $avail->first();
+                } else {
+                    return array_merge($base, [
+                        'valid' => false,
+                        'error' => 'Silakan pilih kategori permainan yang valid untuk perangkat ini.',
+                        'error_code' => 'category_required',
+                    ]);
+                }
+            }
+
+            if (!$newPlaystation) {
+                return array_merge($base, [
+                    'valid' => false,
+                    'error' => 'Silakan pilih kategori permainan yang valid untuk perangkat ini.',
+                    'error_code' => 'category_required',
+                ]);
+            }
+        }
+
+        $deviceChanged = ((int) $newDevice->id !== (int) $tx->device_id);
+        $typeChanged = ($newTipe !== $tx->tipe_transaksi);
+        $categoryChanged = $newTipe !== 'custom_package'
+            ? ((int) ($currentPlaystation?->id ?? 0) !== (int) ($newPlaystation?->id ?? 0))
+            : false;
+
+        if ($pricingMode === 'from_now' && $categoryChanged && !$typeChanged && !TransactionPricingSegment::hasSchema()) {
+            return array_merge($base, [
+                'valid' => false,
+                'error' => 'Tabel segmen tarif (transaction_pricing_segments) belum tersedia. Jalankan migrasi terlebih dahulu untuk menggunakan Mode B (Mulai Sekarang).',
+                'error_code' => 'missing_segment_schema',
+            ]);
+        }
+
+        $existingSegments = $tx->getResolvedPricingSegments();
+        $durationChanged = false;
+        $targetExpiresAt = null;
+        $remainingSeconds = null;
+        $totalDurationSeconds = null;
+        $newRentalEstimate = 0.0;
+        $segmentsPreview = [];
+
+        if ($newTipe === 'postpaid') {
+            $durationChanged = $typeChanged;
+            $rawElapsedMinutes = max(0, (int) $startedAt->diffInMinutes($now, false));
+            $totalSessionMinutes = max(1, $rawElapsedMinutes);
+
+            if ($pricingMode === 'correction' || $typeChanged || ($elapsedSeconds <= 0 && $existingSegments->isEmpty())) {
+                $raw = $newPlaystation ? $this->calculateLostTimePrice($newPlaystation, $totalSessionMinutes) : 0.0;
+                $rounded = $this->applyLostTimeRounding($raw);
+                $newRentalEstimate = (float) $rounded;
+                $segmentsPreview = [
+                    [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => $pricingMode === 'correction'
+                            ? TransactionPricingSegment::MODE_CORRECTION
+                            : TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => false,
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => null,
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => 'Berjalan',
+                        'is_open' => true,
+                        'duration_seconds' => $elapsedSeconds,
+                        'duration_minutes' => $totalSessionMinutes,
+                        'duration_display' => sprintf('%d jam %d menit', intdiv($totalSessionMinutes, 60), $totalSessionMinutes % 60),
+                        'raw_amount' => round($raw, 4),
+                        'allocated_billed_amount' => (float) $rounded,
+                    ],
+                ];
+            } elseif ($pricingMode === 'from_now' && ($categoryChanged || $existingSegments->isNotEmpty())) {
+                $virtualItems = [];
+                if ($existingSegments->isEmpty()) {
+                    $oldPs = $currentPlaystation ?: $newPlaystation;
+                    $seg1Sec = $elapsedSeconds;
+                    $seg1Min = max(0, intdiv($seg1Sec, 60));
+                    $seg1Raw = $oldPs ? $this->calculateLostTimePrice($oldPs, $seg1Min) : 0.0;
+
+                    $seg2Sec = 0;
+                    $seg2Min = max(0, $totalSessionMinutes - $seg1Min);
+                    $seg2Raw = $newPlaystation ? $this->calculateLostTimePrice($newPlaystation, $seg2Min) : 0.0;
+
+                    $virtualItems[] = [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) ($oldPs?->id ?? 0),
+                        'playstation_name' => (string) ($oldPs?->nama ?? 'Game'),
+                        'hourly_rate' => (float) ($oldPs?->harga ?? $tx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => false,
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => $now->toIso8601String(),
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => $now->format('H:i:s'),
+                        'is_open' => false,
+                        'duration_seconds' => $seg1Sec,
+                        'duration_minutes' => $seg1Min,
+                        'duration_display' => sprintf('%d jam %d menit', intdiv($seg1Min, 60), $seg1Min % 60),
+                        'raw_amount' => round($seg1Raw, 4),
+                        'allocated_billed_amount' => 0.0,
+                    ];
+
+                    $virtualItems[] = [
+                        'segment_order' => 2,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                        'is_preset_price' => false,
+                        'started_at' => $now->toIso8601String(),
+                        'ended_at' => null,
+                        'started_at_display' => $now->format('H:i:s'),
+                        'ended_at_display' => 'Berjalan',
+                        'is_open' => true,
+                        'duration_seconds' => $seg2Sec,
+                        'duration_minutes' => $seg2Min,
+                        'duration_display' => sprintf('%d jam %d menit', intdiv($seg2Min, 60), $seg2Min % 60),
+                        'raw_amount' => round($seg2Raw, 4),
+                        'allocated_billed_amount' => 0.0,
+                    ];
+                } else {
+                    $closedMinutesSoFar = 0;
+                    $orderCounter = 1;
+                    foreach ($existingSegments->values() as $seg) {
+                        $segStart = $seg->started_at ? $seg->started_at->copy()->setTimezone($tz) : $startedAt;
+                        $segPs = $seg->relationLoaded('playstation') ? $seg->playstation : $seg->playstation()->first();
+
+                        if ($seg->ended_at !== null) {
+                            $segEnd = $seg->ended_at->copy()->setTimezone($tz);
+                            $segSec = $seg->duration_seconds !== null
+                                ? (int) $seg->duration_seconds
+                                : max(0, (int) $segStart->diffInSeconds($segEnd, false));
+                            $segMin = max(0, intdiv($segSec, 60));
+                            $segRaw = $seg->raw_amount !== null
+                                ? (float) $seg->raw_amount
+                                : ($segPs ? $this->calculateLostTimePrice($segPs, $segMin) : (((float) $seg->hourly_rate_snapshot / 60) * $segMin));
+                            $closedMinutesSoFar += $segMin;
+
+                            $virtualItems[] = [
+                                'segment_order' => $orderCounter++,
+                                'playstation_id' => (int) ($seg->playstation_id ?: ($segPs?->id ?? 0)),
+                                'playstation_name' => (string) ($segPs?->nama ?? $seg->playstation_name_snapshot ?: 'Game'),
+                                'hourly_rate' => (float) ($seg->hourly_rate_snapshot ?: ($segPs?->harga ?? 0)),
+                                'pricing_mode' => (string) ($seg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                                'is_preset_price' => false,
+                                'started_at' => $segStart->toIso8601String(),
+                                'ended_at' => $segEnd->toIso8601String(),
+                                'started_at_display' => $segStart->format('H:i:s'),
+                                'ended_at_display' => $segEnd->format('H:i:s'),
+                                'is_open' => false,
+                                'duration_seconds' => $segSec,
+                                'duration_minutes' => $segMin,
+                                'duration_display' => sprintf('%d jam %d menit', intdiv($segMin, 60), $segMin % 60),
+                                'raw_amount' => round($segRaw, 4),
+                                'allocated_billed_amount' => 0.0,
+                            ];
+                        } else {
+                            if (!$categoryChanged || $now->lte($segStart)) {
+                                $targetPs = $newPlaystation ?: $segPs;
+                                $segSec = max(0, (int) $segStart->diffInSeconds($now, false));
+                                $segMin = max(0, $totalSessionMinutes - $closedMinutesSoFar);
+                                $segRaw = $targetPs
+                                    ? $this->calculateLostTimePrice($targetPs, $segMin)
+                                    : (((float) $seg->hourly_rate_snapshot / 60) * $segMin);
+
+                                $virtualItems[] = [
+                                    'segment_order' => $orderCounter++,
+                                    'playstation_id' => (int) ($targetPs?->id ?? $seg->playstation_id ?? 0),
+                                    'playstation_name' => (string) ($targetPs?->nama ?? $seg->playstation_name_snapshot ?: 'Game'),
+                                    'hourly_rate' => (float) ($targetPs?->harga ?? $seg->hourly_rate_snapshot ?? 0),
+                                    'pricing_mode' => (string) ($seg->pricing_mode ?: TransactionPricingSegment::MODE_FROM_NOW),
+                                    'is_preset_price' => false,
+                                    'started_at' => $segStart->toIso8601String(),
+                                    'ended_at' => null,
+                                    'started_at_display' => $segStart->format('H:i:s'),
+                                    'ended_at_display' => 'Berjalan',
+                                    'is_open' => true,
+                                    'duration_seconds' => $segSec,
+                                    'duration_minutes' => $segMin,
+                                    'duration_display' => sprintf('%d jam %d menit', intdiv($segMin, 60), $segMin % 60),
+                                    'raw_amount' => round($segRaw, 4),
+                                    'allocated_billed_amount' => 0.0,
+                                ];
+                            } else {
+                                $openSec = max(0, (int) $segStart->diffInSeconds($now, false));
+                                $openMin = max(0, intdiv($openSec, 60));
+                                $openPs = $segPs ?: $currentPlaystation ?: $newPlaystation;
+                                $openRaw = $openPs
+                                    ? $this->calculateLostTimePrice($openPs, $openMin)
+                                    : (((float) $seg->hourly_rate_snapshot / 60) * $openMin);
+                                $closedMinutesSoFar += $openMin;
+
+                                $virtualItems[] = [
+                                    'segment_order' => $orderCounter++,
+                                    'playstation_id' => (int) ($openPs?->id ?? $seg->playstation_id ?? 0),
+                                    'playstation_name' => (string) ($openPs?->nama ?? $seg->playstation_name_snapshot ?: 'Game'),
+                                    'hourly_rate' => (float) ($seg->hourly_rate_snapshot ?: ($openPs?->harga ?? 0)),
+                                    'pricing_mode' => (string) ($seg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                                    'is_preset_price' => false,
+                                    'started_at' => $segStart->toIso8601String(),
+                                    'ended_at' => $now->toIso8601String(),
+                                    'started_at_display' => $segStart->format('H:i:s'),
+                                    'ended_at_display' => $now->format('H:i:s'),
+                                    'is_open' => false,
+                                    'duration_seconds' => $openSec,
+                                    'duration_minutes' => $openMin,
+                                    'duration_display' => sprintf('%d jam %d menit', intdiv($openMin, 60), $openMin % 60),
+                                    'raw_amount' => round($openRaw, 4),
+                                    'allocated_billed_amount' => 0.0,
+                                ];
+
+                                $newMin = max(0, $totalSessionMinutes - $closedMinutesSoFar);
+                                $newRaw = $newPlaystation ? $this->calculateLostTimePrice($newPlaystation, $newMin) : 0.0;
+
+                                $virtualItems[] = [
+                                    'segment_order' => $orderCounter++,
+                                    'playstation_id' => (int) $newPlaystation->id,
+                                    'playstation_name' => (string) $newPlaystation->nama,
+                                    'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                                    'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                                    'is_preset_price' => false,
+                                    'started_at' => $now->toIso8601String(),
+                                    'ended_at' => null,
+                                    'started_at_display' => $now->format('H:i:s'),
+                                    'ended_at_display' => 'Berjalan',
+                                    'is_open' => true,
+                                    'duration_seconds' => 0,
+                                    'duration_minutes' => $newMin,
+                                    'duration_display' => sprintf('%d jam %d menit', intdiv($newMin, 60), $newMin % 60),
+                                    'raw_amount' => round($newRaw, 4),
+                                    'allocated_billed_amount' => 0.0,
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                $rawTotal = round((float) collect($virtualItems)->sum('raw_amount'), 4);
+                $roundedTotal = $this->applyLostTimeRounding($rawTotal);
+
+                $lastActiveIdx = count($virtualItems) - 1;
+                for ($i = count($virtualItems) - 1; $i >= 0; $i--) {
+                    if (($virtualItems[$i]['duration_seconds'] ?? 0) > 0 || ($virtualItems[$i]['raw_amount'] ?? 0) > 0) {
+                        $lastActiveIdx = $i;
+                        break;
+                    }
+                }
+
+                $allocatedSoFar = 0.0;
+                foreach ($virtualItems as $k => &$vItem) {
+                    if ($k < $lastActiveIdx) {
+                        $amt = round((float) $vItem['raw_amount'], 2);
+                        $vItem['allocated_billed_amount'] = $amt;
+                        $allocatedSoFar += $amt;
+                    } elseif ($k === $lastActiveIdx) {
+                        $vItem['allocated_billed_amount'] = max(0.0, round($roundedTotal - $allocatedSoFar, 2));
+                    } else {
+                        $vItem['allocated_billed_amount'] = 0.0;
+                    }
+                }
+                unset($vItem);
+
+                $newRentalEstimate = (float) $roundedTotal;
+                $segmentsPreview = $virtualItems;
+            } else {
+                $raw = $newPlaystation ? $this->calculateLostTimePrice($newPlaystation, $totalSessionMinutes) : 0.0;
+                $rounded = $this->applyLostTimeRounding($raw);
+                $newRentalEstimate = (float) $rounded;
+                $segmentsPreview = [
+                    [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => false,
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => null,
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => 'Berjalan',
+                        'is_open' => true,
+                        'duration_seconds' => $elapsedSeconds,
+                        'duration_minutes' => $totalSessionMinutes,
+                        'duration_display' => sprintf('%d jam %d menit', intdiv($totalSessionMinutes, 60), $totalSessionMinutes % 60),
+                        'raw_amount' => round($raw, 4),
+                        'allocated_billed_amount' => (float) $rounded,
+                    ],
+                ];
+            }
+        } elseif ($newTipe === 'prepaid') {
+            $oldDurationSeconds = $tx->resolveTotalDurationSeconds();
+            $oldExpiresAt = $tx->resolveLegacyExpiresAt();
+            $requestedDurationSeconds = $this->resolveRequestedPrepaidDurationSeconds(
+                $tx,
+                $input,
+                $typeChanged,
+                $oldDurationSeconds
+            );
+
+            if ($requestedDurationSeconds <= 0 || $requestedDurationSeconds > 86400) {
+                return array_merge($base, [
+                    'valid' => false,
+                    'error' => 'Durasi bermain tidak valid (harus antara 1 detik hingga 24 jam).',
+                    'error_code' => 'invalid_duration',
+                ]);
+            }
+
+            $durationChanged = $typeChanged
+                || ($oldDurationSeconds === null)
+                || ($requestedDurationSeconds !== (int) $oldDurationSeconds);
+
+            if (!$durationChanged) {
+                $targetExpiresAt = $oldExpiresAt ?: $startedAt->copy()->addSeconds($requestedDurationSeconds);
+            } else {
+                $rem = $requestedDurationSeconds - $elapsedSeconds;
+                $targetExpiresAt = $rem > 0 ? $now->copy()->addSeconds($rem) : $now->copy();
+            }
+
+            $totalDurationSeconds = $requestedDurationSeconds;
+            $remainingSeconds = max(0, (int) $now->diffInSeconds($targetExpiresAt, false));
+
+            if ($pricingMode === 'correction' || $typeChanged || ($elapsedSeconds <= 0 && $existingSegments->isEmpty())) {
+                $rentalTotal = (float) $newPlaystation->calculateCustomPrice($requestedDurationSeconds);
+                $calc = $this->calculateTimerSegmentRaw($newPlaystation, $requestedDurationSeconds);
+                $newRentalEstimate = $rentalTotal;
+                $segmentsPreview = [
+                    [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => $pricingMode === 'correction'
+                            ? TransactionPricingSegment::MODE_CORRECTION
+                            : TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => $calc['is_preset'],
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => $targetExpiresAt->toIso8601String(),
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                        'is_open' => false,
+                        'duration_seconds' => $requestedDurationSeconds,
+                        'duration_minutes' => intdiv($requestedDurationSeconds, 60),
+                        'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($requestedDurationSeconds),
+                        'raw_amount' => round($calc['raw_amount'], 4),
+                        'allocated_billed_amount' => $rentalTotal,
+                    ],
+                ];
+            } elseif ($pricingMode === 'from_now' && ($categoryChanged || $existingSegments->isNotEmpty())) {
+                $virtualItems = [];
+
+                if ($existingSegments->isEmpty()) {
+                    $oldPs = $currentPlaystation ?: $newPlaystation;
+                    $seg1Sec = min($requestedDurationSeconds, $elapsedSeconds);
+                    $seg2Sec = max(0, $requestedDurationSeconds - $seg1Sec);
+                    $c1 = $this->calculateTimerSegmentRaw($oldPs, $seg1Sec);
+                    $c2 = $this->calculateTimerSegmentRaw($newPlaystation, $seg2Sec);
+
+                    $virtualItems[] = [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) ($oldPs?->id ?? 0),
+                        'playstation_name' => (string) ($oldPs?->nama ?? 'Game'),
+                        'hourly_rate' => (float) ($oldPs?->harga ?? $tx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => $c1['is_preset'],
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => $now->toIso8601String(),
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => $now->format('H:i:s'),
+                        'is_open' => false,
+                        'duration_seconds' => $seg1Sec,
+                        'duration_minutes' => intdiv($seg1Sec, 60),
+                        'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($seg1Sec),
+                        'raw_amount' => round($c1['raw_amount'], 4),
+                        'allocated_billed_amount' => 0.0,
+                    ];
+
+                    $virtualItems[] = [
+                        'segment_order' => 2,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                        'is_preset_price' => $c2['is_preset'],
+                        'started_at' => $now->toIso8601String(),
+                        'ended_at' => $targetExpiresAt->toIso8601String(),
+                        'started_at_display' => $now->format('H:i:s'),
+                        'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                        'is_open' => false,
+                        'duration_seconds' => $seg2Sec,
+                        'duration_minutes' => intdiv($seg2Sec, 60),
+                        'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($seg2Sec),
+                        'raw_amount' => round($c2['raw_amount'], 4),
+                        'allocated_billed_amount' => 0.0,
+                    ];
+                } else {
+                    $priorSegments = $existingSegments->slice(0, -1)->values();
+                    $lastSeg = $existingSegments->last();
+                    $priorClosedSec = 0;
+                    $orderCounter = 1;
+
+                    foreach ($priorSegments as $pSeg) {
+                        $pPs = $pSeg->relationLoaded('playstation') ? $pSeg->playstation : $pSeg->playstation()->first();
+                        $pStart = $pSeg->started_at ? $pSeg->started_at->copy()->setTimezone($tz) : $startedAt;
+                        $pSec = (int) ($pSeg->duration_seconds ?? 0);
+                        $pEnd = $pSeg->ended_at ? $pSeg->ended_at->copy()->setTimezone($tz) : $pStart->copy()->addSeconds($pSec);
+                        $priorClosedSec += $pSec;
+
+                        $virtualItems[] = [
+                            'segment_order' => $orderCounter++,
+                            'playstation_id' => (int) ($pSeg->playstation_id ?: ($pPs?->id ?? 0)),
+                            'playstation_name' => (string) ($pPs?->nama ?? $pSeg->playstation_name_snapshot ?: 'Game'),
+                            'hourly_rate' => (float) ($pSeg->hourly_rate_snapshot ?: ($pPs?->harga ?? 0)),
+                            'pricing_mode' => (string) ($pSeg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                            'is_preset_price' => (bool) $pSeg->is_preset_price,
+                            'started_at' => $pStart->toIso8601String(),
+                            'ended_at' => $pEnd->toIso8601String(),
+                            'started_at_display' => $pStart->format('H:i:s'),
+                            'ended_at_display' => $pEnd->format('H:i:s'),
+                            'is_open' => false,
+                            'duration_seconds' => $pSec,
+                            'duration_minutes' => intdiv($pSec, 60),
+                            'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($pSec),
+                            'raw_amount' => round((float) ($pSeg->raw_amount ?? 0), 4),
+                            'allocated_billed_amount' => 0.0,
+                        ];
+                    }
+
+                    $lastSegStart = $lastSeg->started_at ? $lastSeg->started_at->copy()->setTimezone($tz) : $startedAt;
+                    $lastSegPs = $lastSeg->relationLoaded('playstation') ? $lastSeg->playstation : $lastSeg->playstation()->first();
+
+                    if (!$categoryChanged || $now->lte($lastSegStart)) {
+                        $targetPs = $newPlaystation ?: $lastSegPs;
+                        $newLastSec = max(0, $requestedDurationSeconds - $priorClosedSec);
+                        $cLast = $targetPs
+                            ? $this->calculateTimerSegmentRaw($targetPs, $newLastSec)
+                            : ['is_preset' => false, 'raw_amount' => round((((float) $lastSeg->hourly_rate_snapshot) * $newLastSec) / 3600, 4)];
+
+                        $virtualItems[] = [
+                            'segment_order' => $orderCounter++,
+                            'playstation_id' => (int) ($targetPs?->id ?? $lastSeg->playstation_id ?? 0),
+                            'playstation_name' => (string) ($targetPs?->nama ?? $lastSeg->playstation_name_snapshot ?: 'Game'),
+                            'hourly_rate' => (float) ($targetPs?->harga ?? $lastSeg->hourly_rate_snapshot ?? 0),
+                            'pricing_mode' => (string) ($lastSeg->pricing_mode ?: TransactionPricingSegment::MODE_FROM_NOW),
+                            'is_preset_price' => $cLast['is_preset'],
+                            'started_at' => $lastSegStart->toIso8601String(),
+                            'ended_at' => $targetExpiresAt->toIso8601String(),
+                            'started_at_display' => $lastSegStart->format('H:i:s'),
+                            'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                            'is_open' => false,
+                            'duration_seconds' => $newLastSec,
+                            'duration_minutes' => intdiv($newLastSec, 60),
+                            'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($newLastSec),
+                            'raw_amount' => round($cLast['raw_amount'], 4),
+                            'allocated_billed_amount' => 0.0,
+                        ];
+                    } else {
+                        $lastSegSec = max(0, min($requestedDurationSeconds - $priorClosedSec, (int) $lastSegStart->diffInSeconds($now, false)));
+                        $lastPs = $lastSegPs ?: $currentPlaystation ?: $newPlaystation;
+                        $cLast = $lastPs
+                            ? $this->calculateTimerSegmentRaw($lastPs, $lastSegSec)
+                            : ['is_preset' => false, 'raw_amount' => round((((float) $lastSeg->hourly_rate_snapshot) * $lastSegSec) / 3600, 4)];
+
+                        $virtualItems[] = [
+                            'segment_order' => $orderCounter++,
+                            'playstation_id' => (int) ($lastPs?->id ?? $lastSeg->playstation_id ?? 0),
+                            'playstation_name' => (string) ($lastPs?->nama ?? $lastSeg->playstation_name_snapshot ?: 'Game'),
+                            'hourly_rate' => (float) ($lastSeg->hourly_rate_snapshot ?: ($lastPs?->harga ?? 0)),
+                            'pricing_mode' => (string) ($lastSeg->pricing_mode ?: TransactionPricingSegment::MODE_INITIAL),
+                            'is_preset_price' => $cLast['is_preset'],
+                            'started_at' => $lastSegStart->toIso8601String(),
+                            'ended_at' => $now->toIso8601String(),
+                            'started_at_display' => $lastSegStart->format('H:i:s'),
+                            'ended_at_display' => $now->format('H:i:s'),
+                            'is_open' => false,
+                            'duration_seconds' => $lastSegSec,
+                            'duration_minutes' => intdiv($lastSegSec, 60),
+                            'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($lastSegSec),
+                            'raw_amount' => round($cLast['raw_amount'], 4),
+                            'allocated_billed_amount' => 0.0,
+                        ];
+
+                        $newSegSec = max(0, $requestedDurationSeconds - $priorClosedSec - $lastSegSec);
+                        $cNew = $this->calculateTimerSegmentRaw($newPlaystation, $newSegSec);
+
+                        $virtualItems[] = [
+                            'segment_order' => $orderCounter++,
+                            'playstation_id' => (int) $newPlaystation->id,
+                            'playstation_name' => (string) $newPlaystation->nama,
+                            'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                            'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                            'is_preset_price' => $cNew['is_preset'],
+                            'started_at' => $now->toIso8601String(),
+                            'ended_at' => $targetExpiresAt->toIso8601String(),
+                            'started_at_display' => $now->format('H:i:s'),
+                            'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                            'is_open' => false,
+                            'duration_seconds' => $newSegSec,
+                            'duration_minutes' => intdiv($newSegSec, 60),
+                            'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($newSegSec),
+                            'raw_amount' => round($cNew['raw_amount'], 4),
+                            'allocated_billed_amount' => 0.0,
+                        ];
+                    }
+                }
+
+                $presetSum = 0.0;
+                $proratedRawSum = 0.0;
+                $nonPresetIndices = [];
+                foreach ($virtualItems as $idx => $vItem) {
+                    if ($vItem['is_preset_price']) {
+                        $presetSum += (float) $vItem['raw_amount'];
+                    } else {
+                        $proratedRawSum += (float) $vItem['raw_amount'];
+                        $nonPresetIndices[] = $idx;
+                    }
+                }
+
+                $roundedProrated = $this->roundUpToNearest500($proratedRawSum);
+                $rentalTotal = round($presetSum + $roundedProrated, 2);
+
+                $lastNonPresetIdx = !empty($nonPresetIndices) ? end($nonPresetIndices) : null;
+                if (!empty($nonPresetIndices)) {
+                    for ($i = count($nonPresetIndices) - 1; $i >= 0; $i--) {
+                        $candidateIdx = $nonPresetIndices[$i];
+                        if (($virtualItems[$candidateIdx]['duration_seconds'] ?? 0) > 0 || ($virtualItems[$candidateIdx]['raw_amount'] ?? 0) > 0) {
+                            $lastNonPresetIdx = $candidateIdx;
+                            break;
+                        }
+                    }
+                }
+
+                $nonPresetAllocatedSoFar = 0.0;
+                foreach ($virtualItems as $idx => &$vItem) {
+                    if ($vItem['is_preset_price']) {
+                        $vItem['allocated_billed_amount'] = round((float) $vItem['raw_amount'], 2);
+                    } else {
+                        if ($lastNonPresetIdx !== null && $idx < $lastNonPresetIdx) {
+                            $amt = round((float) $vItem['raw_amount'], 2);
+                            $vItem['allocated_billed_amount'] = $amt;
+                            $nonPresetAllocatedSoFar += $amt;
+                        } elseif ($lastNonPresetIdx !== null && $idx === $lastNonPresetIdx) {
+                            $vItem['allocated_billed_amount'] = max(0.0, round($roundedProrated - $nonPresetAllocatedSoFar, 2));
+                        } else {
+                            $vItem['allocated_billed_amount'] = 0.0;
+                        }
+                    }
+                }
+                unset($vItem);
+
+                $newRentalEstimate = (float) $rentalTotal;
+                $segmentsPreview = $virtualItems;
+            } else {
+                $rentalTotal = (float) $newPlaystation->calculateCustomPrice($requestedDurationSeconds);
+                $calc = $this->calculateTimerSegmentRaw($newPlaystation, $requestedDurationSeconds);
+                $newRentalEstimate = $rentalTotal;
+                $segmentsPreview = [
+                    [
+                        'segment_order' => 1,
+                        'playstation_id' => (int) $newPlaystation->id,
+                        'playstation_name' => (string) $newPlaystation->nama,
+                        'hourly_rate' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => $calc['is_preset'],
+                        'started_at' => $startedAt->toIso8601String(),
+                        'ended_at' => $targetExpiresAt->toIso8601String(),
+                        'started_at_display' => $startedAt->format('H:i:s'),
+                        'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                        'is_open' => false,
+                        'duration_seconds' => $requestedDurationSeconds,
+                        'duration_minutes' => intdiv($requestedDurationSeconds, 60),
+                        'duration_display' => \App\Models\HourlyPrice::humanizeSeconds($requestedDurationSeconds),
+                        'raw_amount' => round($calc['raw_amount'], 4),
+                        'allocated_billed_amount' => $rentalTotal,
+                    ],
+                ];
+            }
+        } elseif ($newTipe === 'custom_package') {
+            $customPackageId = isset($input['custom_package_id']) && $input['custom_package_id'] !== ''
+                ? (int) $input['custom_package_id']
+                : (int) ($tx->custom_package_id ?? 0);
+
+            if ($customPackageId <= 0) {
+                return array_merge($base, [
+                    'valid' => false,
+                    'error' => 'Silakan pilih paket custom.',
+                    'error_code' => 'package_required',
+                ]);
+            }
+
+            $customPackage = CustomPackage::with(['playstations', 'fnbs'])->find($customPackageId);
+            if (!$customPackage) {
+                return array_merge($base, [
+                    'valid' => false,
+                    'error' => 'Paket custom tidak ditemukan.',
+                    'error_code' => 'package_not_found',
+                ]);
+            }
+
+            $playstationIds = $customPackage->playstations->pluck('id')->map(fn ($id) => (int) $id);
+            $deviceCatIds = $newDevice->getAvailableCategories()->pluck('id')->map(fn ($id) => (int) $id);
+            $matchingIds = $deviceCatIds->intersect($playstationIds)->values();
+
+            if ($matchingIds->isEmpty() && !$playstationIds->contains((int) $newDevice->playstation_id)) {
+                return array_merge($base, [
+                    'valid' => false,
+                    'error' => 'Perangkat yang dipilih tidak sesuai dengan paket custom.',
+                    'error_code' => 'invalid_package_device',
+                ]);
+            }
+
+            $resolvedPsId = (int) ($matchingIds->first() ?: $newDevice->playstation_id);
+            $newPlaystation = $newDevice->getAvailableCategories()->firstWhere('id', $resolvedPsId)
+                ?: ($newDevice->playstation ?: Playstation::find($resolvedPsId));
+            $categoryChanged = ((int) ($currentPlaystation?->id ?? 0) !== (int) ($newPlaystation?->id ?? 0));
+
+            $totalJamMain = (int) $customPackage->playstations->sum('pivot.lama_main');
+            $totalDurationSeconds = $totalJamMain * 60;
+            $durationChanged = $typeChanged || ((int) $tx->custom_package_id !== (int) $customPackage->id);
+
+            $elapsedMinutes = max(0, (int) $startedAt->diffInMinutes($now, false));
+            $remainingMinutes = $totalJamMain - $elapsedMinutes;
+            $targetExpiresAt = $remainingMinutes > 0
+                ? $now->copy()->addMinutes($remainingMinutes)
+                : $now->copy();
+            $remainingSeconds = max(0, (int) $now->diffInSeconds($targetExpiresAt, false));
+            $newRentalEstimate = (float) $customPackage->harga_total;
+
+            $segmentsPreview = [
+                [
+                    'segment_order' => 1,
+                    'playstation_id' => $newPlaystation?->id ? (int) $newPlaystation->id : null,
+                    'playstation_name' => (string) ($customPackage->nama_paket ?? $newPlaystation?->nama ?? 'Paket Custom'),
+                    'hourly_rate' => (float) $customPackage->harga_total,
+                    'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                    'is_preset_price' => true,
+                    'started_at' => $startedAt->toIso8601String(),
+                    'ended_at' => $targetExpiresAt->toIso8601String(),
+                    'started_at_display' => $startedAt->format('H:i:s'),
+                    'ended_at_display' => $targetExpiresAt->format('H:i:s'),
+                    'is_open' => false,
+                    'duration_seconds' => $totalDurationSeconds,
+                    'duration_minutes' => $totalJamMain,
+                    'duration_display' => $totalJamMain . ' Menit',
+                    'raw_amount' => (float) $customPackage->harga_total,
+                    'allocated_billed_amount' => (float) $customPackage->harga_total,
+                ],
+            ];
+        }
+
+        $newCatData = [
+            'id' => $newPlaystation?->id ? (int) $newPlaystation->id : null,
+            'nama' => (string) ($newPlaystation?->nama ?? $currentCatData['nama']),
+            'harga' => (float) ($newPlaystation?->harga ?? $currentCatData['harga']),
+        ];
+
+        $currentRentalEst = (float) $currentSummary['rental_subtotal'];
+        $fnbUnpaid = (float) $currentSummary['fnb_unpaid_total'];
+        $newPayable = round($newRentalEstimate + $fnbUnpaid, 2);
+
+        return [
+            'valid' => true,
+            'error' => null,
+            'error_code' => null,
+            'current_category' => $currentCatData,
+            'new_category' => $newCatData,
+            'category_changed' => $categoryChanged,
+            'device_changed' => $deviceChanged,
+            'type_changed' => $typeChanged,
+            'duration_changed' => $durationChanged,
+            'pricing_mode' => $pricingMode,
+            'pricing_mode_label' => $pricingModeLabel,
+            'elapsed_seconds' => $elapsedSeconds,
+            'remaining_seconds' => $remainingSeconds,
+            'total_duration_seconds' => $totalDurationSeconds,
+            'started_at' => $startedAt->toIso8601String(),
+            'expires_at' => $targetExpiresAt?->toIso8601String(),
+            'current_rental_estimate' => $currentRentalEst,
+            'new_rental_estimate' => (float) $newRentalEstimate,
+            'price_difference' => round($newRentalEstimate - $currentRentalEst, 2),
+            'fnb_unpaid_total' => $fnbUnpaid,
+            'fnb_paid_total' => (float) $currentSummary['fnb_paid_total'],
+            'current_payable_total' => (float) $currentSummary['payable_total'],
+            'new_payable_total' => $newPayable,
+            'segments_preview' => $segmentsPreview,
+        ];
+    }
+
+    /**
+     * Atomically apply category, device, pricing mode (Mode A correction / Mode B from_now), or duration edits
+     * to a locked unpaid active transaction.
+     */
+    public function applyTransactionEdit(
+        Transaction $lockedTx,
+        Device $newDevice,
+        ?Device $oldDevice,
+        array $input,
+        ?int $actorUserId = null,
+        ?Carbon $now = null
+    ): array {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $previewInput = array_merge($input, ['device_id' => $newDevice->id]);
+        $preview = $this->previewTransactionEdit($lockedTx, $previewInput, $now);
+
+        if (!($preview['valid'] ?? false)) {
+            return [
+                'ok' => false,
+                'error' => $preview['error'] ?? 'Gagal memperbarui transaksi.',
+                'error_code' => $preview['error_code'] ?? 'validation_error',
+                'preview' => $preview,
+            ];
+        }
+
+        $startedAt = $lockedTx->getEffectiveStartTime();
+        $elapsedSeconds = max(0, (int) $startedAt->diffInSeconds($now, false));
+        $currentPlaystation = $lockedTx->resolveCurrentPlaystation();
+        $newTipe = (string) ($input['tipe_transaksi'] ?? $lockedTx->tipe_transaksi);
+        $pricingMode = $preview['pricing_mode'];
+        $deviceChanged = (bool) $preview['device_changed'];
+        $typeChanged = (bool) $preview['type_changed'];
+        $categoryChanged = (bool) $preview['category_changed'];
+        $changeReason = isset($input['change_reason']) ? (string) $input['change_reason'] : null;
+
+        $newPlaystationId = $preview['new_category']['id'] ?? null;
+        $newPlaystation = $newPlaystationId
+            ? ($newDevice->getAvailableCategories()->firstWhere('id', (int) $newPlaystationId)
+                ?: Playstation::with('hourlyPrices')->find((int) $newPlaystationId))
+            : null;
+
+        $updateData = [
+            'device_id' => $newDevice->id,
+            'tipe_transaksi' => $newTipe,
+        ];
+
+        $expiresAtChanged = false;
+        $targetExpiresAt = null;
+
+        if ($newTipe === 'postpaid') {
+            $hadExpiresAt = $lockedTx->expires_at !== null
+                || ($lockedTx->waktu_Selesai !== null && trim((string) $lockedTx->waktu_Selesai) !== '');
+
+            if ($pricingMode === 'correction' || $typeChanged || ($elapsedSeconds <= 0 && $lockedTx->getResolvedPricingSegments()->isEmpty())) {
+                if (TransactionPricingSegment::hasSchema()) {
+                    TransactionPricingSegment::where('transaction_id', $lockedTx->id_transaksi)->delete();
+                }
+                $lockedTx->unsetRelation('pricingSegments');
+            } elseif ($pricingMode === 'from_now' && $categoryChanged && TransactionPricingSegment::hasSchema()) {
+                $existingSegments = $lockedTx->getResolvedPricingSegments();
+
+                if ($existingSegments->isEmpty()) {
+                    $oldPs = $currentPlaystation ?: $newPlaystation;
+                    $seg1Sec = $elapsedSeconds;
+                    $seg1Min = max(0, intdiv($seg1Sec, 60));
+                    $seg1Raw = $oldPs ? $this->calculateLostTimePrice($oldPs, $seg1Min) : 0.0;
+
+                    TransactionPricingSegment::create([
+                        'transaction_id' => $lockedTx->id_transaksi,
+                        'segment_order' => 1,
+                        'device_id' => $lockedTx->device_id,
+                        'playstation_id' => $oldPs?->id,
+                        'playstation_name_snapshot' => (string) ($oldPs?->nama ?? 'Game'),
+                        'hourly_rate_snapshot' => (float) ($oldPs?->harga ?? $lockedTx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => false,
+                        'started_at' => $startedAt,
+                        'ended_at' => $now,
+                        'duration_seconds' => $seg1Sec,
+                        'raw_amount' => round($seg1Raw, 4),
+                        'billed_amount' => round($seg1Raw, 2),
+                        'changed_by_user_id' => $actorUserId,
+                        'change_reason' => $changeReason,
+                    ]);
+
+                    TransactionPricingSegment::create([
+                        'transaction_id' => $lockedTx->id_transaksi,
+                        'segment_order' => 2,
+                        'device_id' => $newDevice->id,
+                        'playstation_id' => $newPlaystation?->id,
+                        'playstation_name_snapshot' => (string) ($newPlaystation?->nama ?? 'Game'),
+                        'hourly_rate_snapshot' => (float) ($newPlaystation?->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                        'is_preset_price' => false,
+                        'started_at' => $now,
+                        'ended_at' => null,
+                        'duration_seconds' => null,
+                        'raw_amount' => null,
+                        'billed_amount' => null,
+                        'changed_by_user_id' => $actorUserId,
+                        'change_reason' => $changeReason,
+                    ]);
+                } else {
+                    $openSeg = $existingSegments->first(fn ($s) => $s->ended_at === null) ?: $existingSegments->last();
+                    $openSegStart = $openSeg->started_at ? $openSeg->started_at->copy()->setTimezone($tz) : $startedAt;
+
+                    if ($now->lte($openSegStart)) {
+                        $openSeg->update([
+                            'device_id' => $newDevice->id,
+                            'playstation_id' => $newPlaystation?->id,
+                            'playstation_name_snapshot' => (string) ($newPlaystation?->nama ?? 'Game'),
+                            'hourly_rate_snapshot' => (float) ($newPlaystation?->harga ?? 0),
+                            'changed_by_user_id' => $actorUserId,
+                            'change_reason' => $changeReason,
+                        ]);
+                    } else {
+                        $openSec = max(0, (int) $openSegStart->diffInSeconds($now, false));
+                        $openMin = max(0, intdiv($openSec, 60));
+                        $openPs = $openSeg->playstation ?: $currentPlaystation ?: $newPlaystation;
+                        $openRaw = $openPs
+                            ? $this->calculateLostTimePrice($openPs, $openMin)
+                            : (((float) $openSeg->hourly_rate_snapshot / 60) * $openMin);
+
+                        $openSeg->update([
+                            'ended_at' => $now,
+                            'duration_seconds' => $openSec,
+                            'raw_amount' => round($openRaw, 4),
+                            'billed_amount' => round($openRaw, 2),
+                        ]);
+
+                        $nextOrder = ((int) $existingSegments->max('segment_order')) + 1;
+                        TransactionPricingSegment::create([
+                            'transaction_id' => $lockedTx->id_transaksi,
+                            'segment_order' => $nextOrder,
+                            'device_id' => $newDevice->id,
+                            'playstation_id' => $newPlaystation?->id,
+                            'playstation_name_snapshot' => (string) ($newPlaystation?->nama ?? 'Game'),
+                            'hourly_rate_snapshot' => (float) ($newPlaystation?->harga ?? 0),
+                            'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                            'is_preset_price' => false,
+                            'started_at' => $now,
+                            'ended_at' => null,
+                            'duration_seconds' => null,
+                            'raw_amount' => null,
+                            'billed_amount' => null,
+                            'changed_by_user_id' => $actorUserId,
+                            'change_reason' => $changeReason,
+                        ]);
+                    }
+                }
+                $lockedTx->unsetRelation('pricingSegments');
+            }
+
+            $updateData['playstation_id'] = $newPlaystation?->id;
+            $updateData['harga'] = $newPlaystation?->harga ?? 0;
+            $updateData['jam_main'] = null;
+            $updateData['duration_seconds'] = null;
+            $updateData['waktu_Selesai'] = null;
+            $updateData['status_transaksi'] = 'berjalan';
+
+            if (Transaction::hasG2Schema()) {
+                $updateData['expires_at'] = null;
+                $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+            }
+
+            if (!$lockedTx->lost_time_start) {
+                $updateData['lost_time_start'] = $startedAt;
+            }
+
+            $fnbTotal = $lockedTx->uninvoiced_legacy_fnb_total + $lockedTx->unpaid_fnb_order_total;
+            $updateData['total'] = $fnbTotal;
+
+            if ($typeChanged && $hadExpiresAt) {
+                $expiresAtChanged = true;
+                $targetExpiresAt = null;
+            }
+        } elseif ($newTipe === 'prepaid') {
+            $oldDurationSeconds = $lockedTx->resolveTotalDurationSeconds();
+            $oldExpiresAt = $lockedTx->resolveLegacyExpiresAt();
+            $requestedDurationSeconds = $this->resolveRequestedPrepaidDurationSeconds(
+                $lockedTx,
+                $input,
+                $typeChanged,
+                $oldDurationSeconds
+            );
+
+            $durationChanged = $typeChanged
+                || ($oldDurationSeconds === null)
+                || ($requestedDurationSeconds !== (int) $oldDurationSeconds);
+
+            if (!$durationChanged) {
+                $targetExpiresAt = $oldExpiresAt ?: $startedAt->copy()->addSeconds($requestedDurationSeconds);
+                $expiresAtChanged = false;
+            } else {
+                $remainingSec = $requestedDurationSeconds - $elapsedSeconds;
+                if ($remainingSec > 0) {
+                    $targetExpiresAt = $now->copy()->addSeconds($remainingSec);
+                    $updateData['waktu_Selesai'] = ($requestedDurationSeconds % 60 === 0)
+                        ? $targetExpiresAt->format('H:i')
+                        : $targetExpiresAt->format('H:i:s');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $targetExpiresAt;
+                        $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                    }
+                } else {
+                    $targetExpiresAt = $now->copy();
+                    $updateData['waktu_Selesai'] = $now->format('H:i');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $now;
+                        $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                    }
+                }
+
+                $updateData['duration_seconds'] = $requestedDurationSeconds;
+                $rawJm = $input['jam_main'] ?? null;
+                $updateData['jam_main'] = (is_numeric($rawJm) && ($requestedDurationSeconds === (int) round((float) $rawJm * 3600)))
+                    ? $rawJm
+                    : \App\Models\HourlyPrice::formatSeconds($requestedDurationSeconds);
+                $expiresAtChanged = true;
+            }
+
+            $existingSegments = $lockedTx->getResolvedPricingSegments();
+
+            if ($pricingMode === 'correction' || $typeChanged || ($elapsedSeconds <= 0 && $existingSegments->isEmpty())) {
+                if (TransactionPricingSegment::hasSchema()) {
+                    TransactionPricingSegment::where('transaction_id', $lockedTx->id_transaksi)->delete();
+                }
+                $lockedTx->unsetRelation('pricingSegments');
+                $rentalTotal = (float) $newPlaystation->calculateCustomPrice($requestedDurationSeconds);
+            } elseif ($pricingMode === 'from_now' && ($categoryChanged || $existingSegments->isNotEmpty()) && TransactionPricingSegment::hasSchema()) {
+                if ($existingSegments->isEmpty()) {
+                    $oldPs = $currentPlaystation ?: $newPlaystation;
+                    $seg1Sec = min($requestedDurationSeconds, $elapsedSeconds);
+                    $seg2Sec = max(0, $requestedDurationSeconds - $seg1Sec);
+                    $c1 = $this->calculateTimerSegmentRaw($oldPs, $seg1Sec);
+                    $c2 = $this->calculateTimerSegmentRaw($newPlaystation, $seg2Sec);
+
+                    TransactionPricingSegment::create([
+                        'transaction_id' => $lockedTx->id_transaksi,
+                        'segment_order' => 1,
+                        'device_id' => $lockedTx->device_id,
+                        'playstation_id' => $oldPs?->id,
+                        'playstation_name_snapshot' => (string) ($oldPs?->nama ?? 'Game'),
+                        'hourly_rate_snapshot' => (float) ($oldPs?->harga ?? $lockedTx->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_INITIAL,
+                        'is_preset_price' => $c1['is_preset'],
+                        'started_at' => $startedAt,
+                        'ended_at' => $now,
+                        'duration_seconds' => $seg1Sec,
+                        'raw_amount' => round($c1['raw_amount'], 4),
+                        'billed_amount' => round($c1['raw_amount'], 2),
+                        'changed_by_user_id' => $actorUserId,
+                        'change_reason' => $changeReason,
+                    ]);
+
+                    TransactionPricingSegment::create([
+                        'transaction_id' => $lockedTx->id_transaksi,
+                        'segment_order' => 2,
+                        'device_id' => $newDevice->id,
+                        'playstation_id' => $newPlaystation->id,
+                        'playstation_name_snapshot' => (string) $newPlaystation->nama,
+                        'hourly_rate_snapshot' => (float) ($newPlaystation->harga ?? 0),
+                        'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                        'is_preset_price' => $c2['is_preset'],
+                        'started_at' => $now,
+                        'ended_at' => $targetExpiresAt,
+                        'duration_seconds' => $seg2Sec,
+                        'raw_amount' => round($c2['raw_amount'], 4),
+                        'billed_amount' => round($c2['raw_amount'], 2),
+                        'changed_by_user_id' => $actorUserId,
+                        'change_reason' => $changeReason,
+                    ]);
+                } else {
+                    $lastSeg = $existingSegments->last();
+                    $priorClosedSec = (int) $existingSegments->slice(0, -1)->sum('duration_seconds');
+                    $lastSegStart = $lastSeg->started_at ? $lastSeg->started_at->copy()->setTimezone($tz) : $startedAt;
+
+                    if (!$categoryChanged) {
+                        $newLastSec = max(0, $requestedDurationSeconds - $priorClosedSec);
+                        $cLast = $this->calculateTimerSegmentRaw($newPlaystation, $newLastSec);
+                        $lastSeg->update([
+                            'device_id' => $newDevice->id,
+                            'ended_at' => $targetExpiresAt,
+                            'duration_seconds' => $newLastSec,
+                            'is_preset_price' => $cLast['is_preset'],
+                            'raw_amount' => round($cLast['raw_amount'], 4),
+                        ]);
+                    } elseif ($now->lte($lastSegStart)) {
+                        $newLastSec = max(0, $requestedDurationSeconds - $priorClosedSec);
+                        $cLast = $this->calculateTimerSegmentRaw($newPlaystation, $newLastSec);
+                        $lastSeg->update([
+                            'device_id' => $newDevice->id,
+                            'playstation_id' => $newPlaystation->id,
+                            'playstation_name_snapshot' => (string) $newPlaystation->nama,
+                            'hourly_rate_snapshot' => (float) ($newPlaystation->harga ?? 0),
+                            'ended_at' => $targetExpiresAt,
+                            'duration_seconds' => $newLastSec,
+                            'is_preset_price' => $cLast['is_preset'],
+                            'raw_amount' => round($cLast['raw_amount'], 4),
+                            'changed_by_user_id' => $actorUserId,
+                            'change_reason' => $changeReason,
+                        ]);
+                    } else {
+                        $lastSegSec = max(0, min($requestedDurationSeconds - $priorClosedSec, (int) $lastSegStart->diffInSeconds($now, false)));
+                        $lastPs = $lastSeg->playstation ?: $currentPlaystation ?: $newPlaystation;
+                        $cLast = $this->calculateTimerSegmentRaw($lastPs, $lastSegSec);
+
+                        $lastSeg->update([
+                            'ended_at' => $now,
+                            'duration_seconds' => $lastSegSec,
+                            'is_preset_price' => $cLast['is_preset'],
+                            'raw_amount' => round($cLast['raw_amount'], 4),
+                        ]);
+
+                        $newSegSec = max(0, $requestedDurationSeconds - $priorClosedSec - $lastSegSec);
+                        $cNew = $this->calculateTimerSegmentRaw($newPlaystation, $newSegSec);
+
+                        TransactionPricingSegment::create([
+                            'transaction_id' => $lockedTx->id_transaksi,
+                            'segment_order' => ((int) $lastSeg->segment_order) + 1,
+                            'device_id' => $newDevice->id,
+                            'playstation_id' => $newPlaystation->id,
+                            'playstation_name_snapshot' => (string) $newPlaystation->nama,
+                            'hourly_rate_snapshot' => (float) ($newPlaystation->harga ?? 0),
+                            'pricing_mode' => TransactionPricingSegment::MODE_FROM_NOW,
+                            'is_preset_price' => $cNew['is_preset'],
+                            'started_at' => $now,
+                            'ended_at' => $targetExpiresAt,
+                            'duration_seconds' => $newSegSec,
+                            'raw_amount' => round($cNew['raw_amount'], 4),
+                            'billed_amount' => round($cNew['raw_amount'], 2),
+                            'changed_by_user_id' => $actorUserId,
+                            'change_reason' => $changeReason,
+                        ]);
+                    }
+                }
+
+                $lockedTx->unsetRelation('pricingSegments');
+                $timerBreakdown = $this->calculateTimerWithSegments($lockedTx);
+                foreach ($timerBreakdown['segments'] as $segData) {
+                    if (!empty($segData['segment_id'])) {
+                        TransactionPricingSegment::where('id', $segData['segment_id'])->update([
+                            'billed_amount' => round((float) $segData['allocated_billed_amount'], 2),
+                        ]);
+                    }
+                }
+                $lockedTx->unsetRelation('pricingSegments');
+                $rentalTotal = (float) $timerBreakdown['rental_total'];
+            } else {
+                $rentalTotal = (float) $newPlaystation->calculateCustomPrice($requestedDurationSeconds);
+            }
+
+            $fnbTotal = $lockedTx->uninvoiced_legacy_fnb_total + $lockedTx->unpaid_fnb_order_total;
+
+            $updateData['playstation_id'] = $newPlaystation->id;
+            $updateData['harga'] = $newPlaystation->harga ?? 0;
+            $updateData['total'] = $rentalTotal + $fnbTotal;
+            $updateData['status_transaksi'] = 'sukses';
+        } elseif ($newTipe === 'custom_package') {
+            $customPackageId = isset($input['custom_package_id']) && $input['custom_package_id'] !== ''
+                ? (int) $input['custom_package_id']
+                : (int) ($lockedTx->custom_package_id ?? 0);
+
+            $customPackage = CustomPackage::with(['playstations', 'fnbs'])->findOrFail($customPackageId);
+
+            if (TransactionPricingSegment::hasSchema()) {
+                TransactionPricingSegment::where('transaction_id', $lockedTx->id_transaksi)->delete();
+            }
+            $lockedTx->unsetRelation('pricingSegments');
+
+            $pkgChanged = $typeChanged || ((int) $lockedTx->custom_package_id !== (int) $customPackage->id);
+            $totalJamMain = (int) $customPackage->playstations->sum('pivot.lama_main');
+
+            $lockedTx->tipe_transaksi = 'custom_package';
+            $lockedTx->custom_package_id = $customPackage->id;
+            $lockedTx->setRelation('custom_package', $customPackage);
+
+            $fnbTotal = $lockedTx->uninvoiced_legacy_fnb_total + $lockedTx->unpaid_fnb_order_total;
+
+            $updateData['custom_package_id'] = $customPackage->id;
+            $updateData['playstation_id'] = $newPlaystation?->id ?? $newDevice->playstation_id;
+            $updateData['harga'] = $customPackage->harga_total;
+            $updateData['total'] = (float) $customPackage->harga_total + $fnbTotal;
+            $updateData['jam_main'] = $totalJamMain;
+            $updateData['duration_seconds'] = $totalJamMain * 60;
+            $updateData['status_transaksi'] = 'sukses';
+
+            $elapsedMinutes = max(0, (int) $startedAt->diffInMinutes($now, false));
+            $remainingMinutes = $totalJamMain - $elapsedMinutes;
+
+            if ($remainingMinutes > 0) {
+                $targetExpiresAt = $now->copy()->addMinutes($remainingMinutes);
+                $updateData['waktu_Selesai'] = $targetExpiresAt->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $targetExpiresAt;
+                    $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                }
+            } else {
+                $targetExpiresAt = $now->copy();
+                $updateData['waktu_Selesai'] = $now->format('H:i');
+                if (Transaction::hasG2Schema()) {
+                    $updateData['expires_at'] = $now;
+                    $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                }
+            }
+
+            $expiresAtChanged = $pkgChanged;
+        }
+
+        $lockedTx->update($updateData);
+        $lockedTx->unsetRelation('playstation');
+        $lockedTx->unsetRelation('device');
+
+        if ($deviceChanged) {
+            if ($oldDevice) {
+                $this->syncDeviceStatus(
+                    $oldDevice,
+                    'Tersedia',
+                    'BillingService::applyTransactionEdit',
+                    'Transaction moved from old station to station #' . $newDevice->id,
+                    null,
+                    false,
+                    $now
+                );
+            }
+
+            if ($this->resolveActiveSessionForDevice((int) $newDevice->id, $now)) {
+                $this->syncDeviceStatus(
+                    $newDevice,
+                    'Digunakan',
+                    'BillingService::applyTransactionEdit',
+                    'Active transaction moved to station #' . $newDevice->id,
+                    $lockedTx,
+                    false,
+                    $now
+                );
+            }
+        }
+
+        return [
+            'ok' => true,
+            'transaction' => $lockedTx,
+            'device_changed' => $deviceChanged,
+            'expires_at_changed' => $expiresAtChanged,
+            'new_expires_at' => $expiresAtChanged ? $targetExpiresAt : null,
+            'category_changed' => $categoryChanged,
+            'pricing_mode' => $pricingMode,
+            'preview' => $preview,
+        ];
     }
 }

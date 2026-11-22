@@ -138,6 +138,22 @@
                 'fnb_paid_total' => $fnbPaidTotal,
                 'fnb_items' => $fnbItems,
                 'custom_package' => $customPkgData,
+                'pricing_segments' => $tx->getResolvedPricingSegments()->map(function ($seg) {
+                    return [
+                        'id' => (int) $seg->id,
+                        'segment_order' => (int) $seg->segment_order,
+                        'playstation_id' => $seg->playstation_id ? (int) $seg->playstation_id : null,
+                        'playstation_name' => (string) (optional($seg->playstation)->nama ?: $seg->playstation_name_snapshot ?: 'Game'),
+                        'hourly_rate_snapshot' => (float) ($seg->hourly_rate_snapshot ?? 0),
+                        'pricing_mode' => (string) $seg->pricing_mode,
+                        'is_preset_price' => (bool) $seg->is_preset_price,
+                        'started_at' => optional($seg->started_at)->toIso8601String(),
+                        'ended_at' => optional($seg->ended_at)->toIso8601String(),
+                        'duration_seconds' => $seg->duration_seconds !== null ? (int) $seg->duration_seconds : null,
+                        'raw_amount' => $seg->raw_amount !== null ? (float) $seg->raw_amount : null,
+                        'billed_amount' => $seg->billed_amount !== null ? (float) $seg->billed_amount : null,
+                    ];
+                })->values()->all(),
             ];
         }
 

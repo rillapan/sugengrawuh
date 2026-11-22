@@ -60,7 +60,7 @@
                         </tr>
                         <tr>
                             <td><strong>Jenis Playstation:</strong></td>
-                            <td>{{ $transaction->device && $transaction->device->playstation ? $transaction->device->playstation->nama : 'N/A' }}</td>
+                            <td>{{ optional($transaction->playstation)->nama ?: (optional(optional($transaction->device)->playstation)->nama ?: 'N/A') }}</td>
                         </tr>
                     </table>
                 </div>
@@ -204,6 +204,57 @@
                     </table>
                 </div>
             </div>
+
+            @php
+                $resolvedSegmentsForDisplay = isset($rentalSegments) ? $rentalSegments : $transaction->getResolvedPricingSegments();
+                $resolvedBillingSummary = isset($billingSummary) && is_array($billingSummary)
+                    ? $billingSummary
+                    : ($resolvedSegmentsForDisplay->count() >= 2 ? app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction) : null);
+                $segmentRows = ($resolvedBillingSummary && !empty($resolvedBillingSummary['rental_segments']))
+                    ? collect($resolvedBillingSummary['rental_segments'])
+                    : collect();
+            @endphp
+            @if($resolvedSegmentsForDisplay->count() >= 2 && $segmentRows->count() >= 2)
+                <hr>
+                <h6>Rincian Segmen Tarif Permainan</h6>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered">
+                        <thead class="thead-light">
+                            <tr>
+                                <th>#</th>
+                                <th>Kategori</th>
+                                <th>Waktu</th>
+                                <th>Durasi</th>
+                                <th>Tarif/Jam</th>
+                                <th>Subtotal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($segmentRows as $segRow)
+                                @php
+                                    $segStartStr = ($segRow['started_at'] ?? null) instanceof \Carbon\CarbonInterface
+                                        ? $segRow['started_at']->format('H:i:s')
+                                        : (string) ($segRow['started_at'] ?? '-');
+                                    $segEndStr = !empty($segRow['is_open'])
+                                        ? 'Berjalan'
+                                        : ((($segRow['ended_at'] ?? null) instanceof \Carbon\CarbonInterface)
+                                            ? $segRow['ended_at']->format('H:i:s')
+                                            : (string) ($segRow['ended_at'] ?? '-'));
+                                    $segDurSec = (int) ($segRow['duration_seconds'] ?? 0);
+                                @endphp
+                                <tr>
+                                    <td>{{ $segRow['segment_order'] ?? $loop->iteration }}</td>
+                                    <td><strong>{{ $segRow['playstation_name'] ?? 'Game' }}</strong></td>
+                                    <td>{{ $segStartStr }} - {{ $segEndStr }}</td>
+                                    <td>{{ \App\Models\HourlyPrice::humanizeSeconds($segDurSec) }}</td>
+                                    <td>Rp {{ number_format((float) ($segRow['hourly_rate'] ?? 0), 0, ',', '.') }}/jam</td>
+                                    <td>Rp {{ number_format((float) ($segRow['allocated_billed_amount'] ?? $segRow['raw_amount'] ?? 0), 0, ',', '.') }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
 
             @if($transaction->transactionFnbs->isNotEmpty() || ($transaction->relationLoaded('fnbOrders') ? $transaction->fnbOrders->isNotEmpty() : $transaction->fnbOrders()->exists()))
                 <hr>

@@ -49,6 +49,29 @@ class Device extends Model
         return $names->implode(', ');
     }
 
+    public function getAvailableCategories(): Collection
+    {
+        $categories = $this->relationLoaded('playstations') ? $this->playstations : $this->playstations()->get();
+
+        if ($categories->isEmpty() && $this->playstation_id) {
+            $legacy = $this->relationLoaded('playstation') ? $this->playstation : $this->playstation()->first();
+            if ($legacy) {
+                $categories = collect([$legacy]);
+            }
+        }
+
+        return $categories->values();
+    }
+
+    public function supportsPlaystation(int $playstationId): bool
+    {
+        if ($playstationId <= 0) {
+            return false;
+        }
+
+        return $this->getAvailableCategories()->contains(fn (Playstation $ps) => (int) $ps->id === $playstationId);
+    }
+
     /**
      * Historical & active hardware mappings for this station.
      */

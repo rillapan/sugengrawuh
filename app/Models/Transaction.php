@@ -330,6 +330,14 @@ class Transaction extends Model
         }
 
         if ($this->tipe_transaksi === 'prepaid') {
+            $segments = $this->getResolvedPricingSegments();
+            if ($segments->isNotEmpty()) {
+                $billingService = app(\App\Services\BillingService::class);
+                if (method_exists($billingService, 'calculateTimerWithSegments')) {
+                    return (float) ($billingService->calculateTimerWithSegments($this)['rental_total'] ?? 0.0);
+                }
+            }
+
             if ($this->duration_seconds === null && is_numeric($this->jam_main)) {
                 return (float) $this->harga * (float) $this->jam_main;
             }
@@ -485,5 +493,77 @@ class Transaction extends Model
     public function invoices()
     {
         return $this->hasMany(Invoice::class, 'transaction_id', 'id_transaksi');
+    }
+
+    public function pricingSegments()
+    {
+        return $this->hasMany(TransactionPricingSegment::class, 'transaction_id', 'id_transaksi')
+            ->orderBy('segment_order', 'asc')
+            ->orderBy('id', 'asc');
+    }
+
+    public function getResolvedPricingSegments(): \Illuminate\Support\Collection
+    {
+        if (!TransactionPricingSegment::hasSchema()) {
+            return collect();
+        }
+
+        return $this->relationLoaded('pricingSegments')
+            ? $this->pricingSegments
+            : $this->pricingSegments()->with('playstation')->get();
+    }
+
+    public function resolveCurrentPlaystation(): ?Playstation
+    {
+        if ($this->playstation_id) {
+            $ps = $this->relationLoaded('playstation') ? $this->playstation : $this->playstation()->first();
+            if ($ps) {
+                return $ps;
+            }
+        }
+
+        $device = $this->relationLoaded('device')
+            ? $this->device
+            : $this->device()->with(['playstations', 'playstation'])->first();
+
+        return $device ? $device->getAvailableCategories()->first() : null;
+    }
+
+    public function resolveTotalDurationSeconds(): ?int
+    {
+        if ($this->duration_seconds !== null && (int) $this->duration_seconds > 0) {
+            return (int) $this->duration_seconds;
+        }
+
+        if (!empty($this->jam_main)) {
+            if ($this->tipe_transaksi === 'custom_package' && is_numeric($this->jam_main)) {
+                return (int) round((float) $this->jam_main * 60);
+            }
+            if (is_numeric($this->jam_main)) {
+                return (int) round((float) $this->jam_main * 3600);
+            }
+            if (is_string($this->jam_main) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', trim($this->jam_main), $m)) {
+                return ((int) $m[1] * 3600) + ((int) $m[2] * 60) + (isset($m[3]) ? (int) $m[3] : 0);
+            }
+        }
+
+        if (in_array($this->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+            $expires = $this->resolveLegacyExpiresAt();
+            $start = $this->getEffectiveStartTime();
+            if ($expires && $expires->gt($start)) {
+                return (int) $start->diffInSeconds($expires, false);
+            }
+        }
+
+        return null;
+    }
+
+    public function hasGameSettlementInvoice(): bool
+    {
+        if ($this->relationLoaded('invoices')) {
+            return $this->invoices->contains(fn ($inv) => $inv->invoice_type !== Invoice::TYPE_FNB_STANDALONE);
+        }
+
+        return $this->invoices()->where('invoice_type', '!=', Invoice::TYPE_FNB_STANDALONE)->exists();
     }
 }

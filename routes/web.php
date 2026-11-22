@@ -99,6 +99,7 @@ Route::middleware(['auth', 'check_role:admin,kasir'])->group(function () {
     Route::post('/transaction', [App\Http\Controllers\TransactionController::class, 'store'])->name('transaction.store');
     Route::get('/transaction/{transaction}/edit', [App\Http\Controllers\TransactionController::class, 'edit'])->name('transaction.edit');
     Route::put('/transaction/{transaction}', [App\Http\Controllers\TransactionController::class, 'update'])->name('transaction.update');
+    Route::post('/transaction/{transaction}/edit-preview', [App\Http\Controllers\TransactionController::class, 'previewEdit'])->name('transaction.editPreview')->whereNumber('transaction');
     Route::get('/transaction/{id}/payment', [App\Http\Controllers\TransactionController::class, 'showPayment'])->name('transaction.showPayment');
     Route::post('/transaction/{id}/process-payment', [App\Http\Controllers\TransactionController::class, 'processPayment'])->name('transaction.processPayment');
     Route::put('/transaction/{id}/update', [App\Http\Controllers\TransactionController::class, 'updateStatus']);
