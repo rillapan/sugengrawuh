@@ -467,6 +467,11 @@
         <div class="card-body">
             <div class="row" id="device-cards-container">
                 @foreach ($devices as $device)
+                    @php
+                        $effectiveStatus = (isset($customers[$device->id]) || isset($timers[$device->id]) || isset($postpaidTransactions[$device->id]))
+                            ? 'Digunakan'
+                            : $device->status;
+                    @endphp
                     <div class="col-lg-6 col-md-12 mb-4 d-flex align-items-stretch">
                         <article class="stitch-station-card w-100">
                             <!-- Card Header: Title & Transaction Type Badge -->
@@ -475,7 +480,7 @@
                                     <span class="small font-weight-bold text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Station {{ $stationNumbers[$device->id] ?? ($device->station_number ?? '') }}</span>
                                     <h2 class="stitch-station-title mb-0">{{ $device->nama }}</h2>
                                 </div>
-                                @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
+                                @if ($effectiveStatus === 'Digunakan' && isset($customers[$device->id]))
                                     <span class="stitch-badge-tx 
                                         @if($customers[$device->id]['tipe_transaksi'] === 'prepaid') stitch-badge-tx-prepaid
                                         @elseif($customers[$device->id]['tipe_transaksi'] === 'custom_package') stitch-badge-tx-custom
@@ -521,14 +526,14 @@
                                         @endif
                                     </div>
                                 </div>
-                                <div class="stitch-status-pill" id="status-{{ $device->id }}">
+                                <div class="stitch-status-pill" id="status-{{ $device->id }}" data-status="{{ $effectiveStatus }}" data-tx-id="{{ $customers[$device->id]['id_transaksi'] ?? '' }}">
                                     <span class="text-muted small font-weight-medium">Status:</span>
-                                    @if ($device->status === 'Tersedia')
+                                    @if ($effectiveStatus === 'Tersedia')
                                         <span class="stitch-status-dot stitch-dot-available"></span>
-                                        <span class="font-weight-bold text-dark small">{{ ucfirst($device->status) }}</span>
+                                        <span class="font-weight-bold text-dark small">{{ ucfirst($effectiveStatus) }}</span>
                                     @else
                                         <span class="stitch-status-dot stitch-dot-used"></span>
-                                        <span class="font-weight-bold text-dark small">{{ ucfirst($device->status) }}</span>
+                                        <span class="font-weight-bold text-dark small">{{ ucfirst($effectiveStatus) }}</span>
                                     @endif
                                 </div>
                             </div>
@@ -609,7 +614,7 @@
                                                             class="btn-hardware-power stitch-power-btn"
                                                             data-station-id="{{ $device->id }}"
                                                             data-station-name="{{ $device->nama }}"
-                                                            data-station-status="{{ $device->status }}"
+                                                            data-station-status="{{ $effectiveStatus }}"
                                                             data-physical-device-id="{{ $activeMapping->physicalDevice->id }}"
                                                             data-device-name="{{ $activeMapping->physicalDevice->name }}"
                                                             data-current-state="{{ $initialPowerState }}"
@@ -666,11 +671,11 @@
                                 $initSimOnline = !empty($initTvCtrl['simulator_online']);
                             @endphp
                             @if ($stationCategory === 'PLAYSTATION')
-                                @if ($device->status === 'Tersedia')
+                                @if ($effectiveStatus === 'Tersedia')
                                     <div class="mt-2 mb-2 p-2 bg-light border rounded small text-muted" id="tv-control-inactive-{{ $device->id }}">
                                         <i class="fas fa-tv mr-1"></i><strong>Kontrol Hardware:</strong> Nonaktif (Station belum sedang digunakan pelanggan).
                                     </div>
-                                @elseif ($device->status === 'Digunakan' && auth()->user()->isAdmin())
+                                @elseif ($effectiveStatus === 'Digunakan' && auth()->user()->isAdmin())
                                     <div class="mt-2 mb-3 p-2 bg-white border border-warning rounded shadow-sm tv-control-panel"
                                          id="tv-control-panel-{{ $device->id }}"
                                          data-station-id="{{ $device->id }}"
@@ -835,12 +840,24 @@
                             <div class="stitch-card-footer mt-auto">
                                 <div class="stitch-timer-label">
                                     <span>Timer:</span>
-                                    @if ($device->status === 'Digunakan' && isset($customers[$device->id]))
+                                    @if ($effectiveStatus === 'Digunakan' && isset($customers[$device->id]))
                                         @if (($customers[$device->id]['tipe_transaksi'] === 'prepaid' || $customers[$device->id]['tipe_transaksi'] === 'custom_package') && isset($timers[$device->id]))
-                                            <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="{{ $customers[$device->id]['tipe_transaksi'] }}">Memuat...</span>
+                                            <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="{{ $customers[$device->id]['tipe_transaksi'] }}" data-tx-id="{{ $customers[$device->id]['id_transaksi'] ?? '' }}">Memuat...</span>
                                         @elseif($customers[$device->id]['tipe_transaksi'] === 'postpaid' && $customers[$device->id]['status_transaksi'] === 'berjalan')
+                                            @php
+                                                $rawLostStart = $postpaidTransactions[$device->id]['lost_time_start'] ?? null;
+                                                $lostStartIso = '';
+                                                if ($rawLostStart instanceof \DateTimeInterface) {
+                                                    $lostStartIso = \Carbon\Carbon::instance($rawLostStart)->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toIso8601String();
+                                                } elseif (!empty($rawLostStart)) {
+                                                    $lostStartIso = \Carbon\Carbon::parse($rawLostStart, config('app.timezone', 'Asia/Jakarta'))->toIso8601String();
+                                                } elseif (!empty($customers[$device->id]['tanggal']) && !empty($customers[$device->id]['waktu_mulai'])) {
+                                                    $lostStartIso = \Carbon\Carbon::parse($customers[$device->id]['tanggal'] . ' ' . $customers[$device->id]['waktu_mulai'], config('app.timezone', 'Asia/Jakarta'))->toIso8601String();
+                                                }
+                                            @endphp
                                             <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="postpaid"
-                                                data-lost-time-start="{{ isset($postpaidTransactions[$device->id]) ? $postpaidTransactions[$device->id]['lost_time_start'] : '' }}">
+                                                data-tx-id="{{ $customers[$device->id]['id_transaksi'] ?? '' }}"
+                                                data-lost-time-start="{{ $lostStartIso }}">
                                                 <span id="elapsed-time-{{ $device->id }}">00:00:00</span>
                                             </span>
                                         @else
@@ -1129,7 +1146,7 @@
     <script>
         // Server time synchronization: calculate offset between client browser clock and server clock
         const initialServerTimestamp = {{ $serverTimestamp ?? (now()->timestamp * 1000) }};
-        const clientClockOffset = Date.now() - initialServerTimestamp;
+        let clientClockOffset = Date.now() - initialServerTimestamp;
 
         function getServerNow() {
             return new Date(Date.now() - clientClockOffset);
@@ -1193,7 +1210,16 @@
         }
 
         // Periodic background state synchronization with server (every 5 seconds)
+        let isDeviceSyncInFlight = false;
+        const DEVICE_RELOAD_COOLDOWN_MS = 10000;
+        const DEVICE_RELOAD_GUARD_KEY = 'device_timer_reload_guard';
+
         function syncDeviceTimersWithServer() {
+            if (isDeviceSyncInFlight) {
+                return;
+            }
+            isDeviceSyncInFlight = true;
+
             fetch('{{ route("device.timers") }}', {
                 headers: {
                     'Accept': 'application/json',
@@ -1202,30 +1228,91 @@
             })
             .then(res => res.json())
             .then(data => {
-                if (data && data.devices) {
+                if (!data) {
+                    return;
+                }
+                const serverTs = Number(data.server_timestamp);
+                if (Number.isFinite(serverTs) && serverTs > 0) {
+                    clientClockOffset = Date.now() - serverTs;
+                } else if (data.server_now) {
+                    const parsedServerNow = Date.parse(data.server_now);
+                    if (!Number.isNaN(parsedServerNow)) {
+                        clientClockOffset = Date.now() - parsedServerNow;
+                    }
+                }
+
+                if (Array.isArray(data.devices)) {
                     let needsReload = false;
+                    const mismatchParts = [];
+
                     data.devices.forEach(dev => {
                         const statusTd = document.getElementById('status-' + dev.id);
-                        if (statusTd) {
-                            if (dev.status === 'Tersedia' && !statusTd.innerHTML.includes('Tersedia')) {
-                                statusTd.innerHTML = '<span class="text-muted small font-weight-medium">Status:</span> <span class="stitch-status-dot stitch-dot-available"></span> <span class="font-weight-bold text-dark small">Tersedia</span>';
-                                const timerTd = document.getElementById('timer-' + dev.id);
-                                if (timerTd) {
-                                    timerTd.textContent = '-';
-                                }
-                                needsReload = true;
-                            }
+                        if (!statusTd) {
+                            return;
+                        }
+                        const timerTd = document.getElementById('timer-' + dev.id);
+                        const domIsUsed = statusTd.dataset.status
+                            ? (statusTd.dataset.status === 'Digunakan')
+                            : !statusTd.innerHTML.includes('Tersedia');
+                        const domTxId = statusTd.dataset.txId
+                            ? Number(statusTd.dataset.txId)
+                            : ((domIsUsed && timerTd && timerTd.dataset.txId) ? Number(timerTd.dataset.txId) : null);
+
+                        const serverTxId = (dev.transaction && dev.transaction.id_transaksi)
+                            ? Number(dev.transaction.id_transaksi)
+                            : null;
+                        const serverIsUsed = (dev.status === 'Digunakan') || (serverTxId !== null);
+
+                        if (domIsUsed !== serverIsUsed || domTxId !== serverTxId) {
+                            needsReload = true;
+                            mismatchParts.push(
+                                `${dev.id}:${domIsUsed ? 1 : 0}/${domTxId !== null ? domTxId : ''}->${serverIsUsed ? 1 : 0}/${serverTxId !== null ? serverTxId : ''}`
+                            );
                         }
                     });
-                    // If a station that was in-use has completed and become Tersedia,
-                    // automatically refresh the view if no modal is actively open
-                    if (needsReload && !document.querySelector('.modal.show')) {
-                        window.location.reload();
+
+                    if (!needsReload) {
+                        try {
+                            window.sessionStorage.removeItem(DEVICE_RELOAD_GUARD_KEY);
+                        } catch (e) {}
+                        return;
+                    }
+
+                    // Automatically refresh the view on state transition if no modal is actively open
+                    if (!document.querySelector('.modal.show') && !document.querySelector('dialog[open]')) {
+                        const signature = mismatchParts.join('|');
+                        let shouldReload = true;
+                        try {
+                            const rawGuard = window.sessionStorage.getItem(DEVICE_RELOAD_GUARD_KEY);
+                            if (rawGuard) {
+                                const parsedGuard = JSON.parse(rawGuard);
+                                if (parsedGuard &&
+                                    parsedGuard.sig === signature &&
+                                    (Date.now() - Number(parsedGuard.ts || 0)) < DEVICE_RELOAD_COOLDOWN_MS) {
+                                    shouldReload = false;
+                                }
+                            }
+                            if (shouldReload) {
+                                window.sessionStorage.setItem(DEVICE_RELOAD_GUARD_KEY, JSON.stringify({
+                                    sig: signature,
+                                    ts: Date.now()
+                                }));
+                            }
+                        } catch (e) {
+                            // sessionStorage unavailable; proceed with reload
+                        }
+
+                        if (shouldReload) {
+                            window.location.reload();
+                        }
                     }
                 }
             })
             .catch(err => {
                 console.warn('Timer sync heartbeat failed (will retry):', err);
+            })
+            .finally(() => {
+                isDeviceSyncInFlight = false;
             });
         }
 

@@ -41,14 +41,14 @@ class TimerSyncInfiniteReloadPreventionTest extends TestCase
     }
 
     /** @test */
-    public function test_timer_sync_data_returns_null_transaction_for_tersedia_device_with_orphaned_running_tx(): void
+    public function test_timer_sync_data_and_dashboard_agree_on_authoritative_running_tx_when_device_is_tersedia(): void
     {
         $this->actingAs($this->kasir);
 
-        // Device is Tersedia, but an orphan RUNNING transaction exists in DB
-        $orphanTx = Transaction::create([
+        // Device DB status is Tersedia (stale), while an authoritative RUNNING transaction exists
+        $runningTx = Transaction::create([
             'status' => 'user',
-            'nama' => 'Orphan Customer',
+            'nama' => 'Active Customer',
             'device_id' => $this->device->id,
             'playstation_id' => $this->playstation->id,
             'user_id' => $this->kasir->id,
@@ -68,9 +68,21 @@ class TimerSyncInfiniteReloadPreventionTest extends TestCase
         $targetDevice = $devices->firstWhere('id', $this->device->id);
 
         $this->assertNotNull($targetDevice, 'Target device should be present in timer sync response.');
-        $this->assertEquals('Tersedia', $targetDevice['status']);
-        // For a Tersedia device, transaction MUST be null to prevent infinite client reload loops
-        $this->assertNull($targetDevice['transaction'], 'Tersedia device must not return active transaction.');
+        $this->assertEquals('Digunakan', $targetDevice['status']);
+        $this->assertNotNull($targetDevice['transaction'], 'Authoritative RUNNING transaction must be returned.');
+        $this->assertEquals($runningTx->id_transaksi, $targetDevice['transaction']['id_transaksi']);
+
+        // Dashboard DOM must agree with /device/timers to prevent infinite reload loops
+        $dashboardResponse = $this->get(route('transaction.index'));
+        $dashboardResponse->assertStatus(200);
+
+        $html = $dashboardResponse->getContent();
+        $pattern = '/<article\b[^>]*id="station-card-' . $this->device->id . '"[^>]*>.*?<\/article>/s';
+        $this->assertSame(1, preg_match($pattern, $html, $matches), 'Station card must be rendered on dashboard.');
+        $cardHtml = $matches[0];
+
+        $this->assertMatchesRegularExpression('/class="[^"]*\bis-used\b[^"]*"/', $cardHtml);
+        $this->assertStringContainsString('data-tx-id="' . $runningTx->id_transaksi . '"', $cardHtml);
     }
 
     /** @test */

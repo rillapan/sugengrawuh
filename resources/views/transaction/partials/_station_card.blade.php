@@ -1,5 +1,5 @@
 @php
-    $isUsed = ($device->status === 'Digunakan');
+    $isUsed = ($activeTx !== null) || ($device->status === 'Digunakan');
     $psList = ($device->playstations && $device->playstations->isNotEmpty())
         ? $device->playstations
         : ($device->playstation ? collect([$device->playstation]) : collect());
@@ -190,10 +190,11 @@
                 ? ($activeTx->custom_package->nama_paket ?? ($device->playstation_names ?: 'Custom Paket'))
                 : ($activeTx->playstation->nama ?? ($device->playstation_names ?: '-'));
 
-            $startedAtIso = optional($activeTx->started_at)->toIso8601String()
-                ?: ($activeTx->created_at ? $activeTx->created_at->toDateString() . 'T' . (strlen((string) $activeTx->waktu_mulai) === 5 ? $activeTx->waktu_mulai . ':00' : $activeTx->waktu_mulai) : '');
-            $lostTimeStartIso = optional($activeTx->lost_time_start)->toIso8601String() ?? '';
-            $expiresAtIso = optional($activeTx->expires_at)->toIso8601String() ?? '';
+            $startedAtIso = $activeTx->getEffectiveStartTime()->toIso8601String();
+            $lostTimeStartIso = $activeTx->lost_time_start
+                ? $activeTx->lost_time_start->copy()->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toIso8601String()
+                : $startedAtIso;
+            $expiresAtIso = optional($activeTx->resolveLegacyExpiresAt())->toIso8601String() ?? '';
         @endphp
 
         <header class="pos-card-head">

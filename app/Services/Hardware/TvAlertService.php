@@ -11,6 +11,7 @@ use App\Models\Transaction;
 use App\Models\TvAlertEvent;
 use App\Models\TvVolumeEnforcementLog;
 use App\Models\User;
+use App\Services\BillingService;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\Drivers\MockSamsungTvDriver;
 use App\Services\Hardware\Drivers\SamsungTvDriver;
@@ -141,30 +142,17 @@ class TvAlertService
             throw TvControlException::stationAvailable($station->nama);
         }
 
-        // 3. Must have a valid RUNNING billing session that is not expired
-        $activeTx = Transaction::where('device_id', $station->id)
-            ->where('billing_status', Transaction::BILLING_RUNNING)
-            ->latest('id_transaksi')
-            ->first();
-
-        if (!$activeTx) {
-            // Fallback for legacy transactions created today without billing_status
-            $activeTx = Transaction::where('device_id', $station->id)
-                ->whereDate('created_at', Carbon::today())
-                ->whereIn('status_transaksi', ['sukses', 'berjalan'])
-                ->where(function ($q) {
-                    $q->whereNull('billing_status')
-                        ->orWhere('billing_status', Transaction::BILLING_RUNNING);
-                })
-                ->latest('id_transaksi')
-                ->first();
-        }
+        // 3. Must have a valid active billing session (G2 RUNNING or cross-midnight-safe legacy) that is not expired
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
+        $activeTx = app(BillingService::class)->resolveActiveSessionForDevice((int) $station->id, $now);
 
         if (!$activeTx) {
             throw TvControlException::noActiveSession($station->nama);
         }
 
-        if ($activeTx->expires_at && Carbon::now()->greaterThanOrEqualTo($activeTx->expires_at)) {
+        $effectiveExpiresAt = $activeTx->resolveLegacyExpiresAt();
+        if ($effectiveExpiresAt && $now->greaterThanOrEqualTo($effectiveExpiresAt)) {
             throw TvControlException::noActiveSession($station->nama);
         }
 

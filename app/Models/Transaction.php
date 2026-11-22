@@ -61,19 +61,37 @@ class Transaction extends Model
     ];
 
     /**
+     * Normalize any date/datetime value to the configured application timezone.
+     */
+    private function normalizeToAppTimezone(mixed $value): Carbon
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+
+        if ($value instanceof \DateTimeInterface) {
+            return Carbon::instance($value)->copy()->setTimezone($tz);
+        }
+
+        return Carbon::parse($value, $tz)->setTimezone($tz);
+    }
+
+    /**
      * Get authoritative start timestamp with second precision.
      */
     public function getEffectiveStartTime(): Carbon
     {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+
         if ($this->started_at) {
-            return Carbon::parse($this->started_at);
+            return $this->normalizeToAppTimezone($this->started_at);
         }
         if ($this->lost_time_start) {
-            return Carbon::parse($this->lost_time_start);
+            return $this->normalizeToAppTimezone($this->lost_time_start);
         }
-        $dateStr = $this->created_at ? $this->created_at->toDateString() : Carbon::today()->toDateString();
+        $dateStr = $this->created_at
+            ? $this->normalizeToAppTimezone($this->created_at)->toDateString()
+            : Carbon::now($tz)->toDateString();
         $timeStr = $this->waktu_mulai ?: '00:00:00';
-        return Carbon::parse($dateStr . ' ' . $timeStr);
+        return Carbon::parse($dateStr . ' ' . $timeStr, $tz);
     }
 
     /**
@@ -81,14 +99,81 @@ class Transaction extends Model
      */
     public function getEffectiveEndTime(): Carbon
     {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+
         if ($this->ended_at) {
-            return Carbon::parse($this->ended_at);
+            return $this->normalizeToAppTimezone($this->ended_at);
         }
-        if ($this->waktu_Selesai) {
-            $dateStr = $this->created_at ? $this->created_at->toDateString() : Carbon::today()->toDateString();
-            return Carbon::parse($dateStr . ' ' . $this->waktu_Selesai);
+        if ($this->waktu_Selesai !== null && trim((string) $this->waktu_Selesai) !== '') {
+            $start = $this->getEffectiveStartTime();
+            $end = Carbon::parse($start->toDateString() . ' ' . $this->waktu_Selesai, $tz);
+            if ($end->lt($start)) {
+                $end->addDay();
+            }
+            return $end;
         }
-        return Carbon::now();
+        return Carbon::now($tz);
+    }
+
+    /**
+     * Resolve expiration timestamp for prepaid or custom package transactions,
+     * handling cross-midnight legacy waktu_Selesai values when expires_at is null.
+     */
+    public function resolveLegacyExpiresAt(): ?Carbon
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+
+        if ($this->expires_at) {
+            return $this->normalizeToAppTimezone($this->expires_at);
+        }
+
+        if (
+            in_array($this->tipe_transaksi, ['prepaid', 'custom_package'], true)
+            && $this->waktu_Selesai !== null
+            && trim((string) $this->waktu_Selesai) !== ''
+        ) {
+            $start = $this->getEffectiveStartTime();
+            $end = Carbon::parse($start->toDateString() . ' ' . $this->waktu_Selesai, $tz);
+            if ($end->lt($start)) {
+                $end->addDay();
+            }
+            return $end;
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine whether a legacy (null billing_status or pre-G2) transaction is currently active.
+     */
+    public function isLegacyActiveSession(?Carbon $now = null): bool
+    {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $this->normalizeToAppTimezone($now) : Carbon::now($tz);
+
+        if (in_array($this->status_transaksi, ['selesai', 'draft'], true)) {
+            return false;
+        }
+
+        if (in_array($this->billing_status, [
+            self::BILLING_COMPLETED,
+            self::BILLING_STOPPED_EARLY,
+            self::BILLING_EXPIRED_PENDING_ACTION,
+            self::BILLING_IDLE,
+        ], true)) {
+            return false;
+        }
+
+        if ($this->tipe_transaksi === 'postpaid') {
+            return $this->status_transaksi === 'berjalan';
+        }
+
+        if (in_array($this->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+            $expires = $this->resolveLegacyExpiresAt();
+            return $expires !== null && $expires->gt($now);
+        }
+
+        return false;
     }
 
     /**

@@ -42,6 +42,12 @@ class MidnightTimerCrossingTest extends TestCase
         $this->device->playstations()->attach($this->playstation->id);
     }
 
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
     /** @test */
     public function prepaid_transaction_crossing_midnight_calculates_end_time_correctly()
     {
@@ -142,14 +148,14 @@ class MidnightTimerCrossingTest extends TestCase
 
         // Check timer data in view
         $timers = $response->viewData('timers');
-        
-        // Skip timer check if empty (device might have been auto-updated)
-        if (!empty($timers) && isset($timers[$this->device->id])) {
-            // Timer should have correct end_date (next day)
-            $timerData = $timers[$this->device->id];
-            $this->assertEquals('2026-01-19', $timerData['end_date']);
-            $this->assertEquals('01:30', substr($timerData['end_time'], 0, 5));
-        }
+
+        $this->assertNotEmpty($timers, 'Timers should not be empty for active midnight-crossing session.');
+        $this->assertArrayHasKey($this->device->id, $timers);
+
+        // Timer should have correct end_date (next day)
+        $timerData = $timers[$this->device->id];
+        $this->assertEquals('2026-01-19', $timerData['end_date']);
+        $this->assertEquals('01:30', substr($timerData['end_time'], 0, 5));
     }
 
     /** @test */
@@ -279,18 +285,27 @@ class MidnightTimerCrossingTest extends TestCase
 
         $this->device->update(['status' => 'Digunakan']);
 
-        //  Before end time (00:15 next day) - should still be Digunakan
+        // Before end time (00:15 next day) - should still be Digunakan with active timer
         Carbon::setTestNow(Carbon::parse('2026-01-19 00:15:00'));
 
         $response = $this->actingAs($this->admin)->get(route('device.index'));
-        
-        // Just check device was updated (status may have changed during index call)
-        $this->assertNotNull($this->device->fresh()->status);
+        $response->assertStatus(200);
+        $this->assertEquals('Digunakan', $this->device->fresh()->status);
 
-        // After end time (00:45 next day) - should be Tersedia
+        $activeTimers = $response->viewData('timers');
+        $this->assertArrayHasKey($this->device->id, $activeTimers);
+
+        // After end time (00:45 next day) - GET /device does not show expired timer as active,
+        // and POST /device/update-all-statuses updates device status to Tersedia
         Carbon::setTestNow(Carbon::parse('2026-01-19 00:45:00'));
 
-        $response = $this->actingAs($this->admin)->get(route('device.index'));
+        $responseAfter = $this->actingAs($this->admin)->get(route('device.index'));
+        $responseAfter->assertStatus(200);
+        $this->assertEmpty($responseAfter->viewData('timers'));
+
+        $updateResponse = $this->actingAs($this->admin)->postJson(route('device.updateAllStatuses'));
+        $updateResponse->assertStatus(200)->assertJson(['success' => true]);
+
         $this->assertEquals('Tersedia', $this->device->fresh()->status);
     }
 }

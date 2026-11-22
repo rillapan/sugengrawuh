@@ -44,9 +44,8 @@ class DeviceController extends Controller
      */
     public function index()
     {
-        $now = Carbon::now();
-        $today = $now->toDateString();
-        $currentTime = $now->format('H:i:s');
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
 
         // Autonomous Expiration & Hardware Automation Heartbeat:
         // Evaluates expired sessions and dispatches pending hardware intents smoothly
@@ -73,77 +72,6 @@ class DeviceController extends Controller
             \Illuminate\Support\Facades\Log::warning('DeviceController index heartbeat issue: ' . $e->getMessage());
         }
 
-        // Update status for all devices based on transactions today
-        $allDevices = Device::all();
-        foreach ($allDevices as $device) {
-            $transaction = Transaction::where('device_id', $device->id)
-                ->whereDate('created_at', $today)
-                ->latest()
-                ->first();
-
-            $newStatus = 'Tersedia';
-            if ($transaction) {
-                if ($transaction->tipe_transaksi === 'prepaid') {
-                    $endTime = $transaction->waktu_Selesai;
-                    if ($endTime) {
-                        // Get the transaction start time and date
-                        $startTime = $transaction->waktu_mulai;
-                        $transactionDate = $transaction->created_at->format('Y-m-d');
-
-                        // Create proper datetime objects for start and end times
-                        $startDateTime = Carbon::parse($transactionDate . ' ' . $startTime);
-                        $endDateTime = Carbon::parse($transactionDate . ' ' . $endTime);
-
-                        // If end time is earlier than start time, it means it's the next day
-                        if ($endDateTime < $startDateTime) {
-                            $endDateTime->addDay();
-                        }
-
-                        // Compare with current time
-                        if ($endDateTime > $now) {
-                            $newStatus = 'Digunakan';
-                        } else {
-                            $newStatus = 'Tersedia';
-                        }
-                    } else {
-                        $newStatus = 'Tersedia';
-                    }
-                } elseif ($transaction->tipe_transaksi === 'postpaid') {
-                    if ($transaction->status_transaksi === 'berjalan') {
-                        $newStatus = 'Digunakan';
-                    } else {
-                        $newStatus = 'Tersedia';
-                    }
-                } elseif ($transaction->tipe_transaksi === 'custom_package') {
-                    $endTime = $transaction->waktu_Selesai;
-                    if ($endTime) {
-                        // Get the transaction start time and date
-                        $startTime = $transaction->waktu_mulai;
-                        $transactionDate = $transaction->created_at->format('Y-m-d');
-
-                        // Create proper datetime objects for start and end times
-                        $startDateTime = Carbon::parse($transactionDate . ' ' . $startTime);
-                        $endDateTime = Carbon::parse($transactionDate . ' ' . $endTime);
-
-                        // If end time is earlier than start time, it means it's the next day
-                        if ($endDateTime < $startDateTime) {
-                            $endDateTime->addDay();
-                        }
-
-                        // Compare with current time
-                        if ($endDateTime > $now) {
-                            $newStatus = 'Digunakan';
-                        } else {
-                            $newStatus = 'Tersedia';
-                        }
-                    } else {
-                        $newStatus = 'Tersedia';
-                    }
-                }
-            }
-            $device->update(['status' => $newStatus]);
-        }
-
         $withRelations = ['playstations', 'playstation'];
         if (Schema::hasTable('station_device_mappings')) {
             $withRelations[] = 'activeHardwareMappings.physicalDevice';
@@ -157,9 +85,20 @@ class DeviceController extends Controller
             Device::with($withRelations)->get()
         );
 
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
+        $activeSessions = $billingService->resolveActiveSessionsByDevice(
+            $sortedDevices->pluck('id'),
+            $now,
+            [],
+            $sortedDevices
+        );
+
         $stationNumbers = Device::resolveGlobalStationNumbers($sortedDevices);
         foreach ($sortedDevices as $device) {
             $device->setAttribute('station_number', $stationNumbers[$device->id] ?? null);
+            $effectiveStatus = $activeSessions->has((int) $device->id) ? 'Digunakan' : $device->status;
+            $device->setAttribute('effective_status', $effectiveStatus);
         }
 
         $perPage = 25;
@@ -175,112 +114,71 @@ class DeviceController extends Controller
             ]
         );
 
-        // Count devices by status
-        $countAvailable = Device::where('status', 'Tersedia')->count();
-        $countInUse = Device::where('status', 'Digunakan')->count();
+        // Derive status counts and station lists from effective status without mutating DB on GET
+        $inUseCollection = $sortedDevices->filter(
+            fn ($d) => ($d->effective_status ?? $d->status) === 'Digunakan'
+        );
+        $availableCollection = $sortedDevices->filter(
+            fn ($d) => ($d->effective_status ?? $d->status) === 'Tersedia'
+        );
 
-        // Get device names by status
-        $availableDevices = Device::where('status', 'Tersedia')->pluck('nama')->toArray();
-        $inUseDevices = Device::where('status', 'Digunakan')->pluck('nama')->toArray();
+        $countAvailable = $availableCollection->count();
+        $countInUse = $inUseCollection->count();
 
-        // Collect end times and transaction info for in-use devices
+        $availableDevices = $availableCollection->pluck('nama')->values()->toArray();
+        $inUseDevices = $inUseCollection->pluck('nama')->values()->toArray();
+
+        // Collect end times and transaction info for active sessions
         $timers = [];
         $customers = [];
         $postpaidTransactions = [];
-        
+
         foreach ($devices as $dev) {
-            if ($dev->status === 'Digunakan') {
-                $transaction = null;
-                if (Transaction::hasG2Schema()) {
-                    $transaction = Transaction::where('device_id', $dev->id)
-                        ->where('billing_status', Transaction::BILLING_RUNNING)
-                        ->latest()
-                        ->first();
-                }
-                if (!$transaction) {
-                    $transaction = Transaction::where('device_id', $dev->id)
-                        ->whereDate('created_at', $today)
-                        ->latest()
-                        ->first();
-                }
-                    
-                if ($transaction) {
-                    // For prepaid transactions
-                    if ($transaction->tipe_transaksi === 'prepaid' && $transaction->waktu_Selesai) {
-                        // Get the transaction start time and date
-                        $startTime = $transaction->waktu_mulai;
-                        $transactionDate = $transaction->created_at->format('Y-m-d');
-                        
-                        // Create proper datetime objects for start and end times
-                        $startDateTime = Carbon::parse($transactionDate . ' ' . $startTime);
-                        $endDateTime = Carbon::parse($transactionDate . ' ' . $transaction->waktu_Selesai);
-                        
-                        // If end time is earlier than start time, it means it's the next day
-                        if ($endDateTime < $startDateTime) {
-                            $endDateTime->addDay();
-                        }
-                        
-                        $targetExpiresAt = $transaction->expires_at ?: $endDateTime;
-                        if ($targetExpiresAt > $now) {
-                            $timers[$dev->id] = [
-                                'expires_at' => $transaction->expires_at ? $transaction->expires_at->toIso8601String() : $endDateTime->toIso8601String(),
-                                'end_time' => $transaction->expires_at ? $transaction->expires_at->format('H:i:s') : $transaction->waktu_Selesai,
-                                'end_date' => $targetExpiresAt->format('Y-m-d'),
-                                'start_date' => $transactionDate,
-                                'start_time' => $startTime
-                            ];
-                        }
-                    }
-                    // For custom package transactions
-                    elseif ($transaction->tipe_transaksi === 'custom_package' && $transaction->waktu_Selesai) {
-                        // Get the transaction start time and date
-                        $startTime = $transaction->waktu_mulai;
-                        $transactionDate = $transaction->created_at->format('Y-m-d');
-                        
-                        // Create proper datetime objects for start and end times
-                        $startDateTime = Carbon::parse($transactionDate . ' ' . $startTime);
-                        $endDateTime = Carbon::parse($transactionDate . ' ' . $transaction->waktu_Selesai);
-                        
-                        // If end time is earlier than start time, it means it's the next day
-                        if ($endDateTime < $startDateTime) {
-                            $endDateTime->addDay();
-                        }
-                        
-                        $targetExpiresAt = $transaction->expires_at ?: $endDateTime;
-                        if ($targetExpiresAt > $now) {
-                            $timers[$dev->id] = [
-                                'expires_at' => $transaction->expires_at ? $transaction->expires_at->toIso8601String() : $endDateTime->toIso8601String(),
-                                'end_time' => $transaction->expires_at ? $transaction->expires_at->format('H:i:s') : $transaction->waktu_Selesai,
-                                'end_date' => $targetExpiresAt->format('Y-m-d'),
-                                'start_date' => $transactionDate,
-                                'start_time' => $startTime
-                            ];
-                        }
-                    }
-                    // For postpaid transactions that are still running
-                    elseif ($transaction->tipe_transaksi === 'postpaid' && $transaction->status_transaksi === 'berjalan') {
-                        $postpaidTransactions[$dev->id] = [
-                            'start_time' => $transaction->waktu_mulai,
-                            'start_date' => $transaction->created_at->format('Y-m-d'),
-                            'lost_time_start' => $transaction->lost_time_start
-                        ];
-                    }
-                    
-                    $customers[$dev->id] = [
-                        'id_transaksi' => $transaction->id_transaksi,
-                        'nama' => $transaction->nama ?? 'Tidak tersedia',
-                        'nama_perangkat' => $dev->nama,
-                        'jenis_playstation' => $dev->playstation_names ?? 'Tidak Diketahui',
-                        'jam_main' => $transaction->jam_main ?? 'Tidak tersedia',
-                        'waktu_mulai' => $transaction->waktu_mulai,
-                        'waktu_selesai' => $transaction->waktu_Selesai,
-                        'total' => $transaction->total ?? 'Tidak tersedia',
-                        'tanggal' => $transaction->created_at->format('Y-m-d'),
-                        'tipe_transaksi' => $transaction->tipe_transaksi,
-                        'status_transaksi' => $transaction->status_transaksi
+            $transaction = $activeSessions->get((int) $dev->id);
+            if (!$transaction) {
+                continue;
+            }
+
+            $effectiveStart = $transaction->getEffectiveStartTime();
+
+            if (in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+                $targetExpiresAt = $transaction->resolveLegacyExpiresAt();
+                if ($targetExpiresAt && $targetExpiresAt->gt($now)) {
+                    $timers[$dev->id] = [
+                        'expires_at' => $targetExpiresAt->toIso8601String(),
+                        'end_time' => $targetExpiresAt->format('H:i:s'),
+                        'end_date' => $targetExpiresAt->format('Y-m-d'),
+                        'start_date' => $effectiveStart->format('Y-m-d'),
+                        'start_time' => $transaction->waktu_mulai ?: $effectiveStart->format('H:i:s'),
                     ];
                 }
+            } elseif (
+                $transaction->tipe_transaksi === 'postpaid'
+                && (
+                    $transaction->status_transaksi === 'berjalan'
+                    || (Transaction::hasG2Schema() && $transaction->billing_status === Transaction::BILLING_RUNNING)
+                )
+            ) {
+                $postpaidTransactions[$dev->id] = [
+                    'start_time' => $transaction->waktu_mulai ?: $effectiveStart->format('H:i:s'),
+                    'start_date' => $effectiveStart->format('Y-m-d'),
+                    'lost_time_start' => $effectiveStart->toIso8601String(),
+                ];
             }
+
+            $customers[$dev->id] = [
+                'id_transaksi' => $transaction->id_transaksi,
+                'nama' => $transaction->nama ?? 'Tidak tersedia',
+                'nama_perangkat' => $dev->nama,
+                'jenis_playstation' => $dev->playstation_names ?? 'Tidak Diketahui',
+                'jam_main' => $transaction->jam_main ?? 'Tidak tersedia',
+                'waktu_mulai' => $transaction->waktu_mulai,
+                'waktu_selesai' => $transaction->waktu_Selesai,
+                'total' => $transaction->total ?? 'Tidak tersedia',
+                'tanggal' => $effectiveStart->format('Y-m-d'),
+                'tipe_transaksi' => $transaction->tipe_transaksi,
+                'status_transaksi' => $transaction->status_transaksi,
+            ];
         }
 
         $tvControlData = [];
@@ -304,6 +202,7 @@ class DeviceController extends Controller
             'active' => 'device',
             'devices' => $devices,
             'stationNumbers' => $stationNumbers,
+            'activeSessions' => $activeSessions,
             'timers' => $timers,
             'customers' => $customers,
             'postpaidTransactions' => $postpaidTransactions,
@@ -439,77 +338,81 @@ class DeviceController extends Controller
      */
     public function updateDeviceStatusesFromTimers()
     {
-        $now = Carbon::now();
-        $today = $now->toDateString();
-        
-        // Get all devices with their latest transactions
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
+
         $devices = Device::with(['playstations'])->get();
-        
+
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
+        $activeSessions = $billingService->resolveActiveSessionsByDevice(
+            $devices->pluck('id'),
+            $now,
+            [],
+            $devices
+        );
+
+        $updatedCount = 0;
+
         foreach ($devices as $device) {
-            // Get the latest transaction for this device
-            $latestTransaction = Transaction::where('device_id', $device->id)
-                ->where('payment_status', 'paid')
-                ->latest()
-                ->first();
-                
-            if (!$latestTransaction) {
-                // No transaction found, set to available
-                if ($device->status !== 'Tersedia') {
-                    $device->update(['status' => 'Tersedia']);
+            // Never release a device that has an authoritative active session
+            if ($activeSessions->has((int) $device->id)) {
+                if ($device->status !== 'Digunakan') {
+                    $device->update(['status' => 'Digunakan']);
+                    $updatedCount++;
                 }
                 continue;
             }
-            
-            $shouldUpdateStatus = false;
-            $newStatus = $device->status;
-            
-            // Check different transaction types and their completion status
-            if ($latestTransaction->tipe_transaksi === 'prepaid') {
-                // For prepaid: check if timer has completed
-                if ($latestTransaction->waktu_Selesai) {
-                    $endTime = Carbon::parse(
-                        $latestTransaction->created_at->format('Y-m-d') . ' ' . $latestTransaction->waktu_Selesai
-                    );
-                    
-                    if ($endTime <= $now && $device->status === 'Digunakan') {
-                        // Timer completed but device still marked as used
-                        $shouldUpdateStatus = true;
-                        $newStatus = 'Tersedia';
-                    }
-                }
-            } elseif ($latestTransaction->tipe_transaksi === 'postpaid') {
-                // For postpaid: check if transaction is completed
-                if ($latestTransaction->status_transaksi === 'selesai') {
-                    if ($device->status === 'Digunakan') {
-                        $shouldUpdateStatus = true;
-                        $newStatus = 'Tersedia';
-                    }
-                }
-            } elseif ($latestTransaction->tipe_transaksi === 'custom_package') {
-                // For custom packages: check if timer has completed
-                if ($latestTransaction->waktu_Selesai) {
-                    $endTime = Carbon::parse(
-                        $latestTransaction->created_at->format('Y-m-d') . ' ' . $latestTransaction->waktu_Selesai
-                    );
-                    
-                    if ($endTime <= $now && $device->status === 'Digunakan') {
-                        // Timer completed but device still marked as used
-                        $shouldUpdateStatus = true;
-                        $newStatus = 'Tersedia';
-                    }
-                }
+
+            if ($device->status !== 'Digunakan') {
+                continue;
             }
-            
-            // Update status if needed
-            if ($shouldUpdateStatus) {
-                $device->update(['status' => $newStatus]);
+
+            // Remaining occupied device without an active session in $activeSessions
+            $latestTransaction = Transaction::where('device_id', $device->id)
+                ->latest('id_transaksi')
+                ->first();
+
+            if (!$latestTransaction) {
+                $device->update(['status' => 'Tersedia']);
+                $updatedCount++;
+                continue;
+            }
+
+            $shouldRelease = false;
+
+            if (in_array($latestTransaction->status_transaksi, ['selesai', 'draft'], true)) {
+                $shouldRelease = true;
+            } elseif (
+                Transaction::hasG2Schema()
+                && in_array($latestTransaction->billing_status, [
+                    Transaction::BILLING_COMPLETED,
+                    Transaction::BILLING_STOPPED_EARLY,
+                    Transaction::BILLING_EXPIRED_PENDING_ACTION,
+                    Transaction::BILLING_IDLE,
+                ], true)
+            ) {
+                $shouldRelease = true;
+            } elseif (in_array($latestTransaction->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+                $expiresAt = $latestTransaction->resolveLegacyExpiresAt();
+
+                if (!$expiresAt || $expiresAt->lte($now)) {
+                    $shouldRelease = true;
+                }
+            } elseif ($latestTransaction->tipe_transaksi === 'postpaid' && $latestTransaction->status_transaksi !== 'berjalan') {
+                $shouldRelease = true;
+            }
+
+            if ($shouldRelease) {
+                $device->update(['status' => 'Tersedia']);
+                $updatedCount++;
             }
         }
-        
+
         return response()->json([
             'success' => true,
             'message' => 'Status perangkat diperbarui berdasarkan timer aktif',
-            'updated_count' => $devices->where('updated', true)->count()
+            'updated_count' => $updatedCount,
         ]);
     }
 
@@ -539,7 +442,7 @@ class DeviceController extends Controller
     }
 
     /**
-     * Debug device status and transactions
+     * Debug device status and transactions (read-only diagnostic endpoint).
      *
      * @param  int  $id
      * @return \Illuminate\Http\Response
@@ -548,49 +451,81 @@ class DeviceController extends Controller
     {
         try {
             $device = Device::find($id);
-            
+
             if (!$device) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Perangkat tidak ditemukan',
-                    'device_id' => $id
+                    'device_id' => $id,
                 ]);
             }
 
-            $today = Carbon::now()->toDateString();
-            
-            // Get all transactions for this device today
-            $allTransactions = Transaction::where('device_id', $id)
-                ->whereDate('created_at', $today)
-                ->get(['id_transaksi', 'tipe_transaksi', 'status_transaksi', 'waktu_mulai', 'waktu_Selesai', 'created_at']);
+            $tz = config('app.timezone', 'Asia/Jakarta');
+            $now = Carbon::now($tz);
+            $today = $now->toDateString();
 
-            // Get active transactions
-            $activeTransactions = Transaction::where('device_id', $id)
-                ->whereDate('created_at', $today)
-                ->where(function($query) {
-                    $query->where('status_transaksi', 'berjalan')
-                          ->orWhereNull('status_transaksi');
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $activeSession = $billingService->resolveActiveSessionForDevice((int) $id, $now);
+
+            $hasG2 = Transaction::hasG2Schema();
+            $selectColumns = $hasG2
+                ? ['id_transaksi', 'tipe_transaksi', 'status_transaksi', 'billing_status', 'waktu_mulai', 'waktu_Selesai', 'started_at', 'expires_at', 'created_at']
+                : ['id_transaksi', 'tipe_transaksi', 'status_transaksi', 'waktu_mulai', 'waktu_Selesai', 'created_at'];
+
+            if ($hasG2) {
+                $activeTransactions = Transaction::where('device_id', $id)
+                    ->where('billing_status', Transaction::BILLING_RUNNING)
+                    ->latest('id_transaksi')
+                    ->get($selectColumns);
+
+                if ($activeTransactions->isEmpty() && $activeSession) {
+                    $activeTransactions = Transaction::where('id_transaksi', $activeSession->id_transaksi)
+                        ->get($selectColumns);
+                }
+            } else {
+                $activeTransactions = $activeSession
+                    ? Transaction::where('id_transaksi', $activeSession->id_transaksi)->get($selectColumns)
+                    : collect();
+            }
+
+            $activeIds = $activeTransactions->pluck('id_transaksi')->all();
+
+            // Include today's transactions plus any active cross-midnight transactions
+            $allTransactions = Transaction::where('device_id', $id)
+                ->where(function ($query) use ($today, $activeIds) {
+                    $query->whereDate('created_at', $today);
+                    if (!empty($activeIds)) {
+                        $query->orWhereIn('id_transaksi', $activeIds);
+                    }
                 })
-                ->get(['id_transaksi', 'tipe_transaksi', 'status_transaksi', 'waktu_mulai', 'waktu_Selesai', 'created_at']);
+                ->latest('id_transaksi')
+                ->get($selectColumns);
+
+            $effectiveStatus = $activeSession ? 'Digunakan' : $device->status;
+            $hasStatusMismatch = ($activeSession !== null && $device->status !== 'Digunakan')
+                || ($activeSession === null && $device->status === 'Digunakan');
 
             return response()->json([
                 'success' => true,
                 'device_id' => $id,
                 'device_name' => $device->nama,
                 'device_status' => $device->status,
+                'effective_status' => $effectiveStatus,
+                'has_status_mismatch' => $hasStatusMismatch,
                 'today' => $today,
+                'active_session_id' => $activeSession ? $activeSession->id_transaksi : null,
                 'all_transactions_count' => $allTransactions->count(),
                 'active_transactions_count' => $activeTransactions->count(),
                 'all_transactions' => $allTransactions,
                 'active_transactions' => $activeTransactions,
-                'should_show_stop_button' => $device->status === 'Digunakan' || $activeTransactions->count() > 0
+                'should_show_stop_button' => ($effectiveStatus === 'Digunakan') || $activeTransactions->isNotEmpty(),
             ]);
-            
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error: ' . $e->getMessage(),
-                'device_id' => $id
+                'device_id' => $id,
             ]);
         }
     }
@@ -650,27 +585,11 @@ class DeviceController extends Controller
                 ], 404);
             }
 
-            // Find active running transaction for this device, prioritizing running sessions across midnight
-            $activeTransaction = Transaction::where('device_id', $id)
-                ->where(function ($q) {
-                    if (Transaction::hasG2Schema()) {
-                        $q->where('billing_status', Transaction::BILLING_RUNNING);
-                    } else {
-                        $q->where('status_transaksi', '!=', 'selesai');
-                    }
-                })
-                ->latest('id_transaksi')
-                ->first();
+            $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
 
-            // Fallback for legacy records created today if billing_status was not set
-            if (!$activeTransaction) {
-                $today = Carbon::now()->toDateString();
-                $activeTransaction = Transaction::where('device_id', $id)
-                    ->whereDate('created_at', $today)
-                    ->where('status_transaksi', '!=', 'selesai')
-                    ->latest('id_transaksi')
-                    ->first();
-            }
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $activeTransaction = $billingService->resolveActiveSessionForDevice((int) $id, $now);
 
             if (!$activeTransaction) {
                 return response()->json([
@@ -690,8 +609,6 @@ class DeviceController extends Controller
             $previousStatus = $device->status;
 
             // Delegate core session stop and outbox intent creation to BillingService
-            /** @var \App\Services\BillingService $billingService */
-            $billingService = app(\App\Services\BillingService::class);
             $stoppedTx = $billingService->stopSession($activeTransaction->id_transaksi, 'cashier_stop');
 
             return response()->json([
@@ -790,74 +707,65 @@ class DeviceController extends Controller
         ]);
     }
 
+    /**
+     * Legacy station status release endpoint.
+     * Refuses to free a station or terminate an active RUNNING session without a legitimate stop/end flow.
+     */
     public function updateStatus($id)
     {
-        $device = Device::find($id);
-        if ($device) {
-            // Check if status is being changed to 'tersedia' and there's an active transaction
-            if ($device->status !== 'Tersedia') {
-                $activeTransaction = Transaction::where('device_id', $id)
-                    ->where('status_transaksi', 'berjalan')
-                    ->latest()
-                    ->first();
+        $user = auth()->user();
+        $role = strtolower((string) ($user->role ?? ''));
+        if (!$user || !in_array($role, ['admin', 'kasir'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
 
-                if ($activeTransaction) {
-                    // End the active transaction and stop the timer
-                    $waktuSelesai = Carbon::now();
-                    $totalFnb = $activeTransaction->getFnbTotalAttribute();
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
 
-                    if ($activeTransaction->tipe_transaksi === 'postpaid') {
-                        // Calculate duration and cost for postpaid transactions using authoritative timestamps
-                        $startedAt = $activeTransaction->getEffectiveStartTime();
-                        $durationMinutes = max(1, (int) $startedAt->diffInMinutes($waktuSelesai, false));
+        if (Transaction::hasG2Schema()) {
+            try {
+                $billingService->evaluateExpiration($now, (int) $id);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Evaluate expiration in updateStatus failed: ' . $e->getMessage());
+            }
+        }
 
-                        if ($durationMinutes < 0) {
-                            $durationMinutes = 24 * 60 + $durationMinutes;
-                        }
-
-                        $playstation = $activeTransaction->playstation ?: ($activeTransaction->device ? $activeTransaction->device->playstation : null);
-                        /** @var \App\Services\BillingService $billingService */
-                        $billingService = app(\App\Services\BillingService::class);
-                        $totalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
-                        $roundedTotalPs = $billingService->applyLostTimeRounding($totalPs);
-                        $total = $roundedTotalPs + $totalFnb;
-
-                        $hours = floor($durationMinutes / 60);
-                        $minutes = $durationMinutes % 60;
-                        $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
-
-                        $payload = [
-                            'waktu_Selesai' => $waktuSelesai->format('H:i:s'),
-                            'jam_main' => $formattedDuration,
-                            'total' => $total,
-                            'status_transaksi' => 'selesai',
-                            'payment_status' => $activeTransaction->payment_status === 'paid' ? 'paid' : 'unpaid'
-                        ];
-                        if (Transaction::hasG2Schema()) {
-                            $payload['ended_at'] = $waktuSelesai;
-                            $payload['billing_status'] = Transaction::BILLING_COMPLETED;
-                        }
-                        $activeTransaction->update($payload);
-                    } else {
-                        // For prepaid and custom_package, mark as finished
-                        $payload = [
-                            'waktu_Selesai' => $waktuSelesai->format('H:i'),
-                            'status_transaksi' => 'selesai',
-                            'payment_status' => $activeTransaction->payment_status === 'paid' ? 'paid' : 'unpaid'
-                        ];
-                        if (Transaction::hasG2Schema()) {
-                            $payload['ended_at'] = $waktuSelesai;
-                            $payload['billing_status'] = Transaction::BILLING_COMPLETED;
-                        }
-                        $activeTransaction->update($payload);
-                    }
-                }
+        return DB::transaction(function () use ($id, $now, $billingService) {
+            $device = Device::where('id', $id)->lockForUpdate()->first();
+            if (!$device) {
+                return response()->json(['success' => false, 'message' => 'Perangkat tidak ditemukan'], 404);
             }
 
-            $device->update(['status' => 'Tersedia']);
-            return response()->json(['success' => true]);
-        }
-        return response()->json(['success' => false], 404);
+            $activeSession = $billingService->resolveActiveSessionForDevice((int) $device->id, $now);
+            if ($activeSession) {
+                if ($device->status !== 'Digunakan') {
+                    $device->update(['status' => 'Digunakan']);
+                }
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stasiun masih memiliki sesi billing aktif. Gunakan tombol Berhenti atau Selesai yang sah untuk mengakhiri sesi.',
+                    'device_id' => $device->id,
+                    'device_status' => 'Digunakan',
+                    'transaction_id' => $activeSession->id_transaksi,
+                ], 409);
+            }
+
+            if ($device->status !== 'Tersedia') {
+                $device->update(['status' => 'Tersedia']);
+            }
+
+            return response()->json([
+                'success' => true,
+                'device_id' => $device->id,
+                'new_status' => 'Tersedia',
+            ]);
+        });
     }
 
     /**
@@ -883,7 +791,7 @@ class DeviceController extends Controller
      */
     public function getTimerSyncData()
     {
-        $now = Carbon::now();
+        $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
 
         // Autonomous Expiration & Hardware Automation Heartbeat:
         // Evaluates expired sessions and dispatches pending hardware intents smoothly
@@ -912,79 +820,44 @@ class DeviceController extends Controller
         }
 
         $devices = Device::all();
+        $hasG2 = Transaction::hasG2Schema();
+        $activeSessions = app(\App\Services\BillingService::class)->resolveActiveSessionsByDevice(
+            $devices->pluck('id'),
+            $now,
+            [],
+            $devices
+        );
+
         $deviceData = [];
 
         foreach ($devices as $dev) {
+            $activeTx = $activeSessions->get((int) $dev->id);
+            $effectiveStatus = $activeTx ? 'Digunakan' : $dev->status;
             $txInfo = null;
 
-            // Only evaluate active transaction if the device is currently in use
-            if ($dev->status === 'Digunakan') {
-                $txQuery = Transaction::where('device_id', $dev->id);
-                if (Transaction::hasG2Schema()) {
-                    $txQuery->where('billing_status', Transaction::BILLING_RUNNING);
-                } else {
-                    $txQuery->where('status_transaksi', '!=', 'selesai');
-                }
-                $activeTx = $txQuery->latest('id_transaksi')->first();
+            if ($activeTx) {
+                $started = $activeTx->getEffectiveStartTime();
+                $expiresAt = $activeTx->resolveLegacyExpiresAt();
+                $remainingSeconds = $expiresAt ? max(0, $now->diffInSeconds($expiresAt, false)) : 0;
+                $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
 
-                // Fallback for occupied devices without BILLING_RUNNING (e.g. legacy or uncompleted prepaid sessions)
-                if (!$activeTx) {
-                    $today = $now->toDateString();
-                    $activeTx = Transaction::where('device_id', $dev->id)
-                        ->whereDate('created_at', $today)
-                        ->latest('id_transaksi')
-                        ->get()
-                        ->first(function ($tx) use ($now) {
-                            if ($tx->status_transaksi === 'berjalan') {
-                                return true;
-                            }
-                            if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)
-                                && !in_array($tx->status_transaksi, ['selesai', 'draft'], true)
-                                && $tx->waktu_Selesai) {
-                                $txDate = $tx->created_at->format('Y-m-d');
-                                $startDt = Carbon::parse($txDate . ' ' . $tx->waktu_mulai);
-                                $endDt = Carbon::parse($txDate . ' ' . $tx->waktu_Selesai);
-                                if ($endDt < $startDt) {
-                                    $endDt->addDay();
-                                }
-                                $targetExpiresAt = $tx->expires_at ?: $endDt;
-                                return $targetExpiresAt > $now;
-                            }
-                            return false;
-                        });
-                }
-
-                if ($activeTx) {
-                    $hasG2 = Transaction::hasG2Schema();
-                    $remainingSeconds = 0;
-                    if ($hasG2 && $activeTx->expires_at) {
-                        $remainingSeconds = max(0, $now->diffInSeconds($activeTx->expires_at, false));
-                    }
-
-                    $elapsedSeconds = 0;
-                    $started = ($hasG2 && $activeTx->started_at) ? $activeTx->started_at : Carbon::parse($activeTx->created_at->toDateString() . ' ' . $activeTx->waktu_mulai);
-                    if ($started) {
-                        $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
-                    }
-
-                    $txInfo = [
-                        'id_transaksi' => $activeTx->id_transaksi,
-                        'nama' => $activeTx->nama,
-                        'tipe_transaksi' => $activeTx->tipe_transaksi,
-                        'billing_status' => $hasG2 ? $activeTx->billing_status : 'RUNNING',
-                        'started_at' => ($hasG2 && $activeTx->started_at) ? $activeTx->started_at->toIso8601String() : null,
-                        'expires_at' => ($hasG2 && $activeTx->expires_at) ? $activeTx->expires_at->toIso8601String() : null,
-                        'remaining_seconds' => $remainingSeconds,
-                        'elapsed_seconds' => $elapsedSeconds,
-                        'is_expired' => ($hasG2 && $activeTx->expires_at) ? $now->greaterThanOrEqualTo($activeTx->expires_at) : false,
-                    ];
-                }
+                $txInfo = [
+                    'id_transaksi' => $activeTx->id_transaksi,
+                    'nama' => $activeTx->nama,
+                    'tipe_transaksi' => $activeTx->tipe_transaksi,
+                    'billing_status' => $hasG2 ? ($activeTx->billing_status ?: 'RUNNING') : 'RUNNING',
+                    'started_at' => $started->toIso8601String(),
+                    'expires_at' => $expiresAt ? $expiresAt->toIso8601String() : null,
+                    'remaining_seconds' => $remainingSeconds,
+                    'elapsed_seconds' => $elapsedSeconds,
+                    'is_expired' => $expiresAt ? $now->greaterThanOrEqualTo($expiresAt) : false,
+                ];
             }
 
             $deviceData[] = [
                 'id' => $dev->id,
                 'nama' => $dev->nama,
-                'status' => $dev->status,
+                'status' => $effectiveStatus,
                 'transaction' => $txInfo,
             ];
         }

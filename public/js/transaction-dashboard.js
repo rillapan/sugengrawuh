@@ -130,7 +130,12 @@
             return;
         }
 
-        var clientClockOffset = Date.now() - Number(bootstrap.serverTimestamp || Date.now());
+        var serverBootstrapTs = Number(bootstrap.serverTimestamp);
+        var clientClockOffset = (Number.isFinite(serverBootstrapTs) && serverBootstrapTs > 0)
+            ? (Date.now() - serverBootstrapTs)
+            : (bootstrap.serverNow && !Number.isNaN(Date.parse(bootstrap.serverNow))
+                ? (Date.now() - Date.parse(bootstrap.serverNow))
+                : 0);
         var csrfToken = bootstrap.csrfToken ||
             (document.querySelector('meta[name="csrf-token"]') && document.querySelector('meta[name="csrf-token"]').getAttribute('content')) ||
             '';
@@ -435,6 +440,8 @@
         }
 
         function initTimersAndPolling() {
+            var RELOAD_COOLDOWN_MS = 10000;
+            var RELOAD_GUARD_KEY = 'pos_timer_reload_guard';
             var isSyncInFlight = false;
             var expiredSyncTxIds = {};
             var expiredSyncDebounce = null;
@@ -451,12 +458,19 @@
                             return;
                         }
                         var data = res.data;
-                        if (data.server_timestamp) {
-                            clientClockOffset = Date.now() - Number(data.server_timestamp);
+                        var serverTs = Number(data.server_timestamp);
+                        if (Number.isFinite(serverTs) && serverTs > 0) {
+                            clientClockOffset = Date.now() - serverTs;
+                        } else if (data.server_now) {
+                            var parsedServerNow = Date.parse(data.server_now);
+                            if (!Number.isNaN(parsedServerNow)) {
+                                clientClockOffset = Date.now() - parsedServerNow;
+                            }
                         }
 
                         var serverDevices = Array.isArray(data.devices) ? data.devices : [];
                         var statusChanged = false;
+                        var mismatchParts = [];
 
                         for (var i = 0; i < serverDevices.length; i++) {
                             var dev = serverDevices[i];
@@ -465,26 +479,60 @@
                                 continue;
                             }
                             var domIsUsed = card.classList.contains('is-used');
-                            var serverIsUsed = dev.status === 'Digunakan';
+                            var serverTxId = (dev.transaction && dev.transaction.id_transaksi)
+                                ? Number(dev.transaction.id_transaksi)
+                                : null;
+                            var serverIsUsed = (dev.status === 'Digunakan') || (serverTxId !== null);
 
                             var timerEl = card.querySelector('.js-pos-timer');
                             var domTxId = (domIsUsed && timerEl && timerEl.dataset.txId)
                                 ? Number(timerEl.dataset.txId)
                                 : null;
-                            var serverTxId = (serverIsUsed && dev.transaction && dev.transaction.id_transaksi)
-                                ? Number(dev.transaction.id_transaksi)
-                                : null;
 
                             if (domIsUsed !== serverIsUsed || domTxId !== serverTxId) {
                                 statusChanged = true;
-                                break;
+                                mismatchParts.push(
+                                    String(dev.id) + ':' +
+                                    (domIsUsed ? '1' : '0') + '/' + (domTxId !== null ? domTxId : '') + '->' +
+                                    (serverIsUsed ? '1' : '0') + '/' + (serverTxId !== null ? serverTxId : '')
+                                );
                             }
                         }
 
-                        if (statusChanged &&
-                            !document.querySelector('dialog[open]') &&
+                        if (!statusChanged) {
+                            try {
+                                window.sessionStorage.removeItem(RELOAD_GUARD_KEY);
+                            } catch (e) {}
+                            return;
+                        }
+
+                        if (!document.querySelector('dialog[open]') &&
                             !document.querySelector('.modal.show')) {
-                            window.location.reload();
+                            var signature = mismatchParts.join('|');
+                            var shouldReload = true;
+                            try {
+                                var rawGuard = window.sessionStorage.getItem(RELOAD_GUARD_KEY);
+                                if (rawGuard) {
+                                    var parsedGuard = JSON.parse(rawGuard);
+                                    if (parsedGuard &&
+                                        parsedGuard.sig === signature &&
+                                        (Date.now() - Number(parsedGuard.ts || 0)) < RELOAD_COOLDOWN_MS) {
+                                        shouldReload = false;
+                                    }
+                                }
+                                if (shouldReload) {
+                                    window.sessionStorage.setItem(RELOAD_GUARD_KEY, JSON.stringify({
+                                        sig: signature,
+                                        ts: Date.now()
+                                    }));
+                                }
+                            } catch (e) {
+                                // sessionStorage unavailable; proceed with reload
+                            }
+
+                            if (shouldReload) {
+                                window.location.reload();
+                            }
                         }
                     })
                     .catch(function () {

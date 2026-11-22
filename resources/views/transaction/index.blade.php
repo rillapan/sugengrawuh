@@ -6,7 +6,7 @@
         $canOperate = auth()->user()->isAdmin() || auth()->user()->isKasir();
         $isAdmin = auth()->user()->isAdmin();
 
-        $devicesPayload = $devices->map(function ($device) use ($stationNumbers) {
+        $devicesPayload = $devices->map(function ($device) use ($stationNumbers, $activeTransactions) {
             $psList = ($device->playstations && $device->playstations->isNotEmpty())
                 ? $device->playstations
                 : ($device->playstation ? collect([$device->playstation]) : collect());
@@ -24,7 +24,7 @@
                 'id' => (int) $device->id,
                 'station_number' => $stationNumbers[$device->id] ?? null,
                 'nama' => (string) $device->nama,
-                'status' => (string) $device->status,
+                'status' => $activeTransactions->has((int) $device->id) ? 'Digunakan' : (string) $device->status,
                 'playstation_id' => $device->playstation_id ? (int) $device->playstation_id : null,
                 'default_location_id' => $defaultLocation ? (int) $defaultLocation->id : null,
                 'playstations' => $psList->map(function ($ps) {
@@ -185,10 +185,11 @@
                 'payment_method' => $tx->payment_method ? (string) $tx->payment_method : null,
                 'waktu_mulai' => (string) $tx->waktu_mulai,
                 'waktu_Selesai' => $tx->waktu_Selesai ? (string) $tx->waktu_Selesai : null,
-                'started_at' => optional($tx->started_at)->toIso8601String()
-                    ?: ($tx->created_at ? $tx->created_at->toDateString() . 'T' . (strlen((string) $tx->waktu_mulai) === 5 ? $tx->waktu_mulai . ':00' : $tx->waktu_mulai) : null),
-                'expires_at' => optional($tx->expires_at)->toIso8601String(),
-                'lost_time_start' => optional($tx->lost_time_start)->toIso8601String(),
+                'started_at' => $tx->getEffectiveStartTime()->toIso8601String(),
+                'expires_at' => optional($tx->resolveLegacyExpiresAt())->toIso8601String(),
+                'lost_time_start' => $tx->lost_time_start
+                    ? $tx->lost_time_start->copy()->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toIso8601String()
+                    : $tx->getEffectiveStartTime()->toIso8601String(),
                 'display_duration' => (string) $tx->display_duration,
                 'harga' => (float) ($tx->harga ?? 0),
                 'diskon' => (float) ($tx->diskon ?? 0),

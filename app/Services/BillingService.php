@@ -14,6 +14,7 @@ use App\Models\TvAlertEvent;
 use App\Services\Hardware\Automation\AutomationIntentService;
 use App\Services\Hardware\TvAlertService;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -24,6 +25,159 @@ class BillingService
     public function __construct(?AutomationIntentService $intentService = null)
     {
         $this->intentService = $intentService ?? app(AutomationIntentService::class);
+    }
+
+    /**
+     * Resolve currently active billing sessions keyed by device_id (int => Transaction).
+     * Authoritatively prefers G2 RUNNING sessions, with cross-midnight-safe legacy fallback.
+     *
+     * @param Collection<int, int|string>|null $deviceIds
+     * @param Carbon|null $now
+     * @param array<int, string> $relations
+     * @param Collection<int, Device>|null $devices
+     * @return Collection<int, Transaction>
+     */
+    public function resolveActiveSessionsByDevice(
+        ?Collection $deviceIds = null,
+        ?Carbon $now = null,
+        array $relations = [],
+        ?Collection $devices = null
+    ): Collection {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+
+        $normalizedIds = null;
+        if ($deviceIds !== null) {
+            $normalizedIds = $deviceIds
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn (int $id) => $id > 0)
+                ->unique()
+                ->values();
+
+            if ($normalizedIds->isEmpty()) {
+                return collect();
+            }
+        }
+
+        $active = collect();
+
+        if (Transaction::hasG2Schema()) {
+            // Step A: Authoritative G2 RUNNING query
+            $runningQuery = Transaction::with($relations)
+                ->where('billing_status', Transaction::BILLING_RUNNING)
+                ->whereNotNull('device_id')
+                ->latest('id_transaksi');
+
+            if ($normalizedIds !== null) {
+                $runningQuery->whereIn('device_id', $normalizedIds);
+            }
+
+            $runningGroups = $runningQuery->get()->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+
+            foreach ($runningGroups as $devId => $group) {
+                $devId = (int) $devId;
+                if ($devId <= 0) {
+                    continue;
+                }
+
+                if ($group->count() > 1) {
+                    Log::warning("BillingService: Multiple RUNNING sessions detected for device_id={$devId}", [
+                        'device_id' => $devId,
+                        'transaction_ids' => $group->pluck('id_transaksi')->all(),
+                    ]);
+                }
+
+                $active->put($devId, $group->first());
+            }
+
+            // Step B (G2 schema present): Legacy fallback ONLY for occupied devices without a G2 RUNNING session
+            if ($devices !== null) {
+                $fallbackDeviceIds = $devices
+                    ->filter(fn ($d) => $d->status === 'Digunakan' && !$active->has((int) $d->id))
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id);
+
+                if ($normalizedIds !== null) {
+                    $fallbackDeviceIds = $fallbackDeviceIds->intersect($normalizedIds);
+                }
+
+                $fallbackDeviceIds = $fallbackDeviceIds->unique()->values();
+            } else {
+                $deviceQuery = Device::where('status', 'Digunakan');
+                if ($normalizedIds !== null) {
+                    $deviceQuery->whereIn('id', $normalizedIds);
+                }
+                if ($active->isNotEmpty()) {
+                    $deviceQuery->whereNotIn('id', $active->keys()->all());
+                }
+                $fallbackDeviceIds = $deviceQuery->pluck('id')->map(fn ($id) => (int) $id)->values();
+            }
+
+            if ($fallbackDeviceIds->isNotEmpty()) {
+                $legacyGroups = Transaction::with($relations)
+                    ->whereIn('device_id', $fallbackDeviceIds)
+                    ->whereNull('billing_status')
+                    ->where(function ($q) {
+                        $q->whereNull('status_transaksi')
+                            ->orWhereNotIn('status_transaksi', ['selesai', 'draft']);
+                    })
+                    ->latest('id_transaksi')
+                    ->get()
+                    ->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+
+                foreach ($legacyGroups as $devId => $group) {
+                    $devId = (int) $devId;
+                    $matched = $group->first(fn (Transaction $tx) => $tx->isLegacyActiveSession($now));
+                    if ($matched) {
+                        $active->put($devId, $matched);
+                    }
+                }
+            }
+
+            return $active;
+        }
+
+        // Step B (Non-G2 schema): Evaluate all non-finished, non-draft sessions without created_at today filter
+        $legacyQuery = Transaction::with($relations)
+            ->whereNotNull('device_id')
+            ->where(function ($q) {
+                $q->whereNull('status_transaksi')
+                    ->orWhereNotIn('status_transaksi', ['selesai', 'draft']);
+            })
+            ->latest('id_transaksi');
+
+        if ($normalizedIds !== null) {
+            $legacyQuery->whereIn('device_id', $normalizedIds);
+        }
+
+        $legacyGroups = $legacyQuery->get()->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+
+        foreach ($legacyGroups as $devId => $group) {
+            $devId = (int) $devId;
+            if ($devId <= 0) {
+                continue;
+            }
+
+            $matched = $group->first(fn (Transaction $tx) => $tx->isLegacyActiveSession($now));
+            if ($matched) {
+                $active->put($devId, $matched);
+            }
+        }
+
+        return $active;
+    }
+
+    /**
+     * Resolve the single active billing session for a specific device.
+     *
+     * @param int $deviceId
+     * @param Carbon|null $now
+     * @param array<int, string> $relations
+     * @return Transaction|null
+     */
+    public function resolveActiveSessionForDevice(int $deviceId, ?Carbon $now = null, array $relations = []): ?Transaction
+    {
+        return $this->resolveActiveSessionsByDevice(collect([$deviceId]), $now, $relations)->get($deviceId);
     }
 
     /**
@@ -439,7 +593,8 @@ class BillingService
                 return $transaction;
             }
 
-            $now = Carbon::now();
+            $tz = config('app.timezone', 'Asia/Jakarta');
+            $now = Carbon::now($tz);
             $endedAt = $now;
             $fnbTotal = (float) $transaction->getFnbTotalAttribute() + (float) $transaction->getUnpaidFnbOrderTotalAttribute();
             $updateData = [
@@ -450,7 +605,7 @@ class BillingService
             ];
 
             if ($transaction->tipe_transaksi === 'postpaid') {
-                $startedAt = $transaction->started_at ?? Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
+                $startedAt = $transaction->getEffectiveStartTime();
                 $durationMinutes = max(1, $startedAt->diffInMinutes($endedAt));
 
                 $playstation = $transaction->playstation ?: ($transaction->device ? $transaction->device->playstation : null);
@@ -521,14 +676,16 @@ class BillingService
     }
 
     /**
-     * Evaluate expired sessions (called by background worker or ticker).
+     * Evaluate expired sessions (called by background worker, ticker, or device-scoped store check).
      *
      * @param Carbon|null $now
+     * @param int|null $deviceId Optional station ID to scope evaluation (avoids cross-device lock contention)
      * @return array
      */
-    public function evaluateExpiration(?Carbon $now = null): array
+    public function evaluateExpiration(?Carbon $now = null, ?int $deviceId = null): array
     {
-        $now = $now ?: Carbon::now();
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
 
         if (!Transaction::hasG2Schema()) {
             return [
@@ -539,10 +696,15 @@ class BillingService
             ];
         }
 
-        $expiredSessions = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
+        $expiredQuery = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
             ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', $now)
-            ->get();
+            ->where('expires_at', '<=', $now);
+
+        if ($deviceId !== null) {
+            $expiredQuery->where('device_id', $deviceId);
+        }
+
+        $expiredSessions = $expiredQuery->get();
 
         $processed = [];
 
@@ -630,7 +792,8 @@ class BillingService
      */
     public function reconcileSessions(?Carbon $now = null): array
     {
-        $now = $now ?: Carbon::now();
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
         $report = [
             'expired_processed' => 0,
             'postpaid_survived' => 0,
@@ -646,18 +809,31 @@ class BillingService
         $expirationResult = $this->evaluateExpiration($now);
         $report['expired_processed'] = $expirationResult['count'];
 
-        // 2. Audit running postpaid sessions (must survive restart without being terminated)
+        // 2. Audit running sessions (postpaid must survive restart; log duplicate RUNNING sessions per device)
+        $runningByDevice = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
+            ->whereNotNull('device_id')
+            ->latest('id_transaksi')
+            ->get()
+            ->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+
+        foreach ($runningByDevice as $devId => $group) {
+            if ($group->count() > 1) {
+                Log::warning("BillingService [Reconcile]: Multiple RUNNING sessions detected for device_id={$devId}", [
+                    'device_id' => (int) $devId,
+                    'transaction_ids' => $group->pluck('id_transaksi')->all(),
+                ]);
+            }
+        }
+
         $runningPostpaid = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
             ->where('tipe_transaksi', 'postpaid')
             ->count();
         $report['postpaid_survived'] = $runningPostpaid;
 
-        // 3. Heal station availability discrepancies
+        // 3. Heal station availability discrepancies idempotently
         $allDevices = Device::all();
         foreach ($allDevices as $device) {
-            $hasActiveSession = Transaction::where('device_id', $device->id)
-                ->where('billing_status', Transaction::BILLING_RUNNING)
-                ->exists();
+            $hasActiveSession = $runningByDevice->has((int) $device->id);
 
             if (!$hasActiveSession && $device->status === 'Digunakan') {
                 $device->update(['status' => 'Tersedia']);
