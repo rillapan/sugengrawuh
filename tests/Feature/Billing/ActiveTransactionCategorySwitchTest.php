@@ -2306,7 +2306,7 @@ class ActiveTransactionCategorySwitchTest extends TestCase
             'id' => $invLockedTx->id_transaksi,
             'fnbId' => $fnbSnack->id,
         ]))->assertStatus(403);
-        $this->actingAs($this->kasir)->delete(route('transaction.destroy', $invLockedTx->id_transaksi))
+        $this->actingAs($this->admin)->delete(route('transaction.destroy', $invLockedTx->id_transaksi))
             ->assertRedirect('transaction')
             ->assertSessionHas('gagal');
         $this->assertDatabaseHas('transactions', ['id_transaksi' => $invLockedTx->id_transaksi]);
