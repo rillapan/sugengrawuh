@@ -42,10 +42,38 @@
                         $initialPreview = $initialPreview ?? [];
                         $currentCatName = $currentPlaystation->nama ?? ($transaction->playstation->nama ?? 'Tidak Tersedia');
                         $currentCatRate = (float) ($currentPlaystation->harga ?? $transaction->harga ?? 0);
-                        $activeDeviceCategories = $deviceCategoriesMap[(string) $transaction->device_id] ?? [];
-                        $selectedPsId = old('playstation_id', $currentCategoryUnavailable ? '' : ($transaction->playstation_id ?: ($currentPlaystation->id ?? '')));
-                        $selectedPricingMode = old('pricing_mode', 'from_now');
+                        $selectedDeviceId = (string) old('device_id', $transaction->device_id);
+                        $isOriginalDeviceSelected = ($selectedDeviceId === (string) $transaction->device_id);
+                        $activeDeviceCategories = $deviceCategoriesMap[$selectedDeviceId] ?? [];
+                        $hasOldPsId = session()->hasOldInput('playstation_id') || array_key_exists('playstation_id', old());
+                        $defaultPsId = $isOriginalDeviceSelected
+                            ? ($currentCategoryUnavailable ? '' : ($transaction->playstation_id ?: ($currentPlaystation->id ?? '')))
+                            : ($activeDeviceCategories[0]['id'] ?? '');
+                        $selectedPsId = $hasOldPsId ? old('playstation_id') : $defaultPsId;
+                        $selectedPsInActiveDevice = $selectedPsId !== '' && $selectedPsId !== null
+                            && collect($activeDeviceCategories)->contains(fn ($c) => (int) $c['id'] === (int) $selectedPsId);
+                        $selectedCategoryUnavailable = $isOriginalDeviceSelected
+                            ? $currentCategoryUnavailable
+                            : (empty($activeDeviceCategories) || ($hasOldPsId && !$selectedPsInActiveDevice));
+                        $selectedPricingMode = in_array(old('pricing_mode'), ['from_now', 'correction'], true)
+                            ? old('pricing_mode')
+                            : 'from_now';
                         $selectedDurationSeconds = (int) old('duration_seconds', $currentDurationSeconds ?: 3600);
+                        if ((old('duration_seconds') === null || old('duration_seconds') === '') && old('jam_main') !== null && old('jam_main') !== '') {
+                            $parsedOldDuration = app(\App\Services\BillingService::class)->parsePrepaidDurationSeconds(old('jam_main'), null);
+                            if ($parsedOldDuration !== null && $parsedOldDuration > 0) {
+                                $selectedDurationSeconds = $parsedOldDuration;
+                            }
+                        }
+                        $oldInputDiffers = (
+                            (old('device_id') !== null && (string) old('device_id') !== (string) $transaction->device_id)
+                            || ($hasOldPsId && (string) ($selectedPsId ?? '') !== (string) ($transaction->playstation_id ?? ''))
+                            || (old('pricing_mode') !== null && (string) old('pricing_mode') !== 'from_now')
+                            || (old('tipe_transaksi') !== null && (string) old('tipe_transaksi') !== (string) $transaction->tipe_transaksi)
+                            || (old('duration_seconds') !== null && (int) old('duration_seconds') !== (int) ($currentDurationSeconds ?? 0))
+                            || (old('jam_main') !== null && (string) old('jam_main') !== (string) ($transaction->jam_main ?? ''))
+                            || (old('custom_package_id') !== null && (string) old('custom_package_id') !== (string) ($transaction->custom_package_id ?? ''))
+                        );
                     @endphp
 
                     @if ($isSessionEnded)
@@ -109,7 +137,7 @@
 
                         <div class="form-group mb-3">
                             <label for="tipe_transaksi" class="form-label">Tipe Transaksi <span class="text-danger">*</span></label>
-                            <select class="form-control" id="tipe_transaksi" name="tipe_transaksi" required>
+                            <select class="form-control" id="tipe_transaksi" name="tipe_transaksi" required {{ $isSessionEnded ? 'disabled' : '' }}>
                                 <option value="postpaid" {{ old('tipe_transaksi', $transaction->tipe_transaksi) === 'postpaid' ? 'selected' : '' }}>Lost Time</option>
                                 <option value="prepaid" {{ old('tipe_transaksi', $transaction->tipe_transaksi) === 'prepaid' ? 'selected' : '' }}>Timer</option>
                                 <option value="custom_package" {{ old('tipe_transaksi', $transaction->tipe_transaksi) === 'custom_package' ? 'selected' : '' }}>Custom Paket</option>
@@ -159,7 +187,7 @@
 
                         <div class="form-group mb-3">
                             <label for="device_id" class="form-label">Perangkat <span class="text-danger">*</span></label>
-                            <select class="form-control" id="device_id" name="device_id" required>
+                            <select class="form-control" id="device_id" name="device_id" required {{ $isSessionEnded ? 'disabled' : '' }}>
                                 @foreach($devices as $device)
                                     @php
                                         $devCats = $deviceCategoriesMap[(string) $device->id] ?? [];
@@ -167,7 +195,7 @@
                                         $defaultCatId = !empty($devCats) ? $devCats[0]['id'] : ($device->playstation_id ?? '');
                                     @endphp
                                     <option value="{{ $device->id }}" 
-                                        {{ (int) old('device_id', $transaction->device_id) === (int) $device->id ? 'selected' : '' }}
+                                        {{ (int) $selectedDeviceId === (int) $device->id ? 'selected' : '' }}
                                         data-harga="{{ $defaultCatHarga }}"
                                         data-playstation-id="{{ $defaultCatId }}">
                                         {{ $device->nama }} — {{ $device->playstation_names ?: 'N/A' }}
@@ -183,21 +211,26 @@
                         </div>
 
                         <!-- Kategori Permainan -->
+                        @php
+                            $psDescribedBy = trim(($errors->has('playstation_id') ? 'playstation_id_error ' : '') . ($currentCategoryUnavailable ? 'category_unavailable_alert' : ''));
+                        @endphp
                         <div class="form-group mb-3" id="playstation_category_container" style="display: {{ old('tipe_transaksi', $transaction->tipe_transaksi) === 'custom_package' ? 'none' : 'block' }}">
                             <label for="playstation_id" class="form-label">Kategori Permainan <span class="text-danger">*</span></label>
                             <select class="form-control @error('playstation_id') is-invalid @enderror"
                                     id="playstation_id"
                                     name="playstation_id"
-                                    @if($currentCategoryUnavailable || $errors->has('playstation_id')) aria-invalid="true" aria-describedby="playstation_id_error" @endif>
-                                @if($currentCategoryUnavailable)
-                                    <option value="" {{ $selectedPsId === '' || $selectedPsId === null ? 'selected' : '' }}>-- Pilih Kategori Permainan Valid --</option>
+                                    {{ $isSessionEnded ? 'disabled' : '' }}
+                                    @if($selectedCategoryUnavailable || $errors->has('playstation_id')) aria-invalid="true" @endif
+                                    @if($psDescribedBy !== '') aria-describedby="{{ $psDescribedBy }}" @endif>
+                                @if($selectedCategoryUnavailable || ($hasOldPsId && !$selectedPsInActiveDevice))
+                                    <option value="" {{ !$selectedPsInActiveDevice ? 'selected' : '' }}>-- Pilih Kategori Permainan Valid --</option>
                                 @endif
                                 @foreach($activeDeviceCategories as $idx => $cat)
                                     @php
                                         $isCatSelected = false;
                                         if ($selectedPsId !== '' && $selectedPsId !== null) {
                                             $isCatSelected = ((int) $selectedPsId === (int) $cat['id']);
-                                        } elseif (!$currentCategoryUnavailable && $idx === 0) {
+                                        } elseif (!$selectedCategoryUnavailable && !$hasOldPsId && $idx === 0) {
                                             $isCatSelected = true;
                                         }
                                     @endphp
@@ -224,6 +257,7 @@
                                        id="pricing_mode_from_now"
                                        value="from_now"
                                        style="accent-color: #0d6efd;"
+                                       {{ $isSessionEnded ? 'disabled' : '' }}
                                        {{ $selectedPricingMode === 'from_now' ? 'checked' : '' }}>
                                 <label class="form-check-label" for="pricing_mode_from_now">
                                     <strong>Mulai Sekarang (Pindah Permainan Saat Berjalan)</strong>
@@ -237,6 +271,7 @@
                                        id="pricing_mode_correction"
                                        value="correction"
                                        style="accent-color: #0d6efd;"
+                                       {{ $isSessionEnded ? 'disabled' : '' }}
                                        {{ $selectedPricingMode === 'correction' ? 'checked' : '' }}>
                                 <label class="form-check-label" for="pricing_mode_correction">
                                     <strong>Koreksi dari Awal (Koreksi Kategori)</strong>
@@ -249,7 +284,11 @@
                         <div id="custom_package_container" style="display: {{ old('tipe_transaksi', $transaction->tipe_transaksi) === 'custom_package' ? 'block' : 'none' }}">
                             <div class="form-group mb-3">
                                 <label for="custom_package_id" class="form-label">Pilih Custom Paket <span class="text-danger">*</span></label>
-                                <select class="form-control" id="custom_package_id" name="custom_package_id">
+                                <select class="form-control @error('custom_package_id') is-invalid @enderror"
+                                        id="custom_package_id"
+                                        name="custom_package_id"
+                                        {{ $isSessionEnded ? 'disabled' : '' }}
+                                        @if($errors->has('custom_package_id')) aria-invalid="true" aria-describedby="custom_package_id_error" @endif>
                                     <option value="">-- Pilih Custom Paket --</option>
                                     @foreach($customPackages as $package)
                                         <option value="{{ $package->id }}" 
@@ -262,6 +301,9 @@
                                         </option>
                                     @endforeach
                                 </select>
+                                @error('custom_package_id')
+                                    <div class="invalid-feedback d-block" id="custom_package_id_error" role="alert">{{ $message }}</div>
+                                @enderror
                             </div>
                         </div>
 
@@ -308,7 +350,11 @@
                                     }
                                     ksort($durationOptionsBySec);
                                 @endphp
-                                <select class="form-control" id="jam_main" name="jam_main">
+                                <select class="form-control {{ $errors->has('duration_seconds') || $errors->has('jam_main') ? 'is-invalid' : '' }}"
+                                        id="jam_main"
+                                        name="jam_main"
+                                        {{ $isSessionEnded ? 'disabled' : '' }}
+                                        @if($errors->has('duration_seconds') || $errors->has('jam_main')) aria-invalid="true" aria-describedby="duration_seconds_error" @endif>
                                     @foreach($durationOptionsBySec as $dSec => $opt)
                                         <option value="{{ $opt['value'] }}"
                                                 data-duration-seconds="{{ $opt['seconds'] }}"
@@ -317,6 +363,9 @@
                                         </option>
                                     @endforeach
                                 </select>
+                                @if($errors->has('duration_seconds') || $errors->has('jam_main'))
+                                    <div class="invalid-feedback d-block" id="duration_seconds_error" role="alert">{{ $errors->first('duration_seconds') ?: $errors->first('jam_main') }}</div>
+                                @endif
                                 <small class="text-muted">Mengubah jam main akan menyesuaikan harga secara otomatis. Mengubah kategori saja tidak akan mengubah durasi sesi.</small>
                             </div>
 
@@ -555,7 +604,7 @@
                         </div>
 
                         <div class="form-group mt-4">
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" class="btn btn-primary" {{ $isSessionEnded ? 'disabled' : '' }}>
                                 <i class="fas fa-save"></i> Simpan Perubahan
                             </button>
                             <a href="{{ route('transaction.index') }}" class="btn btn-secondary">
@@ -590,6 +639,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const initialDeviceId = String(@json((string) $transaction->device_id));
     const initialPlaystationId = @json($transaction->playstation_id ? (int) $transaction->playstation_id : null);
     const currentCategoryUnavailable = Boolean(@json((bool) ($currentCategoryUnavailable ?? false)));
+    const isSessionEnded = Boolean(@json((bool) $isSessionEnded));
+    const shouldRefreshPreviewOnLoad = Boolean(@json((bool) $oldInputDiffers));
     const editPreviewUrl = @json(route('transaction.editPreview', $transaction->id_transaksi));
 
     // Timer data from server using ISO timestamps (midnight-safe & HH:MM:SS-safe)
@@ -1154,6 +1205,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial timer render
     updateTimers();
+    if (shouldRefreshPreviewOnLoad && !isSessionEnded) {
+        fetchServerEditPreview();
+    }
 
     // Update timers every second
     setInterval(updateTimers, 1000);

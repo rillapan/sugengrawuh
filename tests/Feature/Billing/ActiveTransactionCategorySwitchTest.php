@@ -3,6 +3,7 @@
 namespace Tests\Feature\Billing;
 
 use App\Models\AutomationIntent;
+use App\Models\CustomPackage;
 use App\Models\Device;
 use App\Models\Fnb;
 use App\Models\FnbOrder;
@@ -1662,5 +1663,665 @@ class ActiveTransactionCategorySwitchTest extends TestCase
         $this->assertSame(28000.0, (float) $tx->harga, 'Tampered harga=1 must be ignored; authoritative DB harga=28000 used');
         $this->assertSame(52000.0, (float) $tx->total, 'Tampered total=1 must be ignored; authoritative DB preset=52000 used');
         $this->assertSame((float) $previewModeA->json('new_payable_total'), (float) $tx->total);
+    }
+
+    /**
+     * CS-21 (Finding 1): summarizeTransactionBilling() populates rental_segments for segmented sessions
+     * and both payment.blade.php and show.blade.php render "Rincian Segmen Tarif Permainan".
+     */
+    public function test_cs_21_payment_and_show_pages_render_rental_segments_breakdown_for_segmented_sessions(): void
+    {
+        $catA = Playstation::create(['nama' => 'Karaoke Seg', 'harga' => 30000]);
+        $catB = Playstation::create(['nama' => 'PS VIP Seg', 'harga' => 25000]);
+
+        ['device' => $deviceLt] = $this->createStationWithHardware('Station Seg LT', [$catA, $catB], '25', 125);
+        ['device' => $deviceTimer] = $this->createStationWithHardware('Station Seg Timer', [$catA, $catB], '26', 126);
+
+        $ltTx = $this->billingService->startSession([
+            'device_id' => $deviceLt->id,
+            'playstation_id' => $catA->id,
+            'nama' => 'Pelanggan Seg LT',
+            'tipe_transaksi' => 'postpaid',
+        ], $this->kasir->id);
+
+        $timerTx = $this->billingService->startSession([
+            'device_id' => $deviceTimer->id,
+            'playstation_id' => $catA->id,
+            'nama' => 'Pelanggan Seg Timer',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 2,
+            'duration_seconds' => 7200,
+        ], $this->kasir->id);
+
+        // Unsegmented transactions return empty rental_segments
+        $unsegSummary = $this->billingService->summarizeTransactionBilling($ltTx->fresh(), Carbon::now());
+        $this->assertSame([], $unsegSummary['rental_segments']);
+
+        // Switch both at 10:30:00 (Mode B)
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:30:00'));
+
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $ltTx->id_transaksi), [
+            'device_id' => $deviceLt->id,
+            'playstation_id' => $catB->id,
+            'tipe_transaksi' => 'postpaid',
+            'pricing_mode' => 'from_now',
+        ])->assertOk();
+
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $timerTx->id_transaksi), [
+            'device_id' => $deviceTimer->id,
+            'playstation_id' => $catB->id,
+            'tipe_transaksi' => 'prepaid',
+            'pricing_mode' => 'from_now',
+            'duration_seconds' => 7200,
+        ])->assertOk();
+
+        // Advance to 11:00:00 -> LT: 30m @ 30k (15k) + 30m @ 25k (12.5k) = 27.5k; Timer: 15k + 37.5k = 52.5k
+        Carbon::setTestNow(Carbon::parse('2026-11-22 11:00:00'));
+
+        $ltSummary = $this->billingService->summarizeTransactionBilling($ltTx->fresh(), Carbon::now());
+        $this->assertCount(2, $ltSummary['rental_segments']);
+        $this->assertSame('Karaoke Seg', $ltSummary['rental_segments'][0]['playstation_name']);
+        $this->assertSame('PS VIP Seg', $ltSummary['rental_segments'][1]['playstation_name']);
+        $this->assertSame(15000.0, (float) $ltSummary['rental_segments'][0]['allocated_billed_amount']);
+        $this->assertSame(12500.0, (float) $ltSummary['rental_segments'][1]['allocated_billed_amount']);
+
+        $timerSummary = $this->billingService->summarizeTransactionBilling($timerTx->fresh(), Carbon::now());
+        $this->assertCount(2, $timerSummary['rental_segments']);
+        $this->assertSame(15000.0, (float) $timerSummary['rental_segments'][0]['allocated_billed_amount']);
+        $this->assertSame(37500.0, (float) $timerSummary['rental_segments'][1]['allocated_billed_amount']);
+
+        // Payment page renders segment breakdown for both
+        $this->actingAs($this->kasir)
+            ->get(route('transaction.showPayment', $ltTx->id_transaksi))
+            ->assertOk()
+            ->assertSee('Rincian Segmen Tarif Permainan', false)
+            ->assertSee('Karaoke Seg', false)
+            ->assertSee('PS VIP Seg', false)
+            ->assertSee('Rp 15.000', false)
+            ->assertSee('Rp 12.500', false);
+
+        $this->actingAs($this->kasir)
+            ->get(route('transaction.showPayment', $timerTx->id_transaksi))
+            ->assertOk()
+            ->assertSee('Rincian Segmen Tarif Permainan', false)
+            ->assertSee('Karaoke Seg', false)
+            ->assertSee('PS VIP Seg', false)
+            ->assertSee('Rp 15.000', false)
+            ->assertSee('Rp 37.500', false);
+
+        // Show page renders segment breakdown for both
+        $this->actingAs($this->kasir)
+            ->get(route('transaction.show', $ltTx->id_transaksi))
+            ->assertOk()
+            ->assertSee('Rincian Segmen Tarif Permainan', false)
+            ->assertSee('Karaoke Seg', false)
+            ->assertSee('PS VIP Seg', false)
+            ->assertSee('Rp 15.000', false)
+            ->assertSee('Rp 12.500', false);
+
+        $this->actingAs($this->kasir)
+            ->get(route('transaction.show', $timerTx->id_transaksi))
+            ->assertOk()
+            ->assertSee('Rincian Segmen Tarif Permainan', false)
+            ->assertSee('Karaoke Seg', false)
+            ->assertSee('PS VIP Seg', false)
+            ->assertSee('Rp 15.000', false)
+            ->assertSee('Rp 37.500', false);
+    }
+
+    /**
+     * CS-22 (Finding 2): custom_package edits preserve expires_at when package is unchanged (zero drift),
+     * compute with second precision when package changes, and set expires_at_changed = true whenever expires_at changes.
+     */
+    public function test_cs_22_custom_package_edit_preserves_expires_at_when_unchanged_and_updates_with_second_precision_when_changed(): void
+    {
+        $ps = Playstation::create(['nama' => 'PS5 Paket', 'harga' => 20000]);
+        ['device' => $dev1] = $this->createStationWithHardware('Station Paket 1', [$ps], '27', 127);
+        ['device' => $dev2] = $this->createStationWithHardware('Station Paket 2', [$ps], '28', 128);
+
+        $pkg60 = CustomPackage::create([
+            'nama_paket' => 'Paket 60 Menit',
+            'harga_total' => 30000,
+            'is_active' => true,
+        ]);
+        $pkg60->playstations()->attach($ps->id, ['lama_main' => 60]);
+
+        $pkg90 = CustomPackage::create([
+            'nama_paket' => 'Paket 90 Menit',
+            'harga_total' => 45000,
+            'is_active' => true,
+        ]);
+        $pkg90->playstations()->attach($ps->id, ['lama_main' => 90]);
+
+        $tx = $this->billingService->startSession([
+            'device_id' => $dev1->id,
+            'playstation_id' => $ps->id,
+            'nama' => 'Pelanggan Paket Drift',
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg60->id,
+        ], $this->kasir->id);
+
+        $tx->refresh();
+        $this->assertSame('2026-11-22 11:00:00', $tx->expires_at->format('Y-m-d H:i:s'));
+        $waktuSelesaiBefore = $tx->waktu_Selesai;
+        $waktuSelesaiBefore = $tx->waktu_Selesai;
+
+        // Advance to 10:15:37 (non-zero seconds) and move to Station 2 with SAME custom package
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:15:37'));
+
+        $previewSamePkg = $this->actingAs($this->kasir)->postJson(route('transaction.editPreview', $tx->id_transaksi), [
+            'device_id' => $dev2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg60->id,
+        ]);
+        $previewSamePkg->assertOk()->assertJson([
+            'valid' => true,
+            'device_changed' => true,
+            'duration_changed' => false,
+            'expires_at' => Carbon::parse('2026-11-22 11:00:00')->toIso8601String(),
+        ]);
+
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $tx->id_transaksi), [
+            'device_id' => $dev2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg60->id,
+        ])->assertOk();
+
+        $tx->refresh();
+        $this->assertSame($dev2->id, (int) $tx->device_id);
+        $this->assertSame('2026-11-22 11:00:00', $tx->expires_at->format('Y-m-d H:i:s'), 'Unchanged custom_package must preserve exact expires_at without 59s drift');
+        $this->assertSame($waktuSelesaiBefore, $tx->waktu_Selesai);
+
+        // Now change custom package from 60m to 90m at 10:20:25 (elapsed 1225s, remaining 4175s -> 11:30:00)
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:20:25'));
+
+        $expectedNewExpiresAt = Carbon::parse('2026-11-22 11:30:00');
+        $previewChangePkg = $this->actingAs($this->kasir)->postJson(route('transaction.editPreview', $tx->id_transaksi), [
+            'device_id' => $dev2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg90->id,
+        ]);
+        $previewChangePkg->assertOk()->assertJson([
+            'valid' => true,
+            'duration_changed' => true,
+            'remaining_seconds' => 4175,
+            'expires_at' => $expectedNewExpiresAt->toIso8601String(),
+        ]);
+
+        $genBefore = (int) $dev2->fresh()->session_generation;
+
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $tx->id_transaksi), [
+            'device_id' => $dev2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg90->id,
+        ])->assertOk();
+
+        $tx->refresh();
+        $dev2->refresh();
+        $this->assertSame($pkg90->id, (int) $tx->custom_package_id);
+        $this->assertSame('2026-11-22 11:30:00', $tx->expires_at->format('Y-m-d H:i:s'));
+        $this->assertSame(45000.0, (float) $tx->total);
+        $this->assertSame($genBefore + 1, (int) $dev2->session_generation, 'Changing expires_at must bump generation and reschedule OFF intent');
+
+        $activeOffIntent = AutomationIntent::where('transaction_id', $tx->id_transaksi)
+            ->where('event_type', AutomationIntent::EVENT_BILLING_EXPIRED)
+            ->where('status', AutomationIntent::STATUS_PENDING)
+            ->latest('id')
+            ->firstOrFail();
+        $this->assertSame('2026-11-22 11:30:00', $activeOffIntent->scheduled_at->format('Y-m-d H:i:s'));
+    }
+
+    /**
+     * CS-23 (Finding 3): Shortening a running prepaid or custom_package session to <= elapsed time
+     * or <= closed segments is rejected consistently in preview and apply without corrupting session or segments.
+     */
+    public function test_cs_23_shortening_running_prepaid_or_custom_package_below_elapsed_or_closed_segments_is_rejected(): void
+    {
+        $catA = Playstation::create(['nama' => 'PS3 Short', 'harga' => 10000]);
+        $catB = Playstation::create(['nama' => 'PS4 Short', 'harga' => 15000]);
+
+        ['device' => $device1] = $this->createStationWithHardware('Station Short 1', [$catA, $catB], '29', 129);
+        ['device' => $device2] = $this->createStationWithHardware('Station Short 2', [$catA, $catB], '30', 130);
+
+        // 1. Running 2h prepaid started at 10:00:00
+        $txPrepaid = $this->billingService->startSession([
+            'device_id' => $device1->id,
+            'playstation_id' => $catA->id,
+            'nama' => 'Pelanggan Short Prepaid',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 2,
+            'duration_seconds' => 7200,
+        ], $this->kasir->id);
+
+        // Switch Cat A -> Cat B at 10:30:00 (Seg 1 closed = 1800s)
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:30:00'));
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $txPrepaid->id_transaksi), [
+            'device_id' => $device1->id,
+            'playstation_id' => $catB->id,
+            'tipe_transaksi' => 'prepaid',
+            'pricing_mode' => 'from_now',
+            'duration_seconds' => 7200,
+        ])->assertOk();
+
+        // Advance to 10:45:00 (2700s elapsed). Attempt shortening to 2700s (== elapsed) and 1800s (<= closed segments)
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:45:00'));
+        $intentsBefore = AutomationIntent::where('transaction_id', $txPrepaid->id_transaksi)->count();
+
+        foreach ([2700, 1800] as $badDuration) {
+            $this->actingAs($this->kasir)->postJson(route('transaction.editPreview', $txPrepaid->id_transaksi), [
+                'device_id' => $device2->id,
+                'playstation_id' => $catB->id,
+                'tipe_transaksi' => 'prepaid',
+                'pricing_mode' => 'from_now',
+                'duration_seconds' => $badDuration,
+            ])->assertStatus(422)->assertJson(['valid' => false]);
+
+            $this->actingAs($this->kasir)->putJson(route('transaction.update', $txPrepaid->id_transaksi), [
+                'device_id' => $device2->id,
+                'playstation_id' => $catB->id,
+                'tipe_transaksi' => 'prepaid',
+                'pricing_mode' => 'from_now',
+                'duration_seconds' => $badDuration,
+            ])->assertStatus(422)->assertJson(['success' => false]);
+        }
+
+        // Web PUT redirect back with errors
+        $webRes = $this->actingAs($this->kasir)
+            ->from(route('transaction.edit', $txPrepaid->id_transaksi))
+            ->put(route('transaction.update', $txPrepaid->id_transaksi), [
+                'device_id' => $device1->id,
+                'playstation_id' => $catB->id,
+                'tipe_transaksi' => 'prepaid',
+                'pricing_mode' => 'from_now',
+                'duration_seconds' => 1800,
+            ]);
+        $webRes->assertRedirect(route('transaction.edit', $txPrepaid->id_transaksi));
+        $webRes->assertSessionHasErrors(['duration_seconds']);
+
+        $txPrepaid->refresh();
+        $this->assertSame(Transaction::BILLING_RUNNING, $txPrepaid->billing_status);
+        $this->assertSame($device1->id, (int) $txPrepaid->device_id);
+        $this->assertSame(7200, (int) $txPrepaid->duration_seconds);
+        $this->assertSame('2026-11-22 12:00:00', $txPrepaid->expires_at->format('Y-m-d H:i:s'));
+        $this->assertSame($intentsBefore, AutomationIntent::where('transaction_id', $txPrepaid->id_transaksi)->count());
+        $this->assertSame(7200, (int) TransactionPricingSegment::where('transaction_id', $txPrepaid->id_transaksi)->sum('duration_seconds'));
+
+        // 2. Running custom_package (90m) cannot be switched to a 30m custom_package after 45m elapsed
+        $pkg90 = CustomPackage::create(['nama_paket' => 'Paket 90m', 'harga_total' => 45000, 'is_active' => true]);
+        $pkg90->playstations()->attach($catA->id, ['lama_main' => 90]);
+        $pkg30 = CustomPackage::create(['nama_paket' => 'Paket 30m', 'harga_total' => 15000, 'is_active' => true]);
+        $pkg30->playstations()->attach($catA->id, ['lama_main' => 30]);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 12:00:00'));
+        $txPkg = $this->billingService->startSession([
+            'device_id' => $device2->id,
+            'playstation_id' => $catA->id,
+            'nama' => 'Pelanggan Short Paket',
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg90->id,
+        ], $this->kasir->id);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 12:45:00'));
+        $this->actingAs($this->kasir)->postJson(route('transaction.editPreview', $txPkg->id_transaksi), [
+            'device_id' => $device2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg30->id,
+        ])->assertStatus(422)->assertJson([
+            'valid' => false,
+            'error_code' => 'duration_below_elapsed',
+        ]);
+
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $txPkg->id_transaksi), [
+            'device_id' => $device2->id,
+            'tipe_transaksi' => 'custom_package',
+            'custom_package_id' => $pkg30->id,
+        ])->assertStatus(422)->assertJson([
+            'success' => false,
+            'error_code' => 'duration_below_elapsed',
+        ]);
+
+        $txPkg->refresh();
+        $this->assertSame(Transaction::BILLING_RUNNING, $txPkg->billing_status);
+        $this->assertSame($pkg90->id, (int) $txPkg->custom_package_id);
+        $this->assertSame('2026-11-22 13:30:00', $txPkg->expires_at->format('Y-m-d H:i:s'));
+    }
+
+    /**
+     * CS-24 (Finding 4): edit.blade.php uses old('device_id') for category options & availability check,
+     * honours old('playstation_id') & old('pricing_mode'), and triggers preview fetch on DOMContentLoaded when old input differs.
+     */
+    public function test_cs_24_edit_form_validation_redirect_honours_old_device_category_pricing_mode_and_refreshes_preview(): void
+    {
+        $cat1A = Playstation::create(['nama' => 'Cat Dev1 Alpha', 'harga' => 12000]);
+        $cat1B = Playstation::create(['nama' => 'Cat Dev1 Beta', 'harga' => 14000]);
+        $cat2A = Playstation::create(['nama' => 'Cat Dev2 Gamma', 'harga' => 18000]);
+        $cat2B = Playstation::create(['nama' => 'Cat Dev2 Delta', 'harga' => 22000]);
+
+        ['device' => $dev1] = $this->createStationWithHardware('Station OldInput 1', [$cat1A, $cat1B], '31', 131);
+        ['device' => $dev2] = $this->createStationWithHardware('Station OldInput 2', [$cat2A, $cat2B], '32', 132);
+
+        $tx = $this->billingService->startSession([
+            'device_id' => $dev1->id,
+            'playstation_id' => $cat1A->id,
+            'nama' => 'Pelanggan OldInput',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 2,
+            'duration_seconds' => 7200,
+        ], $this->kasir->id);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:45:00'));
+
+        // Submit invalid shortened duration while switching to Device 2, Cat2B, and Mode A (correction)
+        $response = $this->actingAs($this->kasir)
+            ->from(route('transaction.edit', $tx->id_transaksi))
+            ->followingRedirects()
+            ->put(route('transaction.update', $tx->id_transaksi), [
+                'device_id' => $dev2->id,
+                'playstation_id' => $cat2B->id,
+                'tipe_transaksi' => 'prepaid',
+                'pricing_mode' => 'correction',
+                'duration_seconds' => 1800,
+                'jam_main' => '00:30:00',
+            ]);
+
+        $response->assertOk();
+        $html = $response->getContent();
+
+        // Device 2 options must be rendered inside #playstation_id (Cat Dev2 Gamma / Delta, NOT Cat Dev1 Alpha / Beta)
+        preg_match('/<select[^>]*id="playstation_id"[^>]*>(.*?)<\/select>/s', $html, $psSelectMatch);
+        $this->assertNotEmpty($psSelectMatch[1] ?? null);
+        $psOptionsHtml = $psSelectMatch[1];
+
+        $this->assertStringContainsString('Cat Dev2 Gamma', $psOptionsHtml);
+        $this->assertStringContainsString('Cat Dev2 Delta', $psOptionsHtml);
+        $this->assertStringNotContainsString('Cat Dev1 Alpha', $psOptionsHtml);
+        $this->assertStringNotContainsString('Cat Dev1 Beta', $psOptionsHtml);
+        $this->assertMatchesRegularExpression('/<option\s+value="' . $cat2B->id . '"[^>]*selected/s', $psOptionsHtml);
+        $this->assertMatchesRegularExpression('/id="pricing_mode_correction"[^>]*checked/s', $html);
+        $this->assertStringContainsString('const shouldRefreshPreviewOnLoad = Boolean(true);', $html);
+        $this->assertStringContainsString('fetchServerEditPreview();', $html);
+
+        // Also verify unavailable check uses old('device_id'): detach cat1A on dev1 so dev1 has unavailable category,
+        // then redirect back with old('device_id') = dev2 and valid cat2A -> #playstation_id must NOT be marked aria-invalid
+        $dev1->playstations()->detach($cat1A->id);
+        $resUnavailableRedirect = $this->actingAs($this->kasir)
+            ->from(route('transaction.edit', $tx->id_transaksi))
+            ->followingRedirects()
+            ->put(route('transaction.update', $tx->id_transaksi), [
+                'device_id' => $dev2->id,
+                'playstation_id' => $cat2A->id,
+                'tipe_transaksi' => 'prepaid',
+                'pricing_mode' => 'from_now',
+                'duration_seconds' => 1800,
+            ]);
+        $resUnavailableRedirect->assertOk();
+        $html2 = $resUnavailableRedirect->getContent();
+        preg_match('/<select[^>]*id="playstation_id"[^>]*>/s', $html2, $psTagMatch);
+        $this->assertNotEmpty($psTagMatch[0] ?? null);
+        $this->assertStringNotContainsString('aria-invalid="true"', $psTagMatch[0]);
+    }
+
+    /**
+     * CS-25 (Minor M1-M6): Eager loading & relationLoaded preset lookup, segment snapshot/device_id sync,
+     * show.blade.php cross-midnight & summary figures, extendSession unpaid FnB, store pivot fallback & invoice guards,
+     * and ended edit form disabling.
+     */
+    public function test_cs_25_minor_fixes_eager_loading_snapshots_show_fnb_guards_and_ended_form_disabled(): void
+    {
+        // M1: Playstation::getPriceForDuration uses loaded hourlyPrices without extra DB queries
+        $ps1 = Playstation::create(['nama' => 'PS5 M1', 'harga' => 20000]);
+        $ps2 = Playstation::create(['nama' => 'PS5 Pro M1', 'harga' => 30000]);
+        HourlyPrice::create([
+            'playstation_id' => $ps1->id,
+            'hour' => 2,
+            'duration_seconds' => 7200,
+            'price' => 36000,
+        ]);
+        $loadedPs = Playstation::with('hourlyPrices')->findOrFail($ps1->id);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->assertSame(36000, $loadedPs->getPriceForDuration(7200));
+        $this->assertSame(36000, $loadedPs->getPriceForDuration(7200));
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertCount(0, $queries, 'getPriceForDuration must use loaded hourlyPrices without executing SQL queries');
+
+        // M5 store(): device with legacy playstation_id pointing to $ps2 while pivot has [$ps1] only -> store() without playstation_id uses getAvailableCategories()->first() ($ps1)
+        $pivotOnlyDev = Device::create([
+            'nama' => 'Pivot Priority Station',
+            'playstation_id' => $ps2->id,
+            'status' => 'Tersedia',
+            'session_generation' => 0,
+        ]);
+        $pivotOnlyDev->playstations()->sync([$ps1->id]);
+
+        $this->actingAs($this->kasir)->post(route('transaction.store'), [
+            'nama' => 'Pelanggan Pivot Fallback',
+            'device_id' => $pivotOnlyDev->id,
+            'tipe_transaksi' => 'postpaid',
+        ])->assertRedirect();
+        $pivotTx = Transaction::where('nama', 'Pelanggan Pivot Fallback')->firstOrFail();
+        $this->assertSame($ps1->id, (int) $pivotTx->playstation_id);
+        $this->assertSame(20000.0, (float) $pivotTx->harga);
+
+        // M2 part 2: postpaid device-only move with segments updates open segment's device_id
+        ['device' => $ltDev1] = $this->createStationWithHardware('M2 LT 1', [$ps1, $ps2], '33', 133);
+        ['device' => $ltDev2] = $this->createStationWithHardware('M2 LT 2', [$ps1, $ps2], '34', 134);
+        $ltTx = $this->billingService->startSession([
+            'device_id' => $ltDev1->id,
+            'playstation_id' => $ps1->id,
+            'nama' => 'Pelanggan M2 LT',
+            'tipe_transaksi' => 'postpaid',
+        ], $this->kasir->id);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:30:00'));
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $ltTx->id_transaksi), [
+            'device_id' => $ltDev1->id,
+            'playstation_id' => $ps2->id,
+            'tipe_transaksi' => 'postpaid',
+            'pricing_mode' => 'from_now',
+        ])->assertOk();
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 10:40:00'));
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $ltTx->id_transaksi), [
+            'device_id' => $ltDev2->id,
+            'playstation_id' => $ps2->id,
+            'tipe_transaksi' => 'postpaid',
+            'pricing_mode' => 'from_now',
+        ])->assertOk();
+
+        $openLtSeg = TransactionPricingSegment::where('transaction_id', $ltTx->id_transaksi)
+            ->whereNull('ended_at')
+            ->firstOrFail();
+        $this->assertSame($ltDev2->id, (int) $openLtSeg->device_id);
+
+        // M2 part 1 & M4: re-editing segmented prepaid without category change syncs hourly_rate_snapshot;
+        // extendSession uses uninvoiced_legacy_fnb_total + unpaid_fnb_order_total
+        Carbon::setTestNow(Carbon::parse('2026-11-22 11:00:00'));
+        ['device' => $timerDev] = $this->createStationWithHardware('M2 Timer Dev', [$ps1, $ps2], '35', 135);
+        $locTimer = Location::create([
+            'name' => 'Loc M4',
+            'code' => 'LOC-M4',
+            'type' => 'station',
+            'device_id' => $timerDev->id,
+            'is_active' => true,
+        ]);
+        $timerTx = $this->billingService->startSession([
+            'device_id' => $timerDev->id,
+            'playstation_id' => $ps1->id,
+            'nama' => 'Pelanggan M2 M4',
+            'tipe_transaksi' => 'prepaid',
+            'jam_main' => 2,
+            'duration_seconds' => 7200,
+        ], $this->kasir->id);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-22 11:30:00'));
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $timerTx->id_transaksi), [
+            'device_id' => $timerDev->id,
+            'playstation_id' => $ps2->id,
+            'tipe_transaksi' => 'prepaid',
+            'pricing_mode' => 'from_now',
+            'duration_seconds' => 7200,
+        ])->assertOk();
+
+        // Update master price of ps2 (30k -> 34k) and re-edit duration (3h) without category change
+        $ps2->update(['harga' => 34000]);
+        $this->actingAs($this->kasir)->putJson(route('transaction.update', $timerTx->id_transaksi), [
+            'device_id' => $timerDev->id,
+            'playstation_id' => $ps2->id,
+            'tipe_transaksi' => 'prepaid',
+            'pricing_mode' => 'from_now',
+            'duration_seconds' => 10800,
+        ])->assertOk();
+
+        $lastSeg = TransactionPricingSegment::where('transaction_id', $timerTx->id_transaksi)
+            ->orderByDesc('segment_order')
+            ->firstOrFail();
+        $this->assertSame(34000.0, (float) $lastSeg->hourly_rate_snapshot);
+
+        // Attach an unpaid FnbOrder (7,000) and call extendSession (+1h)
+        $fnbSnack = Fnb::create(['nama' => 'Kacang M4', 'harga_beli' => 3000, 'harga_jual' => 7000, 'stok' => 10]);
+        $fnbOrd = FnbOrder::create([
+            'order_number' => 'ORD-M4-1',
+            'source' => FnbOrder::SOURCE_QR,
+            'location_id' => $locTimer->id,
+            'transaction_id' => $timerTx->id_transaksi,
+            'customer_name' => $timerTx->nama,
+            'status' => FnbOrder::STATUS_ACCEPTED,
+            'payment_status' => 'unpaid',
+        ]);
+        FnbOrderItem::create([
+            'fnb_order_id' => $fnbOrd->id,
+            'fnb_id' => $fnbSnack->id,
+            'qty' => 1,
+            'unit_price_beli' => 3000,
+            'unit_price_jual' => 7000,
+            'subtotal' => 7000,
+            'payment_status' => 'unpaid',
+        ]);
+
+        $extended = $this->billingService->extendSession($timerTx->id_transaksi, 1);
+        // Seg1: 0.5h @ 20k = 10,000; Seg2: 3.5h @ 34k = 119,000 -> rental 129,000 + 7,000 unpaid FnB = 136,000
+        $this->assertSame(136000.0, (float) $extended->total);
+
+        // M3: show.blade.php cross-midnight duration & BillingService summary figures
+        Carbon::setTestNow(Carbon::parse('2026-11-22 23:00:00'));
+        ['device' => $showDev] = $this->createStationWithHardware('M3 Show Dev', [$ps1], '36', 136);
+        $showLoc = Location::create([
+            'name' => 'Loc M3',
+            'code' => 'LOC-M3',
+            'type' => 'station',
+            'device_id' => $showDev->id,
+            'is_active' => true,
+        ]);
+        $showTx = $this->billingService->startSession([
+            'device_id' => $showDev->id,
+            'playstation_id' => $ps1->id,
+            'nama' => 'Pelanggan M3 CrossMidnight',
+            'tipe_transaksi' => 'postpaid',
+        ], $this->kasir->id);
+
+        $showOrd = FnbOrder::create([
+            'order_number' => 'ORD-M3-1',
+            'source' => FnbOrder::SOURCE_QR,
+            'location_id' => $showLoc->id,
+            'transaction_id' => $showTx->id_transaksi,
+            'customer_name' => $showTx->nama,
+            'status' => FnbOrder::STATUS_ACCEPTED,
+            'payment_status' => 'unpaid',
+        ]);
+        FnbOrderItem::create([
+            'fnb_order_id' => $showOrd->id,
+            'fnb_id' => $fnbSnack->id,
+            'qty' => 1,
+            'unit_price_beli' => 3000,
+            'unit_price_jual' => 7000,
+            'subtotal' => 7000,
+            'payment_status' => 'unpaid',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-23 01:30:00'));
+        $this->actingAs($this->kasir)->post(route('transaction.end', $showTx->id_transaksi));
+
+        // 2h30m on $ps1 (2h preset 36,000 + 30m @ 20k = 46,000 rental) + 7,000 FnB
+        $showRes = $this->actingAs($this->kasir)->get(route('transaction.show', $showTx->id_transaksi));
+        $showRes->assertOk()
+            ->assertSee('2 jam 30 menit 0 detik', false)
+            ->assertSee('Rp 46.000', false)
+            ->assertSee('Rp 7.000', false);
+
+        // M5: hasGameSettlementInvoice guards FnB mutations & destroy even if payment_status somehow unpaid
+        $invLockedTx = Transaction::create([
+            'status' => 'user',
+            'nama' => 'Pelanggan Settlement Guard',
+            'device_id' => $showDev->id,
+            'playstation_id' => $ps1->id,
+            'user_id' => $this->kasir->id,
+            'tipe_transaksi' => 'prepaid',
+            'harga' => 20000,
+            'jam_main' => 1,
+            'duration_seconds' => 3600,
+            'waktu_mulai' => '10:00',
+            'waktu_Selesai' => '11:00',
+            'status_transaksi' => 'sukses',
+            'payment_status' => 'unpaid',
+            'total' => 20000,
+        ]);
+        TransactionFnb::create([
+            'transaction_id' => $invLockedTx->id_transaksi,
+            'fnb_id' => $fnbSnack->id,
+            'qty' => 1,
+            'harga_beli' => 3000,
+            'harga_jual' => 7000,
+        ]);
+        Invoice::create([
+            'invoice_number' => 'INV-GUARD-TEST-01',
+            'transaction_id' => $invLockedTx->id_transaksi,
+            'invoice_type' => Invoice::TYPE_GAME_ONLY,
+            'subtotal' => 20000,
+            'discount' => 0,
+            'final_total' => 20000,
+            'amount_paid' => 20000,
+            'change_amount' => 0,
+            'payment_method' => 'tunai',
+            'cashier_user_id' => $this->kasir->id,
+            'paid_at' => Carbon::now(),
+        ]);
+
+        $this->actingAs($this->kasir)->get(route('transaction.add-order', $invLockedTx->id_transaksi))
+            ->assertRedirect(route('transaction.index'));
+        $this->actingAs($this->kasir)->post(route('transaction.store-order', $invLockedTx->id_transaksi), [
+            'items' => [['fnb_id' => $fnbSnack->id, 'qty' => 1]],
+        ])->assertRedirect(route('transaction.index'));
+        $this->actingAs($this->kasir)->postJson(route('transaction.fnb.add', $invLockedTx->id_transaksi), [
+            'fnb_id' => $fnbSnack->id,
+            'qty' => 1,
+        ])->assertStatus(403);
+        $this->actingAs($this->kasir)->putJson(route('transaction.fnb.update', [
+            'id' => $invLockedTx->id_transaksi,
+            'fnbId' => $fnbSnack->id,
+        ]), ['qty' => 2])->assertStatus(403);
+        $this->actingAs($this->kasir)->deleteJson(route('transaction.fnb.delete', [
+            'id' => $invLockedTx->id_transaksi,
+            'fnbId' => $fnbSnack->id,
+        ]))->assertStatus(403);
+        $this->actingAs($this->kasir)->delete(route('transaction.destroy', $invLockedTx->id_transaksi))
+            ->assertRedirect('transaction')
+            ->assertSessionHas('gagal');
+        $this->assertDatabaseHas('transactions', ['id_transaksi' => $invLockedTx->id_transaksi]);
+
+        // M6: edit.blade.php disables submit button & repricing inputs when $isSessionEnded
+        $endedEditRes = $this->actingAs($this->kasir)->get(route('transaction.edit', $showTx->id_transaksi));
+        $endedEditRes->assertOk();
+        $endedHtml = $endedEditRes->getContent();
+        $this->assertMatchesRegularExpression('/<select[^>]*id="tipe_transaksi"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<select[^>]*id="device_id"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<select[^>]*id="playstation_id"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<input[^>]*id="pricing_mode_from_now"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<input[^>]*id="pricing_mode_correction"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<select[^>]*id="custom_package_id"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<select[^>]*id="jam_main"[^>]*disabled/s', $endedHtml);
+        $this->assertMatchesRegularExpression('/<button[^>]*type="submit"[^>]*disabled/s', $endedHtml);
     }
 }

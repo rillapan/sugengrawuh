@@ -71,6 +71,10 @@
 
                     <hr>
 
+                    @php
+                        $billingSummary = $billingSummary ?? app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction);
+                    @endphp
+
                     <div class="row">
                         <div class="col-md-6">
                             <h5>Waktu Bermain</h5>
@@ -85,10 +89,10 @@
                                 </tr>
                                 @if($transaction->tipe_transaksi === 'postpaid' && $transaction->status_transaksi === 'selesai')
                                     @php
-                                        $startTime = \Carbon\Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
-                                        $endTime = \Carbon\Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_Selesai);
+                                        $startTime = $transaction->getEffectiveStartTime();
+                                        $endTime = $transaction->getEffectiveEndTime();
                                         $duration = $startTime->diff($endTime);
-                                        $hours = $duration->h;
+                                        $hours = $duration->h + ($duration->days * 24);
                                         $minutes = $duration->i;
                                         $seconds = $duration->s;
                                     @endphp
@@ -100,7 +104,7 @@
                                     <tr>
                                         <td><strong>Durasi Saat Ini:</strong></td>
                                         <td>
-                                            <div class="timer" data-start="{{ $transaction->created_at->toDateString() }} {{ $transaction->waktu_mulai }}" data-transaction-id="{{ $transaction->id_transaksi }}">
+                                            <div class="timer" data-start="{{ $transaction->getEffectiveStartTime()->toIso8601String() }}" data-transaction-id="{{ $transaction->id_transaksi }}">
                                                 <span class="timer-display">Lama Main: 00:00:00 (0 jam 0 menit)</span>
                                             </div>
                                         </td>
@@ -127,13 +131,13 @@
                                         @if($transaction->tipe_transaksi === 'custom_package')
                                             <span class="badge badge-info">Harga Paket</span>
                                         @else
-                                            Rp {{ number_format($transaction->total - $transaction->getFnbTotalAttribute(), 0, ',', '.') }}
+                                            Rp {{ number_format((float) ($billingSummary['rental_subtotal'] ?? 0), 0, ',', '.') }}
                                         @endif
                                     </td>
                                 </tr>
                                 <tr>
                                     <td><strong>Biaya FnB:</strong></td>
-                                    <td>Rp {{ number_format($transaction->getFnbTotalAttribute(), 0, ',', '.') }}</td>
+                                    <td>Rp {{ number_format((float) ($billingSummary['total_fnb_display'] ?? 0), 0, ',', '.') }}</td>
                                 </tr>
                                 @if($transaction->diskon && $transaction->diskon > 0)
                                     <tr>
@@ -157,11 +161,8 @@
 
                     @php
                         $showPricingSegments = $transaction->getResolvedPricingSegments();
-                        $showBillingSummary = $showPricingSegments->count() >= 2
-                            ? app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction)
-                            : null;
-                        $showSegmentRows = ($showBillingSummary && !empty($showBillingSummary['rental_segments']))
-                            ? collect($showBillingSummary['rental_segments'])
+                        $showSegmentRows = !empty($billingSummary['rental_segments'])
+                            ? collect($billingSummary['rental_segments'])
                             : collect();
                     @endphp
                     @if($showPricingSegments->count() >= 2 && $showSegmentRows->count() >= 2)

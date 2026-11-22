@@ -148,16 +148,20 @@ class TransactionController extends Controller
         $amountPaid = (float) $request->input('amount_paid');
         $paymentMethod = $request->input('payment_method');
 
-        $transaction = Transaction::with([
-            'device.playstation',
-            'device.playstations',
-            'playstation',
+        $relations = [
+            'device.playstation.hourlyPrices',
+            'device.playstations.hourlyPrices',
+            'playstation.hourlyPrices',
             'transactionFnbs.fnb',
             'transactionFnbs.invoiceItem',
             'custom_package.playstations',
             'custom_package.fnbs',
             'fnbOrders.items.fnb',
-        ])->where('id_transaksi', $id)->firstOrFail();
+        ];
+        if (TransactionPricingSegment::hasSchema()) {
+            $relations[] = 'pricingSegments.playstation';
+        }
+        $transaction = Transaction::with($relations)->where('id_transaksi', $id)->firstOrFail();
 
         if ($transaction->payment_status === 'paid') {
             return redirect()->route('transaction.print', $transaction->id_transaksi)
@@ -862,9 +866,9 @@ class TransactionController extends Controller
 
         } elseif ($request->tipe_transaksi === 'prepaid') {
             // Get device and selected PlayStation
-            $device = Device::findOrFail($request->device_id);
+            $device = Device::with(['playstations', 'playstation'])->findOrFail($request->device_id);
             
-            // Use selected PlayStation if provided, otherwise fallback to default
+            // Use selected PlayStation if provided, otherwise fallback to available category
             if ($request->playstation_id) {
                 $playstation = Playstation::findOrFail($request->playstation_id);
                 
@@ -876,8 +880,8 @@ class TransactionController extends Controller
                     return $this->respondStoreError($request, 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
                 }
             } else {
-                // Fallback to default PlayStation (backward compatibility)
-                $playstation = $device->playstation;
+                // Fallback to device's available category (pivot first, then legacy playstation_id)
+                $playstation = $device->getAvailableCategories()->first();
             }
             
             if ($durationSeconds === null || $durationSeconds <= 0) {
@@ -887,7 +891,7 @@ class TransactionController extends Controller
                 return $this->respondStoreError($request, 'Durasi bermain maksimal 24 jam.');
             }
 
-            $totalPs = $playstation->calculateCustomPrice($durationSeconds);
+            $totalPs = $playstation ? $playstation->calculateCustomPrice($durationSeconds) : 0;
 
             $fnbTotal = 0;
             if ($request->has('fnb_ids')) {
@@ -931,9 +935,9 @@ class TransactionController extends Controller
             $validatedData['playstation_id'] = $request->playstation_id ?: ($playstation ? $playstation->id : null);
         } elseif ($request->tipe_transaksi === 'postpaid') {
             // Postpaid (Lost Time) - device is now required
-            $device = Device::findOrFail($request->device_id);
+            $device = Device::with(['playstations', 'playstation'])->findOrFail($request->device_id);
             
-            // Use selected PlayStation if provided, otherwise fallback to default
+            // Use selected PlayStation if provided, otherwise fallback to available category
             if ($request->playstation_id) {
                 $playstation = Playstation::findOrFail($request->playstation_id);
                 
@@ -945,8 +949,8 @@ class TransactionController extends Controller
                     return $this->respondStoreError($request, 'Playstation yang dipilih tidak terkait dengan perangkat ini.');
                 }
             } else {
-                // Fallback to default PlayStation (backward compatibility)
-                $playstation = $device->playstation;
+                // Fallback to device's available category (pivot first, then legacy playstation_id)
+                $playstation = $device->getAvailableCategories()->first();
             }
             
             $validatedData['device_id'] = $device->id;
@@ -1231,16 +1235,30 @@ class TransactionController extends Controller
      */
     public function show($id)
     {
-        $relations = ['device.playstation', 'playstation', 'transactionFnbs.fnb', 'user'];
+        $relations = [
+            'device.playstation.hourlyPrices',
+            'device.playstations.hourlyPrices',
+            'playstation.hourlyPrices',
+            'transactionFnbs.fnb',
+            'transactionFnbs.invoiceItem',
+            'user',
+            'custom_package.playstations',
+            'custom_package.fnbs',
+            'fnbOrders.items.fnb',
+            'invoices',
+        ];
         if (TransactionPricingSegment::hasSchema()) {
             $relations[] = 'pricingSegments.playstation';
         }
         $transaction = Transaction::with($relations)->findOrFail($id);
+        $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
+        $billingSummary = app(\App\Services\BillingService::class)->summarizeTransactionBilling($transaction, $now);
 
         return view('transaction.show', [
             'title' => 'Detail Transaksi',
             'active' => 'transaction',
-            'transaction' => $transaction
+            'transaction' => $transaction,
+            'billingSummary' => $billingSummary,
         ]);
     }
 
@@ -1552,7 +1570,13 @@ class TransactionController extends Controller
                     return redirect()->route('transaction.index')->with('gagal', $errMsg);
                 }
 
-                return redirect()->back()->withInput()->with('gagal', $errMsg)->withErrors(['playstation_id' => $errMsg]);
+                $errorField = match ($errCode) {
+                    'invalid_duration', 'duration_below_elapsed', 'duration_below_segments' => 'duration_seconds',
+                    'package_required', 'package_not_found', 'invalid_package_device' => 'custom_package_id',
+                    default => 'playstation_id',
+                };
+
+                return redirect()->back()->withInput()->with('gagal', $errMsg)->withErrors([$errorField => $errMsg]);
             }
 
             $deviceChanged = (bool) ($outcome['device_changed'] ?? false);
@@ -1645,10 +1669,10 @@ class TransactionController extends Controller
      */
     public function destroy($id)
     {
-        $transaction = Transaction::with(['transactionFnbs.fnb', 'device'])->findOrFail($id);
+        $transaction = Transaction::with(['transactionFnbs.fnb', 'device', 'invoices'])->findOrFail($id);
 
-        // Transaksi yang sudah lunas dilarang keras dihapus demi integritas data dan audit keuangan
-        if ($transaction->payment_status === 'paid') {
+        // Transaksi yang sudah lunas atau sudah memiliki settlement pembayaran dilarang keras dihapus demi integritas data dan audit keuangan
+        if ($transaction->payment_status === 'paid' || $transaction->hasGameSettlementInvoice()) {
             return redirect('transaction')->with('gagal', 'Transaksi yang sudah lunas tidak dapat dihapus demi integritas audit keuangan.');
         }
 
@@ -1904,7 +1928,18 @@ class TransactionController extends Controller
         $billingService = app(\App\Services\BillingService::class);
 
         $outcome = DB::transaction(function () use ($id, $waktuSelesai, $billingService) {
-            $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
+            $relations = [
+                'device.playstation.hourlyPrices',
+                'device.playstations.hourlyPrices',
+                'playstation.hourlyPrices',
+                'custom_package.fnbs',
+                'transactionFnbs.invoiceItem',
+                'fnbOrders.items',
+            ];
+            if (TransactionPricingSegment::hasSchema()) {
+                $relations[] = 'pricingSegments.playstation';
+            }
+            $transaction = Transaction::with($relations)->where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
 
             if (!in_array(auth()->user()->role, ['admin', 'kasir']) && $transaction->user_id !== auth()->id()) {
                 abort(403, 'Unauthorized');
@@ -2044,9 +2079,9 @@ class TransactionController extends Controller
 
     public function addOrder($id)
     {
-        $transaction = Transaction::findOrFail($id);
+        $transaction = Transaction::with('invoices')->findOrFail($id);
 
-        if ($transaction->payment_status !== 'unpaid') {
+        if ($transaction->payment_status !== 'unpaid' || $transaction->hasGameSettlementInvoice()) {
             return redirect()->route('transaction.index')->with('error', 'Hanya bisa menambahkan pesanan untuk transaksi yang belum dibayar.');
         }
 
@@ -2083,9 +2118,9 @@ class TransactionController extends Controller
 
     public function storeOrder(Request $request, $id)
     {
-        $transaction = Transaction::findOrFail($id);
+        $transaction = Transaction::with('invoices')->findOrFail($id);
         
-        if ($transaction->payment_status !== 'unpaid') {
+        if ($transaction->payment_status !== 'unpaid' || $transaction->hasGameSettlementInvoice()) {
             return redirect()->route('transaction.index')->with('error', 'Hanya bisa menambahkan pesanan untuk transaksi yang belum dibayar.');
         }
 
@@ -2178,10 +2213,10 @@ class TransactionController extends Controller
      */
     public function addFnbToTransaction($id, Request $request)
     {
-        $transaction = Transaction::findOrFail($id);
+        $transaction = Transaction::with('invoices')->findOrFail($id);
         
-        // Only allow editing unpaid transactions
-        if ($transaction->payment_status !== 'unpaid') {
+        // Only allow editing unpaid transactions without game settlement invoice
+        if ($transaction->payment_status !== 'unpaid' || $transaction->hasGameSettlementInvoice()) {
             return response()->json(['success' => false, 'message' => 'Hanya transaksi yang belum dibayar yang dapat diedit.'], 403);
         }
         
@@ -2267,10 +2302,10 @@ class TransactionController extends Controller
      */
     public function updateTransactionFnb($id, $fnbId, Request $request)
     {
-        $transaction = Transaction::findOrFail($id);
+        $transaction = Transaction::with('invoices')->findOrFail($id);
         
-        // Only allow editing unpaid transactions
-        if ($transaction->payment_status !== 'unpaid') {
+        // Only allow editing unpaid transactions without game settlement invoice
+        if ($transaction->payment_status !== 'unpaid' || $transaction->hasGameSettlementInvoice()) {
             return response()->json(['success' => false, 'message' => 'Hanya transaksi yang belum dibayar yang dapat diedit.'], 403);
         }
         
@@ -2362,10 +2397,10 @@ class TransactionController extends Controller
      */
     public function deleteTransactionFnb($id, $fnbId)
     {
-        $transaction = Transaction::findOrFail($id);
+        $transaction = Transaction::with('invoices')->findOrFail($id);
         
-        // Only allow editing unpaid transactions
-        if ($transaction->payment_status !== 'unpaid') {
+        // Only allow editing unpaid transactions without game settlement invoice
+        if ($transaction->payment_status !== 'unpaid' || $transaction->hasGameSettlementInvoice()) {
             return response()->json(['success' => false, 'message' => 'Hanya transaksi yang belum dibayar yang dapat diedit.'], 403);
         }
         
