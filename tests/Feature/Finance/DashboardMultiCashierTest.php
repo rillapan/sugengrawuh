@@ -69,7 +69,7 @@ class DashboardMultiCashierTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertViewIs('home');
-        $response->assertSee('Penerimaan Kasir F&amp;B Hari Ini', false);
+        $response->assertSee('Penerimaan Kasir F&amp;B', false);
         $response->assertSee('Buka Antrean Order');
         $response->assertSee('Buat Pesanan Baru');
     }
@@ -159,16 +159,16 @@ class DashboardMultiCashierTest extends TestCase
         $response->assertStatus(200);
         $data = $response->json();
 
-        $this->assertEquals(35000, $data['datasets'][0]['data'][11]);
-        $this->assertEquals('Penerimaan Kasir F&B Per Jam', $data['datasets'][0]['label']);
+        $this->assertEquals(35000, array_sum($data['datasets'][0]['data']));
+        $this->assertStringContainsString('Penerimaan Kasir F&B', $data['datasets'][0]['label']);
 
         // Kasir Billing chart request
         $responseBilling = $this->actingAs($this->billingCashier)->getJson('/hourly-revenue-data');
         $responseBilling->assertStatus(200);
         $dataBilling = $responseBilling->json();
 
-        $this->assertEquals(60000, $dataBilling['datasets'][0]['data'][11]);
-        $this->assertEquals('Penerimaan Kasir Billing Per Jam', $dataBilling['datasets'][0]['label']);
+        $this->assertEquals(60000, array_sum($dataBilling['datasets'][0]['data']));
+        $this->assertStringContainsString('Penerimaan Kasir Billing', $dataBilling['datasets'][0]['label']);
 
         // Admin chart request: sees consolidated 95.000
         $responseAdmin = $this->actingAs($this->admin)->getJson('/hourly-revenue-data');

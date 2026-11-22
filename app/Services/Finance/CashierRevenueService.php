@@ -28,9 +28,17 @@ class CashierRevenueService
 
     /**
      * Resolve start and end Carbon instances in Asia/Jakarta timezone.
+     * When $isExact is true, uses explicit datetime without normalizing to startOfDay/endOfDay.
      */
-    public function resolveDateRange(?Carbon $start = null, ?Carbon $end = null): array
+    public function resolveDateRange(?Carbon $start = null, ?Carbon $end = null, bool $isExact = false): array
     {
+        if ($isExact && $start && $end) {
+            return [
+                $start->copy()->setTimezone(self::TIMEZONE),
+                $end->copy()->setTimezone(self::TIMEZONE),
+            ];
+        }
+
         $startDate = $start
             ? $start->copy()->setTimezone(self::TIMEZONE)->startOfDay()
             : Carbon::now(self::TIMEZONE)->startOfDay();
@@ -64,12 +72,19 @@ class CashierRevenueService
 
     /**
      * Base query for paid invoices within a date range and optional cashier filter.
+     * When $exclusiveEnd is true, interval is [start, end) i.e. shift_start <= paid_at < shift_end.
      */
-    protected function baseInvoiceQuery(Carbon $start, Carbon $end, ?int $cashierUserId = null): Builder
+    protected function baseInvoiceQuery(Carbon $start, Carbon $end, ?int $cashierUserId = null, bool $exclusiveEnd = false): Builder
     {
         $query = Invoice::query()
-            ->whereNotNull('paid_at')
-            ->whereBetween('paid_at', [$start, $end]);
+            ->whereNotNull('paid_at');
+
+        if ($exclusiveEnd) {
+            $query->where('paid_at', '>=', $start)
+                  ->where('paid_at', '<', $end);
+        } else {
+            $query->whereBetween('paid_at', [$start, $end]);
+        }
 
         if ($cashierUserId !== null) {
             $query->where('cashier_user_id', $cashierUserId);
@@ -84,24 +99,37 @@ class CashierRevenueService
      * @param Carbon|null $start
      * @param Carbon|null $end
      * @param int|null $cashierUserId
+     * @param bool $isExact
+     * @param bool $exclusiveEnd
      * @return array
      */
-    public function getCashierRevenueSummary(?Carbon $start = null, ?Carbon $end = null, ?int $cashierUserId = null): array
-    {
-        [$startDate, $endDate] = $this->resolveDateRange($start, $end);
+    public function getCashierRevenueSummary(
+        ?Carbon $start = null,
+        ?Carbon $end = null,
+        ?int $cashierUserId = null,
+        bool $isExact = false,
+        bool $exclusiveEnd = false
+    ): array {
+        [$startDate, $endDate] = $this->resolveDateRange($start, $end, $isExact);
 
-        $query = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId);
+        $query = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId, $exclusiveEnd);
 
         $totalNet = (float) $query->sum('final_total');
         $totalGross = (float) $query->sum('subtotal');
         $totalDiscount = (float) $query->sum('discount');
         $invoiceCount = (int) $query->count();
 
-        // Payment method breakdown
+        // Payment method breakdown amounts
         $tunai = (float) (clone $query)->where('payment_method', 'tunai')->sum('final_total');
         $ewallet = (float) (clone $query)->where('payment_method', 'e-wallet')->sum('final_total');
         $transfer = (float) (clone $query)->where('payment_method', 'transfer_bank')->sum('final_total');
         $other = (float) (clone $query)->whereNotIn('payment_method', ['tunai', 'e-wallet', 'transfer_bank'])->sum('final_total');
+
+        // Payment method breakdown counts
+        $tunaiCount = (int) (clone $query)->where('payment_method', 'tunai')->count();
+        $ewalletCount = (int) (clone $query)->where('payment_method', 'e-wallet')->count();
+        $transferCount = (int) (clone $query)->where('payment_method', 'transfer_bank')->count();
+        $otherCount = (int) (clone $query)->whereNotIn('payment_method', ['tunai', 'e-wallet', 'transfer_bank'])->count();
 
         $cashierUser = $cashierUserId ? User::find($cashierUserId) : null;
 
@@ -119,9 +147,23 @@ class CashierRevenueService
                 'transfer_bank' => $transfer,
                 'other' => $other,
             ],
+            'payment_method_counts' => [
+                'tunai' => $tunaiCount,
+                'e-wallet' => $ewalletCount,
+                'transfer_bank' => $transferCount,
+                'other' => $otherCount,
+            ],
             'start_date' => $startDate->toDateTimeString(),
             'end_date' => $endDate->toDateTimeString(),
         ];
+    }
+
+    /**
+     * Dedicated shift revenue summary helper using exact bounds [start, end).
+     */
+    public function getCashierShiftRevenueSummary(Carbon $start, Carbon $end, ?int $cashierUserId = null): array
+    {
+        return $this->getCashierRevenueSummary($start, $end, $cashierUserId, isExact: true, exclusiveEnd: true);
     }
 
     /**
@@ -129,13 +171,19 @@ class CashierRevenueService
      *
      * @param Carbon|null $start
      * @param Carbon|null $end
+     * @param bool $isExact
+     * @param bool $exclusiveEnd
      * @return array
      */
-    public function getChannelConsolidatedSummary(?Carbon $start = null, ?Carbon $end = null): array
-    {
-        [$startDate, $endDate] = $this->resolveDateRange($start, $end);
+    public function getChannelConsolidatedSummary(
+        ?Carbon $start = null,
+        ?Carbon $end = null,
+        bool $isExact = false,
+        bool $exclusiveEnd = false
+    ): array {
+        [$startDate, $endDate] = $this->resolveDateRange($start, $end, $isExact);
 
-        $invoices = $this->baseInvoiceQuery($startDate, $endDate)
+        $invoices = $this->baseInvoiceQuery($startDate, $endDate, null, $exclusiveEnd)
             ->with(['cashierUser'])
             ->get();
 
@@ -211,13 +259,19 @@ class CashierRevenueService
 
         // Legacy transactions without invoices (historical unmigrated data)
         $legacyTxQuery = Transaction::query()
-            ->where('payment_status', 'paid')
-            ->whereRaw('COALESCE(paid_at, created_at) BETWEEN ? AND ?', [$startDate, $endDate])
-            ->whereNotExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('invoices')
-                    ->whereColumn('invoices.transaction_id', 'transactions.id_transaksi');
-            });
+            ->where('payment_status', 'paid');
+
+        if ($exclusiveEnd) {
+            $legacyTxQuery->whereRaw('COALESCE(paid_at, created_at) >= ? AND COALESCE(paid_at, created_at) < ?', [$startDate, $endDate]);
+        } else {
+            $legacyTxQuery->whereRaw('COALESCE(paid_at, created_at) BETWEEN ? AND ?', [$startDate, $endDate]);
+        }
+
+        $legacyTxQuery->whereNotExists(function ($sub) {
+            $sub->select(DB::raw(1))
+                ->from('invoices')
+                ->whereColumn('invoices.transaction_id', 'transactions.id_transaksi');
+        });
 
         $legacyCount = (int) $legacyTxQuery->count();
         $legacyTotal = (float) $legacyTxQuery->select(DB::raw('COALESCE(SUM(total - COALESCE(diskon, 0)), 0) as net_total'))->value('net_total');
@@ -252,13 +306,20 @@ class CashierRevenueService
      * @param Carbon|null $start
      * @param Carbon|null $end
      * @param int|null $cashierUserId
+     * @param bool $isExact
+     * @param bool $exclusiveEnd
      * @return array
      */
-    public function getCategoryRevenueSummary(?Carbon $start = null, ?Carbon $end = null, ?int $cashierUserId = null): array
-    {
-        [$startDate, $endDate] = $this->resolveDateRange($start, $end);
+    public function getCategoryRevenueSummary(
+        ?Carbon $start = null,
+        ?Carbon $end = null,
+        ?int $cashierUserId = null,
+        bool $isExact = false,
+        bool $exclusiveEnd = false
+    ): array {
+        [$startDate, $endDate] = $this->resolveDateRange($start, $end, $isExact);
 
-        $invoices = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId)
+        $invoices = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId, $exclusiveEnd)
             ->with([
                 'items',
                 'transaction.playstation',
@@ -407,13 +468,19 @@ class CashierRevenueService
 
     /**
      * Hourly receipts distribution (00:00 to 23:00) for a specific date and optional cashier.
+     * When $shiftEnd is passed, computes shift hourly series instead.
      *
      * @param Carbon $date
      * @param int|null $cashierUserId
+     * @param Carbon|null $shiftEnd
      * @return array
      */
-    public function getHourlyRevenueSeries(Carbon $date, ?int $cashierUserId = null): array
+    public function getHourlyRevenueSeries(Carbon $date, ?int $cashierUserId = null, ?Carbon $shiftEnd = null): array
     {
+        if ($shiftEnd !== null) {
+            return $this->getShiftHourlyRevenueSeries($date, $shiftEnd, $cashierUserId);
+        }
+
         $tzDate = $date->copy()->setTimezone(self::TIMEZONE);
         $start = $tzDate->copy()->startOfDay();
         $end = $tzDate->copy()->endOfDay();
@@ -445,6 +512,61 @@ class CashierRevenueService
 
         return [
             'date' => $tzDate->format('Y-m-d'),
+            'cashier_user_id' => $cashierUserId,
+            'total_revenue' => $grandTotal,
+            'total_invoices' => $totalInvoices,
+            'series' => $series,
+        ];
+    }
+
+    /**
+     * Hourly receipts distribution within exact shift boundaries [start, end).
+     * Guaranteed: sum(series.total) == cashier shift revenue.
+     *
+     * @param Carbon $start
+     * @param Carbon $end
+     * @param int|null $cashierUserId
+     * @return array
+     */
+    public function getShiftHourlyRevenueSeries(Carbon $start, Carbon $end, ?int $cashierUserId = null): array
+    {
+        $startTz = $start->copy()->setTimezone(self::TIMEZONE);
+        $endTz = $end->copy()->setTimezone(self::TIMEZONE);
+
+        $query = $this->baseInvoiceQuery($startTz, $endTz, $cashierUserId, exclusiveEnd: true)
+            ->selectRaw("DATE_FORMAT(paid_at, '%Y-%m-%d %H') as hour_key, SUM(final_total) as hourly_total, COUNT(*) as invoice_count")
+            ->groupBy(DB::raw("DATE_FORMAT(paid_at, '%Y-%m-%d %H')"));
+
+        $hourlyData = $query->pluck('hourly_total', 'hour_key')->all();
+        $hourlyCounts = (clone $query)->pluck('invoice_count', 'hour_key')->all();
+
+        $series = [];
+        $grandTotal = 0.0;
+        $totalInvoices = 0;
+
+        $cursor = $startTz->copy()->startOfHour();
+
+        while ($cursor->lessThan($endTz)) {
+            $key = $cursor->format('Y-m-d H');
+            $val = isset($hourlyData[$key]) ? (float) $hourlyData[$key] : 0.0;
+            $cnt = isset($hourlyCounts[$key]) ? (int) $hourlyCounts[$key] : 0;
+            $grandTotal += $val;
+            $totalInvoices += $cnt;
+
+            $series[] = [
+                'hour' => (int) $cursor->format('H'),
+                'label' => $cursor->format('H:i'),
+                'datetime' => $cursor->format('Y-m-d H:i:s'),
+                'total' => $val,
+                'count' => $cnt,
+            ];
+
+            $cursor->addHour();
+        }
+
+        return [
+            'starts_at' => $startTz->toDateTimeString(),
+            'ends_at' => $endTz->toDateTimeString(),
             'cashier_user_id' => $cashierUserId,
             'total_revenue' => $grandTotal,
             'total_invoices' => $totalInvoices,
@@ -497,11 +619,17 @@ class CashierRevenueService
     /**
      * Invoices history query with standard filters and eager loads.
      */
-    public function getInvoiceHistoryQuery(?Carbon $start = null, ?Carbon $end = null, ?int $cashierUserId = null, ?string $paymentMethod = null): Builder
-    {
-        [$startDate, $endDate] = $this->resolveDateRange($start, $end);
+    public function getInvoiceHistoryQuery(
+        ?Carbon $start = null,
+        ?Carbon $end = null,
+        ?int $cashierUserId = null,
+        ?string $paymentMethod = null,
+        bool $isExact = false,
+        bool $exclusiveEnd = false
+    ): Builder {
+        [$startDate, $endDate] = $this->resolveDateRange($start, $end, $isExact);
 
-        $query = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId)
+        $query = $this->baseInvoiceQuery($startDate, $endDate, $cashierUserId, $exclusiveEnd)
             ->with([
                 'cashierUser',
                 'transaction.device',

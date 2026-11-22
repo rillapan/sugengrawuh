@@ -4,6 +4,30 @@
     <!-- Page Heading -->
     <div class="d-sm-flex align-items-center justify-content-between mb-4">
         <h1 class="h3 mb-0 text-gray-800">{{ $title }}</h1>
+        @if(auth()->user()->isAdmin() || auth()->user()->isOwner())
+        <div class="d-flex align-items-center">
+            <form method="GET" action="{{ route('home') }}" class="form-inline">
+                <div class="input-group input-group-sm">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text bg-white"><i class="fas fa-filter text-primary mr-1"></i> Periode:</span>
+                    </div>
+                    <select name="period" class="form-control form-control-sm" onchange="this.form.submit()">
+                        <option value="today" {{ ($period ?? 'today') === 'today' ? 'selected' : '' }}>Hari Ini (Kalender)</option>
+                        <option value="shift" {{ ($period ?? '') === 'shift' ? 'selected' : '' }}>Per Shift</option>
+                    </select>
+                    @if(($period ?? '') === 'shift' && isset($workShifts))
+                        <select name="shift_id" class="form-control form-control-sm ml-1" onchange="this.form.submit()">
+                            @foreach($workShifts as $ws)
+                                <option value="{{ $ws->id }}" {{ (request('shift_id') == $ws->id || (isset($shiftPeriod) && $shiftPeriod['shift_id'] == $ws->id)) ? 'selected' : '' }}>
+                                    {{ $ws->nama_shift }} ({{ \Carbon\Carbon::parse($ws->jam_mulai)->format('H:i') }} - {{ \Carbon\Carbon::parse($ws->jam_selesai)->format('H:i') }})
+                                </option>
+                            @endforeach
+                        </select>
+                    @endif
+                </div>
+            </form>
+        </div>
+        @endif
     </div>
 
 
@@ -108,17 +132,47 @@
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
                                 @if(auth()->user()->isFnbStaff())
-                                    Penerimaan Kasir F&amp;B Hari Ini
+                                    @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                        Penerimaan Kasir F&amp;B — {{ $shiftPeriod['status_label'] }}
+                                    @elseif(isset($shiftPeriod) && !$shiftPeriod['has_shift'])
+                                        Penerimaan Kasir F&amp;B (Tanpa Jadwal Shift)
+                                    @else
+                                        Penerimaan Kasir F&amp;B Hari Ini
+                                    @endif
                                 @elseif(auth()->user()->isKasir())
-                                    Penerimaan Kasir Billing Hari Ini
+                                    @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                        Penerimaan Kasir Billing — {{ $shiftPeriod['status_label'] }}
+                                    @elseif(isset($shiftPeriod) && !$shiftPeriod['has_shift'])
+                                        Penerimaan Kasir Billing (Tanpa Jadwal Shift)
+                                    @else
+                                        Penerimaan Kasir Billing Hari Ini
+                                    @endif
                                 @else
-                                    Penerimaan Konsolidasi Usaha Hari Ini
+                                    @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                        Penerimaan Konsolidasi Usaha — {{ $shiftPeriod['shift_name'] }} ({{ $shiftPeriod['status_label'] }})
+                                    @else
+                                        Penerimaan Konsolidasi Usaha Hari Ini
+                                    @endif
                                 @endif
                             </div>
                             <div class="h5 mb-0 font-weight-bold text-gray-800">
                                 {{ 'Rp ' . number_format($today_pendapatan, 0, ',', '.') }}
                             </div>
                             <small class="text-muted">{{ $invoiceCount ?? 0 }} invoice lunas</small>
+                            @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                <div class="mt-1" style="font-size: 0.75rem;">
+                                    <span class="badge {{ $shiftPeriod['is_active'] ? 'badge-success' : 'badge-secondary' }} text-white">
+                                        {{ $shiftPeriod['status_label'] }}
+                                    </span>
+                                    <span class="text-dark font-weight-bold">{{ $shiftPeriod['shift_name'] }}</span>
+                                    <span class="text-muted">({{ \Carbon\Carbon::parse($shiftPeriod['starts_at'])->format('d M H:i') }} - {{ \Carbon\Carbon::parse($shiftPeriod['ends_at'])->format('d M H:i') }})</span>
+                                </div>
+                            @elseif(isset($shiftPeriod) && !$shiftPeriod['has_shift'] && auth()->user()->isKasir())
+                                <div class="mt-1" style="font-size: 0.75rem;">
+                                    <span class="badge badge-warning text-dark">Tanpa Jadwal Shift</span>
+                                    <span class="text-muted">Mode Kalender Hari Ini</span>
+                                </div>
+                            @endif
                             @if(isset($consolidatedSummary) && (auth()->user()->isAdmin() || auth()->user()->isOwner()))
                                 <div class="mt-1" style="font-size: 0.75rem;">
                                     <span class="text-primary font-weight-bold">Billing:</span> Rp {{ number_format($consolidatedSummary['totals']['total_billing'] ?? 0, 0, ',', '.') }}
@@ -179,7 +233,11 @@
                 <!-- Card Header - Dropdown -->
                 <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                     <h6 class="m-0 font-weight-bold text-primary">
-                        Grafik Pendapatan Hari Ini
+                        @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                            Grafik Pendapatan Shift {{ $shiftPeriod['shift_name'] }} ({{ $shiftPeriod['status_label'] }})
+                        @else
+                            Grafik Pendapatan Hari Ini
+                        @endif
                     </h6>
                     <div class="dropdown no-arrow">
                         <a class="dropdown-toggle" href="#" role="button" id="dropdownMenuLink"
@@ -378,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (ctx3) {
         var myAreaChart = new Chart(ctx3, {
             type: 'line',
-            data: {!! json_encode(app('App\Http\Controllers\HomeController')->hourlyRevenueData()) !!},
+            data: {!! json_encode(app('App\Http\Controllers\HomeController')->hourlyRevenueData(request())) !!},
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -447,7 +505,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Real-time update function for Hourly Revenue
         setInterval(function() {
-            fetch('{{ url("/hourly-revenue-data") }}')
+            var hourlyUrl = '{{ url("/hourly-revenue-data") }}' + (window.location.search ? window.location.search : '');
+            fetch(hourlyUrl)
                 .then(response => response.json())
                 .then(data => {
                     myAreaChart.data = data;
@@ -480,15 +539,41 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="text-center mb-3">
                     <h4 class="text-warning">
                         @if(auth()->user()->isFnbStaff())
-                            Penerimaan Kasir F&amp;B
+                            @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                Penerimaan Kasir F&amp;B — {{ $shiftPeriod['status_label'] }}
+                            @else
+                                Penerimaan Kasir F&amp;B
+                            @endif
                         @elseif(auth()->user()->isKasir())
-                            Penerimaan Kasir Billing
+                            @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                Penerimaan Kasir Billing — {{ $shiftPeriod['status_label'] }}
+                            @else
+                                Penerimaan Kasir Billing
+                            @endif
                         @else
-                            Total Penerimaan Konsolidasi
+                            @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                                Total Penerimaan Shift {{ $shiftPeriod['shift_name'] }} ({{ $shiftPeriod['status_label'] }})
+                            @else
+                                Total Penerimaan Konsolidasi
+                            @endif
                         @endif
                     </h4>
                     <h2 class="font-weight-bold">Rp {{ number_format($today_pendapatan, 0, ',', '.') }}</h2>
                     <small class="text-muted">{{ $invoiceCount ?? 0 }} invoice lunas</small>
+
+                    @if(isset($shiftPeriod) && $shiftPeriod['has_shift'])
+                    <div class="alert alert-info py-2 px-3 mt-3 text-left" style="font-size: 0.85rem;">
+                        <div><i class="fas fa-business-time mr-1"></i> <strong>Shift:</strong> {{ $shiftPeriod['shift_name'] }} ({{ $shiftPeriod['status_label'] }})</div>
+                        <div><i class="fas fa-calendar-alt mr-1"></i> <strong>Tanggal Operasional:</strong> {{ \Carbon\Carbon::parse($shiftPeriod['operational_date'])->translatedFormat('d F Y') }}</div>
+                        <div><i class="fas fa-clock mr-1"></i> <strong>Jam Operasional:</strong> {{ $shiftPeriod['starts_at'] }} s/d {{ $shiftPeriod['ends_at'] }} WIB</div>
+                        <div><i class="fas fa-info-circle mr-1"></i> <strong>Status Periode:</strong> <span class="badge {{ $shiftPeriod['is_active'] ? 'badge-success' : 'badge-secondary' }}">{{ $shiftPeriod['status_label'] }}</span></div>
+                    </div>
+                    @elseif(isset($shiftPeriod) && !$shiftPeriod['has_shift'] && auth()->user()->isKasir())
+                    <div class="alert alert-warning py-2 px-3 mt-3 text-left" style="font-size: 0.85rem;">
+                        <div><i class="fas fa-exclamation-triangle mr-1"></i> <strong>Akun Belum Memiliki Jadwal Shift</strong></div>
+                        <div class="text-muted mt-1">Laporan penerimaan menggunakan periode kalender hari ini (00:00:00 - 23:59:59). Hubungi Administrator untuk menetapkan jam kerja shift Anda.</div>
+                    </div>
+                    @endif
                 </div>
 
                 @if(isset($consolidatedSummary) && (auth()->user()->isAdmin() || auth()->user()->isOwner()))
@@ -595,6 +680,19 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="d-flex justify-content-between align-items-center">
                             <span class="text-muted">Total Uang</span>
                             <span class="fw-bold text-success">Rp {{ number_format($todayPaymentMethodTotals['transfer_bank'], 0, ',', '.') }}</span>
+                        </div>
+                    </div>
+                    @endif
+                    
+                    @if(($todayPaymentMethodCounts['other'] ?? 0) > 0)
+                    <div class="payment-method-item mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold">Pembayaran Lainnya</span>
+                            <span class="badge bg-secondary">{{ $todayPaymentMethodCounts['other'] }}</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-muted">Total Uang</span>
+                            <span class="fw-bold text-success">Rp {{ number_format($todayPaymentMethodTotals['other'] ?? 0, 0, ',', '.') }}</span>
                         </div>
                     </div>
                     @endif

@@ -7,21 +7,29 @@ use App\Models\Invoice;
 use App\Models\Playstation;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\WorkShift;
 use App\Services\Finance\CashierRevenueService;
+use App\Services\Finance\ShiftPeriodResolver;
+use Carbon\Carbon;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
 class HomeController extends Controller
 {
+    protected CashierRevenueService $revenueService;
+    protected ShiftPeriodResolver $shiftPeriodResolver;
+
     /**
      * Create a new controller instance.
      *
      * @return void
      */
-    public function __construct()
+    public function __construct(CashierRevenueService $revenueService, ShiftPeriodResolver $shiftPeriodResolver)
     {
         $this->middleware('auth');
+        $this->revenueService = $revenueService;
+        $this->shiftPeriodResolver = $shiftPeriodResolver;
     }
 
     /**
@@ -35,31 +43,47 @@ class HomeController extends Controller
         $user = auth()->user();
 
         // Get period filter from request
-        $period = $request->input('period', 'today'); // today, week, month, custom
+        $period = $request->input('period');
         $start_date = $request->input('start_date');
         $end_date = $request->input('end_date');
-        
-        // Calculate date range based on period
-        $dateRange = $this->getDateRange($period, $start_date, $end_date);
-        
-        $member = 0;
-        $play = Playstation::count();
-        $transaction = Transaction::count();
-        
-        $revenueService = app(CashierRevenueService::class);
+        $shiftId = $request->input('shift_id');
+        $shiftPeriod = null;
+        $isExact = false;
+        $exclusiveEnd = false;
 
         if ($user->isKasir()) {
-            // Scoped strictly to the logged-in cashier
-            $cashierSummary = $revenueService->getCashierRevenueSummary($dateRange['start'], $dateRange['end'], $user->id);
+            // Default for Cashier (Billing or F&B) is their work shift period
+            if (!$period || in_array($period, ['today', 'shift'], true)) {
+                $shiftPeriod = $this->shiftPeriodResolver->resolveForUser($user);
+                if ($shiftPeriod['has_shift']) {
+                    $dateRange = [
+                        'start' => $shiftPeriod['start_carbon'],
+                        'end' => $shiftPeriod['end_carbon'],
+                    ];
+                    $isExact = true;
+                    $exclusiveEnd = true;
+                    $period = 'shift';
+                } else {
+                    $dateRange = $this->getDateRange('today');
+                    $period = 'today';
+                }
+            } else {
+                $dateRange = $this->getDateRange($period, $start_date, $end_date);
+            }
+
+            // Scoped strictly to the logged-in cashier with exact shift bounds
+            $cashierSummary = $this->revenueService->getCashierRevenueSummary(
+                $dateRange['start'],
+                $dateRange['end'],
+                $user->id,
+                $isExact,
+                $exclusiveEnd
+            );
+
             $todayRevenue = $cashierSummary['total_net'];
             $invoiceCount = $cashierSummary['invoice_count'];
             $todayPaymentMethodTotals = $cashierSummary['payment_methods'];
-
-            $todayPaymentMethodCounts = [
-                'tunai' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'tunai')->count(),
-                'e-wallet' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'e-wallet')->count(),
-                'transfer_bank' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'transfer_bank')->count(),
-            ];
+            $todayPaymentMethodCounts = $cashierSummary['payment_method_counts'];
 
             $todayRevenuePerUser = collect([[
                 'name' => $user->name,
@@ -71,20 +95,54 @@ class HomeController extends Controller
             $consolidatedSummary = null;
             $categorySummary = null;
         } else {
-            // Admin and owner: consolidated across all cashiers and channels
-            $consolidatedSummary = $revenueService->getChannelConsolidatedSummary($dateRange['start'], $dateRange['end']);
-            $categorySummary = $revenueService->getCategoryRevenueSummary($dateRange['start'], $dateRange['end']);
-            $overallSummary = $revenueService->getCashierRevenueSummary($dateRange['start'], $dateRange['end']);
+            // Admin and owner: calendar by default, or explicit shift mode
+            if ($period === 'shift') {
+                $shift = $shiftId ? WorkShift::find($shiftId) : WorkShift::first();
+                if ($shift) {
+                    $targetDate = $start_date ?? $request->input('date');
+                    $shiftPeriod = $targetDate 
+                        ? $this->shiftPeriodResolver->resolveForDate($shift, $targetDate)
+                        : $this->shiftPeriodResolver->resolve($shift);
+                    $dateRange = [
+                        'start' => $shiftPeriod['start_carbon'],
+                        'end' => $shiftPeriod['end_carbon'],
+                    ];
+                    $isExact = true;
+                    $exclusiveEnd = true;
+                } else {
+                    $shiftPeriod = $this->shiftPeriodResolver->resolveFallbackPeriod();
+                    $dateRange = $this->getDateRange('today');
+                }
+            } else {
+                $period = $period ?: 'today';
+                $dateRange = $this->getDateRange($period, $start_date, $end_date);
+            }
+
+            $consolidatedSummary = $this->revenueService->getChannelConsolidatedSummary(
+                $dateRange['start'],
+                $dateRange['end'],
+                $isExact,
+                $exclusiveEnd
+            );
+            $categorySummary = $this->revenueService->getCategoryRevenueSummary(
+                $dateRange['start'],
+                $dateRange['end'],
+                null,
+                $isExact,
+                $exclusiveEnd
+            );
+            $overallSummary = $this->revenueService->getCashierRevenueSummary(
+                $dateRange['start'],
+                $dateRange['end'],
+                null,
+                $isExact,
+                $exclusiveEnd
+            );
 
             $todayRevenue = $consolidatedSummary['totals']['grand_total'];
             $invoiceCount = $overallSummary['invoice_count'];
             $todayPaymentMethodTotals = $overallSummary['payment_methods'];
-
-            $todayPaymentMethodCounts = [
-                'tunai' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'tunai')->count(),
-                'e-wallet' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'e-wallet')->count(),
-                'transfer_bank' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'transfer_bank')->count(),
-            ];
+            $todayPaymentMethodCounts = $overallSummary['payment_method_counts'];
 
             $allCashiers = array_merge(
                 $consolidatedSummary['billing_cashiers'],
@@ -102,9 +160,22 @@ class HomeController extends Controller
             });
         }
 
+        $member = 0;
+        $play = Playstation::count();
+        $transaction = Transaction::count();
+
         $revenue = $todayRevenue;
-        $unpaidReceivables = $revenueService->getUnpaidReceivablesSummary();
-        $recentInvoices = $revenueService->getInvoiceHistoryQuery($dateRange['start'], $dateRange['end'], $user->isKasir() ? $user->id : null)->limit(10)->get();
+        $unpaidReceivables = $this->revenueService->getUnpaidReceivablesSummary();
+        $recentInvoices = $this->revenueService->getInvoiceHistoryQuery(
+            $dateRange['start'],
+            $dateRange['end'],
+            $user->isKasir() ? $user->id : null,
+            null,
+            $isExact,
+            $exclusiveEnd
+        )->limit(10)->get();
+
+        $workShifts = WorkShift::orderBy('jam_mulai')->get();
 
         return view('home', [
             'title' => 'Dashboard',
@@ -114,7 +185,7 @@ class HomeController extends Controller
             'transaksi' => $transaction,
             'pendapatan' => $revenue,
             'todayRevenue' => $todayRevenue,
-            'today_pendapatan' => $todayRevenue, // Add this variable for backward compatibility
+            'today_pendapatan' => $todayRevenue, // Backward compatibility
             'invoiceCount' => $invoiceCount,
             'todayPaymentMethodCounts' => $todayPaymentMethodCounts,
             'todayPaymentMethodTotals' => $todayPaymentMethodTotals,
@@ -126,7 +197,9 @@ class HomeController extends Controller
             'period' => $period,
             'start_date' => $start_date,
             'end_date' => $end_date,
-            'dateRange' => $dateRange
+            'dateRange' => $dateRange,
+            'shiftPeriod' => $shiftPeriod,
+            'workShifts' => $workShifts,
         ]);
     }
 
@@ -184,6 +257,7 @@ class HomeController extends Controller
 
     /**
      * Calculate revenue based on user's shift (for cashiers) or daily (for admin/owner)
+     * @deprecated Preserved for backward compatibility
      */
     private function calculateShiftRevenue($startDate = null, $endDate = null)
     {
@@ -219,6 +293,7 @@ class HomeController extends Controller
 
     /**
      * Calculate revenue based on user's shift (for cashiers) or daily (for admin/owner)
+     * @deprecated Preserved for backward compatibility
      */
     private function calculateShiftRevenueOld()
     {
@@ -253,8 +328,6 @@ class HomeController extends Controller
             ->where('payment_status', 'paid')
             ->sum('total');
     }
-
-
 
     public function pieCartData2(Request $request = null)
     {
@@ -362,24 +435,57 @@ class HomeController extends Controller
         ];
     }
 
-    public function hourlyRevenueData()
+    public function hourlyRevenueData(Request $request = null)
     {
+        $request = $request ?? request();
         $user = auth()->user();
         $cashierId = $user->isKasir() ? $user->id : null;
-        $revenueService = app(CashierRevenueService::class);
-        $seriesData = $revenueService->getHourlyRevenueSeries(now(), $cashierId);
+        $period = $request->input('period');
+        $shiftId = $request->input('shift_id');
+        $shiftPeriod = null;
+
+        if ($user->isKasir()) {
+            if (!$period || in_array($period, ['today', 'shift'], true)) {
+                $shiftPeriod = $this->shiftPeriodResolver->resolveForUser($user);
+            }
+        } elseif ($period === 'shift') {
+            $shift = $shiftId ? WorkShift::find($shiftId) : WorkShift::first();
+            if ($shift) {
+                $targetDate = $request->input('start_date') ?? $request->input('date');
+                $shiftPeriod = $targetDate
+                    ? $this->shiftPeriodResolver->resolveForDate($shift, $targetDate)
+                    : $this->shiftPeriodResolver->resolve($shift);
+            }
+        }
+
+        if ($shiftPeriod && $shiftPeriod['has_shift']) {
+            $seriesData = $this->revenueService->getShiftHourlyRevenueSeries(
+                $shiftPeriod['start_carbon'],
+                $shiftPeriod['end_carbon'],
+                $cashierId
+            );
+
+            if ($user->isFnbStaff()) {
+                $chartLabel = 'Penerimaan Kasir F&B — ' . $shiftPeriod['status_label'];
+            } elseif ($user->isKasir()) {
+                $chartLabel = 'Penerimaan Kasir Billing — ' . $shiftPeriod['status_label'];
+            } else {
+                $chartLabel = 'Penerimaan Konsolidasi (' . $shiftPeriod['shift_name'] . ')';
+            }
+        } else {
+            $seriesData = $this->revenueService->getHourlyRevenueSeries(now(), $cashierId);
+
+            if ($user->isFnbStaff()) {
+                $chartLabel = 'Penerimaan Kasir F&B Per Jam';
+            } elseif ($user->isKasir()) {
+                $chartLabel = 'Penerimaan Kasir Billing Per Jam';
+            } else {
+                $chartLabel = 'Penerimaan Konsolidasi Per Jam';
+            }
+        }
 
         $labels = array_column($seriesData['series'], 'label');
         $totals = array_column($seriesData['series'], 'total');
-
-        $chartLabel = 'Pendapatan Per Jam (Transaksi Paid)';
-        if ($user->isFnbStaff()) {
-            $chartLabel = 'Penerimaan Kasir F&B Per Jam';
-        } elseif ($user->isKasir()) {
-            $chartLabel = 'Penerimaan Kasir Billing Per Jam';
-        } else {
-            $chartLabel = 'Penerimaan Konsolidasi Per Jam';
-        }
 
         $chartData = [
             'labels' => $labels,
@@ -399,7 +505,8 @@ class HomeController extends Controller
                     "pointBorderWidth" => 2,
                     "data" => $totals,
                 ]
-            ]
+            ],
+            'shift_metadata' => $shiftPeriod,
         ];
 
         return $chartData;
