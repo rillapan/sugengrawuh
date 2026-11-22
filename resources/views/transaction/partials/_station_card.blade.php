@@ -63,90 +63,13 @@
     id="station-card-{{ $device->id }}"
     data-device-id="{{ $device->id }}"
     data-station-number="{{ $stationNum ?? '' }}"
+    data-active-tx-id="{{ $activeTx ? $activeTx->id_transaksi : '' }}"
+    data-effective-status="{{ $isUsed ? 'Digunakan' : 'Tersedia' }}"
     data-unpaid-tx-ids="{{ $outstandingUnpaidTxs->pluck('id_transaksi')->implode(',') }}"
     @if ($stationCategory) data-station-category="{{ strtolower($stationCategory) }}" @endif
 >
-    @if (!$isUsed)
-        {{-- State A: Available --}}
-        <header class="pos-card-head">
-            <div class="pos-card-top-row">
-                <span class="pos-station-label">{{ $stationLabel }}</span>
-                <span class="pos-status-pill is-available">
-                    <i class="fas fa-check-circle mr-1" aria-hidden="true"></i>
-                    <span>TERSEDIA</span>
-                </span>
-            </div>
-            <h2 class="pos-station-name">{{ $device->nama }}</h2>
-            @if ($psList->isNotEmpty())
-                <div class="pos-chip-row">
-                    @foreach ($psList as $ps)
-                        <span class="pos-chip">{{ $ps->nama }}</span>
-                    @endforeach
-                </div>
-            @endif
-        </header>
-
-        <div class="pos-card-body">
-            <div class="pos-tariff-line">
-                <div class="pos-tariff-caption">Tarif Reguler:</div>
-                <div class="pos-tariff-amount">
-                    @if ($psList->count() === 1)
-                        Rp {{ number_format($psList->first()->harga ?? 0, 0, ',', '.') }}/jam
-                    @elseif ($psList->count() > 1)
-                        {{ $psList->map(fn ($ps) => $ps->nama . ': Rp ' . number_format($ps->harga ?? 0, 0, ',', '.') . '/jam')->implode(' | ') }}
-                    @else
-                        Tarif belum diatur
-                    @endif
-                </div>
-            </div>
-
-            @if ($mappings->isNotEmpty())
-                <div class="pos-hw-status {{ $hwClass }}">
-                    <span class="pos-hw-dot" aria-hidden="true"></span>
-                    <span>{{ $hwLabel }}</span>
-                </div>
-            @endif
-
-            @include('transaction.partials._unpaid_bills_section', [
-                'outstandingUnpaidTxs' => $outstandingUnpaidTxs,
-                'outstandingSummaries' => $outstandingSummaries,
-                'canOperate' => $canOperate,
-            ])
-        </div>
-
-        <footer class="pos-card-footer">
-            @if ($canOperate)
-                <button
-                    type="button"
-                    class="pos-btn pos-btn-lost-time js-start-lost-time"
-                    data-device-id="{{ $device->id }}"
-                >
-                    <i class="fas fa-stopwatch mr-1" aria-hidden="true"></i>
-                    <span>Lost Time</span>
-                </button>
-                <button
-                    type="button"
-                    class="pos-btn pos-btn-paket-card js-open-paket"
-                    data-device-id="{{ $device->id }}"
-                >
-                    <i class="fas fa-calendar-alt mr-1" aria-hidden="true"></i>
-                    <span>Timer</span>
-                </button>
-                <button
-                    type="button"
-                    class="pos-btn pos-btn-accent js-open-cafe"
-                    data-device-id="{{ $device->id }}"
-                    data-mode="standalone"
-                >
-                    <i class="fas fa-coffee mr-1" aria-hidden="true"></i>
-                    <span>Cafe</span>
-                </button>
-            @else
-                <p class="pos-readonly-note">Mode Pantau (Read-Only)</p>
-            @endif
-        </footer>
-    @elseif ($activeTx)
-        {{-- State B: Active with matched transaction --}}
+    @if ($activeTx)
+        {{-- State B: Active with matched transaction (prioritized unconditionally over stale devices.status) --}}
         @php
             $resolvedTxSummary = (isset($txSummary) && is_array($txSummary))
                 ? $txSummary
@@ -177,6 +100,8 @@
                 ? $activeTx->lost_time_start->copy()->setTimezone(config('app.timezone', 'Asia/Jakarta'))->toIso8601String()
                 : $startedAtIso;
             $expiresAtIso = optional($activeTx->resolveLegacyExpiresAt())->toIso8601String() ?? '';
+            $isRunningPostpaid = ($activeTx->tipe_transaksi === 'postpaid')
+                && ($activeTx->status_transaksi === 'berjalan' || $activeTx->billing_status === \App\Models\Transaction::BILLING_RUNNING);
         @endphp
 
         <header class="pos-card-head">
@@ -339,7 +264,7 @@
                     <span>Berhenti</span>
                 </button>
 
-                @if ($activeTx->tipe_transaksi === 'postpaid' && $activeTx->status_transaksi === 'berjalan')
+                @if ($isRunningPostpaid)
                     <button
                         type="button"
                         class="pos-btn pos-btn-success js-open-selesai"
@@ -352,6 +277,85 @@
                         <span>Selesai</span>
                     </button>
                 @endif
+            @endif
+        </footer>
+    @elseif (!$isUsed)
+        {{-- State A: Available --}}
+        <header class="pos-card-head">
+            <div class="pos-card-top-row">
+                <span class="pos-station-label">{{ $stationLabel }}</span>
+                <span class="pos-status-pill is-available">
+                    <i class="fas fa-check-circle mr-1" aria-hidden="true"></i>
+                    <span>TERSEDIA</span>
+                </span>
+            </div>
+            <h2 class="pos-station-name">{{ $device->nama }}</h2>
+            @if ($psList->isNotEmpty())
+                <div class="pos-chip-row">
+                    @foreach ($psList as $ps)
+                        <span class="pos-chip">{{ $ps->nama }}</span>
+                    @endforeach
+                </div>
+            @endif
+        </header>
+
+        <div class="pos-card-body">
+            <div class="pos-tariff-line">
+                <div class="pos-tariff-caption">Tarif Reguler:</div>
+                <div class="pos-tariff-amount">
+                    @if ($psList->count() === 1)
+                        Rp {{ number_format($psList->first()->harga ?? 0, 0, ',', '.') }}/jam
+                    @elseif ($psList->count() > 1)
+                        {{ $psList->map(fn ($ps) => $ps->nama . ': Rp ' . number_format($ps->harga ?? 0, 0, ',', '.') . '/jam')->implode(' | ') }}
+                    @else
+                        Tarif belum diatur
+                    @endif
+                </div>
+            </div>
+
+            @if ($mappings->isNotEmpty())
+                <div class="pos-hw-status {{ $hwClass }}">
+                    <span class="pos-hw-dot" aria-hidden="true"></span>
+                    <span>{{ $hwLabel }}</span>
+                </div>
+            @endif
+
+            @include('transaction.partials._unpaid_bills_section', [
+                'outstandingUnpaidTxs' => $outstandingUnpaidTxs,
+                'outstandingSummaries' => $outstandingSummaries,
+                'canOperate' => $canOperate,
+            ])
+        </div>
+
+        <footer class="pos-card-footer">
+            @if ($canOperate)
+                <button
+                    type="button"
+                    class="pos-btn pos-btn-lost-time js-start-lost-time"
+                    data-device-id="{{ $device->id }}"
+                >
+                    <i class="fas fa-stopwatch mr-1" aria-hidden="true"></i>
+                    <span>Lost Time</span>
+                </button>
+                <button
+                    type="button"
+                    class="pos-btn pos-btn-paket-card js-open-paket"
+                    data-device-id="{{ $device->id }}"
+                >
+                    <i class="fas fa-calendar-alt mr-1" aria-hidden="true"></i>
+                    <span>Timer</span>
+                </button>
+                <button
+                    type="button"
+                    class="pos-btn pos-btn-accent js-open-cafe"
+                    data-device-id="{{ $device->id }}"
+                    data-mode="standalone"
+                >
+                    <i class="fas fa-coffee mr-1" aria-hidden="true"></i>
+                    <span>Cafe</span>
+                </button>
+            @else
+                <p class="pos-readonly-note">Mode Pantau (Read-Only)</p>
             @endif
         </footer>
     @else
@@ -408,4 +412,3 @@
         </footer>
     @endif
 </article>
-

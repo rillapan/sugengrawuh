@@ -97,8 +97,19 @@ class DeviceController extends Controller
         $stationNumbers = Device::resolveGlobalStationNumbers($sortedDevices);
         foreach ($sortedDevices as $device) {
             $device->setAttribute('station_number', $stationNumbers[$device->id] ?? null);
-            $effectiveStatus = $activeSessions->has((int) $device->id) ? 'Digunakan' : $device->status;
+            $activeTxForDevice = $activeSessions->get((int) $device->id);
+            $effectiveStatus = $activeTxForDevice ? 'Digunakan' : $device->status;
             $device->setAttribute('effective_status', $effectiveStatus);
+
+            if ($activeTxForDevice && $device->status !== 'Digunakan') {
+                $billingService->logStatusDesync(
+                    $device,
+                    $activeTxForDevice,
+                    'DeviceController::index',
+                    'Stale device status detected while rendering device monitoring page',
+                    $now
+                );
+            }
         }
 
         $perPage = 25;
@@ -152,13 +163,7 @@ class DeviceController extends Controller
                         'start_time' => $transaction->waktu_mulai ?: $effectiveStart->format('H:i:s'),
                     ];
                 }
-            } elseif (
-                $transaction->tipe_transaksi === 'postpaid'
-                && (
-                    $transaction->status_transaksi === 'berjalan'
-                    || (Transaction::hasG2Schema() && $transaction->billing_status === Transaction::BILLING_RUNNING)
-                )
-            ) {
+            } elseif ($transaction->tipe_transaksi === 'postpaid') {
                 $postpaidTransactions[$dev->id] = [
                     'start_time' => $transaction->waktu_mulai ?: $effectiveStart->format('H:i:s'),
                     'start_date' => $effectiveStart->format('Y-m-d'),
@@ -178,6 +183,7 @@ class DeviceController extends Controller
                 'tanggal' => $effectiveStart->format('Y-m-d'),
                 'tipe_transaksi' => $transaction->tipe_transaksi,
                 'status_transaksi' => $transaction->status_transaksi,
+                'billing_status' => Transaction::hasG2Schema() ? ($transaction->billing_status ?: Transaction::BILLING_RUNNING) : Transaction::BILLING_RUNNING,
             ];
         }
 
@@ -341,72 +347,61 @@ class DeviceController extends Controller
         $tz = config('app.timezone', 'Asia/Jakarta');
         $now = Carbon::now($tz);
 
-        $devices = Device::with(['playstations'])->get();
-
         /** @var \App\Services\BillingService $billingService */
         $billingService = app(\App\Services\BillingService::class);
-        $activeSessions = $billingService->resolveActiveSessionsByDevice(
-            $devices->pluck('id'),
-            $now,
-            [],
-            $devices
-        );
 
+        if (Transaction::hasG2Schema()) {
+            try {
+                $billingService->evaluateExpiration($now);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('updateDeviceStatusesFromTimers evaluateExpiration failed: ' . $e->getMessage());
+            }
+        }
+
+        $devices = Device::orderBy('id')->get();
         $updatedCount = 0;
 
         foreach ($devices as $device) {
-            // Never release a device that has an authoritative active session
-            if ($activeSessions->has((int) $device->id)) {
-                if ($device->status !== 'Digunakan') {
-                    $device->update(['status' => 'Digunakan']);
-                    $updatedCount++;
+            DB::transaction(function () use ($device, $now, $billingService, &$updatedCount) {
+                $lockedDevice = Device::where('id', $device->id)->lockForUpdate()->first();
+                if (!$lockedDevice) {
+                    return;
                 }
-                continue;
-            }
 
-            if ($device->status !== 'Digunakan') {
-                continue;
-            }
+                $activeSession = $billingService->resolveActiveSessionForDevice((int) $lockedDevice->id, $now);
 
-            // Remaining occupied device without an active session in $activeSessions
-            $latestTransaction = Transaction::where('device_id', $device->id)
-                ->latest('id_transaksi')
-                ->first();
-
-            if (!$latestTransaction) {
-                $device->update(['status' => 'Tersedia']);
-                $updatedCount++;
-                continue;
-            }
-
-            $shouldRelease = false;
-
-            if (in_array($latestTransaction->status_transaksi, ['selesai', 'draft'], true)) {
-                $shouldRelease = true;
-            } elseif (
-                Transaction::hasG2Schema()
-                && in_array($latestTransaction->billing_status, [
-                    Transaction::BILLING_COMPLETED,
-                    Transaction::BILLING_STOPPED_EARLY,
-                    Transaction::BILLING_EXPIRED_PENDING_ACTION,
-                    Transaction::BILLING_IDLE,
-                ], true)
-            ) {
-                $shouldRelease = true;
-            } elseif (in_array($latestTransaction->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
-                $expiresAt = $latestTransaction->resolveLegacyExpiresAt();
-
-                if (!$expiresAt || $expiresAt->lte($now)) {
-                    $shouldRelease = true;
+                // Never release a device that has an authoritative active session
+                if ($activeSession) {
+                    if ($lockedDevice->status !== 'Digunakan') {
+                        if ($billingService->syncDeviceStatus(
+                            $lockedDevice,
+                            'Digunakan',
+                            'DeviceController::updateDeviceStatusesFromTimers',
+                            'STATUS_DESYNC healed stale Tersedia with active session',
+                            $activeSession,
+                            true,
+                            $now
+                        )) {
+                            $updatedCount++;
+                        }
+                    }
+                    return;
                 }
-            } elseif ($latestTransaction->tipe_transaksi === 'postpaid' && $latestTransaction->status_transaksi !== 'berjalan') {
-                $shouldRelease = true;
-            }
 
-            if ($shouldRelease) {
-                $device->update(['status' => 'Tersedia']);
-                $updatedCount++;
-            }
+                if ($lockedDevice->status === 'Digunakan') {
+                    if ($billingService->syncDeviceStatus(
+                        $lockedDevice,
+                        'Tersedia',
+                        'DeviceController::updateDeviceStatusesFromTimers',
+                        'Released occupied device without active session',
+                        null,
+                        false,
+                        $now
+                    )) {
+                        $updatedCount++;
+                    }
+                }
+            });
         }
 
         return response()->json([
@@ -744,7 +739,15 @@ class DeviceController extends Controller
             $activeSession = $billingService->resolveActiveSessionForDevice((int) $device->id, $now);
             if ($activeSession) {
                 if ($device->status !== 'Digunakan') {
-                    $device->update(['status' => 'Digunakan']);
+                    $billingService->syncDeviceStatus(
+                        $device,
+                        'Digunakan',
+                        'DeviceController::updateStatus',
+                        'STATUS_DESYNC healed stale Tersedia on legacy updateStatus rejection',
+                        $activeSession,
+                        true,
+                        $now
+                    );
                 }
 
                 return response()->json([
@@ -757,7 +760,15 @@ class DeviceController extends Controller
             }
 
             if ($device->status !== 'Tersedia') {
-                $device->update(['status' => 'Tersedia']);
+                $billingService->syncDeviceStatus(
+                    $device,
+                    'Tersedia',
+                    'DeviceController::updateStatus',
+                    'Legacy station release with no active session',
+                    null,
+                    false,
+                    $now
+                );
             }
 
             return response()->json([
@@ -839,6 +850,19 @@ class DeviceController extends Controller
         foreach ($devices as $dev) {
             $activeTx = $activeSessions->get((int) $dev->id);
             $effectiveStatus = $activeTx ? 'Digunakan' : $dev->status;
+            $hasDesync = ($activeTx !== null && $dev->status !== 'Digunakan')
+                || ($activeTx === null && $dev->status === 'Digunakan');
+
+            if ($hasDesync) {
+                $billingService->logStatusDesync(
+                    $dev,
+                    $activeTx,
+                    'DeviceController::getTimerSyncData',
+                    'Stale device status detected during /device/timers sync',
+                    $now
+                );
+            }
+
             $txInfo = null;
 
             if ($activeTx) {
@@ -846,13 +870,21 @@ class DeviceController extends Controller
                 $expiresAt = $activeTx->resolveLegacyExpiresAt();
                 $remainingSeconds = $expiresAt ? max(0, $now->diffInSeconds($expiresAt, false)) : 0;
                 $elapsedSeconds = max(0, $started->diffInSeconds($now, false));
+                $lostTimeStart = $activeTx->lost_time_start
+                    ? $activeTx->lost_time_start->copy()->setTimezone(config('app.timezone', 'Asia/Jakarta'))
+                    : $started;
 
                 $txInfo = [
                     'id_transaksi' => $activeTx->id_transaksi,
                     'nama' => $activeTx->nama,
                     'tipe_transaksi' => $activeTx->tipe_transaksi,
-                    'billing_status' => $hasG2 ? ($activeTx->billing_status ?: 'RUNNING') : 'RUNNING',
+                    'status_transaksi' => $activeTx->status_transaksi,
+                    'payment_status' => $activeTx->payment_status,
+                    'billing_status' => $hasG2 ? ($activeTx->billing_status ?: Transaction::BILLING_RUNNING) : Transaction::BILLING_RUNNING,
+                    'waktu_mulai' => $activeTx->waktu_mulai ?: $started->format('H:i:s'),
+                    'waktu_selesai' => $activeTx->waktu_Selesai,
                     'started_at' => $started->toIso8601String(),
+                    'lost_time_start' => $lostTimeStart->toIso8601String(),
                     'expires_at' => $expiresAt ? $expiresAt->toIso8601String() : null,
                     'remaining_seconds' => $remainingSeconds,
                     'elapsed_seconds' => $elapsedSeconds,
@@ -864,6 +896,8 @@ class DeviceController extends Controller
                 'id' => $dev->id,
                 'nama' => $dev->nama,
                 'status' => $effectiveStatus,
+                'stored_device_status' => $dev->status,
+                'has_status_desync' => $hasDesync,
                 'transaction' => $txInfo,
                 'unpaid_transaction_ids' => $outstandingUnpaidByDevice
                     ->get((int) $dev->id, collect())

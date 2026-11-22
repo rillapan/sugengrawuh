@@ -96,18 +96,30 @@ class PaketBillingService
             $device = $tx->device_id
                 ? Device::where('id', $tx->device_id)->lockForUpdate()->firstOrFail()
                 : null;
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
 
             if ($isUnstartedDraft) {
                 if (!$device) {
                     throw new \RuntimeException('Perangkat untuk transaksi ini tidak ditemukan.');
                 }
 
-                $activeOther = Transaction::where('device_id', $device->id)
-                    ->where('billing_status', Transaction::BILLING_RUNNING)
-                    ->where('id_transaksi', '!=', $tx->id_transaksi)
-                    ->exists();
+                $activeSession = $billingService->resolveActiveSessionForDevice((int) $device->id, $now);
+                $activeOther = $activeSession && ((int) $activeSession->id_transaksi !== (int) $tx->id_transaksi);
 
                 if ($activeOther) {
+                    if ($device->status !== 'Digunakan') {
+                        $billingService->syncDeviceStatus(
+                            $device,
+                            'Digunakan',
+                            'PaketBillingService::activatePaidPaket',
+                            'STATUS_DESYNC healed stale Tersedia on active station',
+                            $activeSession,
+                            true,
+                            $now
+                        );
+                    }
                     throw new \RuntimeException('Perangkat "' . $device->nama . '" masih memiliki sesi billing aktif.');
                 }
 
@@ -118,12 +130,21 @@ class PaketBillingService
                     throw new \RuntimeException('Perangkat "' . $device->nama . '" sedang tidak tersedia (' . $device->status . ').');
                 }
             } elseif ($isAlreadyStarted && $device) {
-                $activeOther = Transaction::where('device_id', $device->id)
-                    ->where('billing_status', Transaction::BILLING_RUNNING)
-                    ->where('id_transaksi', '!=', $tx->id_transaksi)
-                    ->exists();
+                $activeSession = $billingService->resolveActiveSessionForDevice((int) $device->id, $now);
+                $activeOther = $activeSession && ((int) $activeSession->id_transaksi !== (int) $tx->id_transaksi);
 
                 if ($activeOther) {
+                    if ($device->status !== 'Digunakan') {
+                        $billingService->syncDeviceStatus(
+                            $device,
+                            'Digunakan',
+                            'PaketBillingService::activatePaidPaket',
+                            'STATUS_DESYNC healed stale Tersedia on active station',
+                            $activeSession,
+                            true,
+                            $now
+                        );
+                    }
                     throw new \RuntimeException('Perangkat "' . $device->nama . '" masih memiliki sesi billing aktif.');
                 }
             }
@@ -321,13 +342,29 @@ class PaketBillingService
                 $updateData['billing_status'] = Transaction::BILLING_RUNNING;
                 $updateData['status_transaksi'] = 'sukses';
 
-                $device->update(['status' => 'Digunakan']);
+                $billingService->syncDeviceStatus(
+                    $device,
+                    'Digunakan',
+                    'PaketBillingService::activatePaidPaket',
+                    'Paid paket draft activated',
+                    $tx,
+                    false,
+                    $now
+                );
             } elseif ($isAlreadyStarted) {
                 if ($tx->status_transaksi !== 'sukses') {
                     $updateData['status_transaksi'] = 'sukses';
                 }
                 if ($device && $device->status !== 'Digunakan') {
-                    $device->update(['status' => 'Digunakan']);
+                    $billingService->syncDeviceStatus(
+                        $device,
+                        'Digunakan',
+                        'PaketBillingService::activatePaidPaket',
+                        'STATUS_DESYNC healed stale Tersedia during running paket payment',
+                        $tx,
+                        true,
+                        $now
+                    );
                 }
             }
 

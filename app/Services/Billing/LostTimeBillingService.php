@@ -185,6 +185,7 @@ class LostTimeBillingService
             $playstation = $transaction->playstation ?: ($device ? ($device->playstations()->first() ?: $device->playstation) : null);
 
             $formattedDuration = null;
+            $shouldReleaseDeviceAfterUpdate = false;
 
             if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
                 // Sesi masih berjalan, hitung durasi sampai sekarang dan hentikan sesi
@@ -198,9 +199,8 @@ class LostTimeBillingService
                 $minutes = $durationMinutes % 60;
                 $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
 
-                // Lepas status perangkat ke Tersedia
                 if ($device) {
-                    $device->update(['status' => 'Tersedia']);
+                    $shouldReleaseDeviceAfterUpdate = true;
 
                     if ($this->intentService->isAutomationEnabled()) {
                         $device->increment('session_generation');
@@ -394,6 +394,18 @@ class LostTimeBillingService
                 $updateData['jam_main'] = $formattedDuration;
             }
             $transaction->update($updateData);
+
+            if ($shouldReleaseDeviceAfterUpdate && $device) {
+                $this->billingService->syncDeviceStatus(
+                    $device,
+                    'Tersedia',
+                    'LostTimeBillingService::checkoutLostTime',
+                    'Lost Time session checked out',
+                    null,
+                    false,
+                    $now
+                );
+            }
 
             return $invoice;
         });

@@ -119,6 +119,7 @@
                 'no_telepon' => $tx->no_telepon ? (string) $tx->no_telepon : null,
                 'tipe_transaksi' => (string) $tx->tipe_transaksi,
                 'status_transaksi' => (string) $tx->status_transaksi,
+                'billing_status' => (string) ($tx->billing_status ?: \App\Models\Transaction::BILLING_RUNNING),
                 'payment_status' => (string) $tx->payment_status,
                 'payment_method' => $tx->payment_method ? (string) $tx->payment_method : null,
                 'waktu_mulai' => (string) $tx->waktu_mulai,

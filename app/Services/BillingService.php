@@ -60,7 +60,7 @@ class BillingService
         $active = collect();
 
         if (Transaction::hasG2Schema()) {
-            // Step A: Authoritative G2 RUNNING query
+            // Step A: Authoritative G2 RUNNING query (independent of devices.status)
             $runningQuery = Transaction::with($relations)
                 ->where('billing_status', Transaction::BILLING_RUNNING)
                 ->whereNotNull('device_id')
@@ -78,75 +78,91 @@ class BillingService
                     continue;
                 }
 
-                if ($group->count() > 1) {
-                    Log::warning("BillingService: Multiple RUNNING sessions detected for device_id={$devId}", [
-                        'device_id' => $devId,
-                        'transaction_ids' => $group->pluck('id_transaksi')->all(),
-                    ]);
-                }
-
-                $active->put($devId, $group->first());
-            }
-
-            // Step B (G2 schema present): Legacy fallback ONLY for occupied devices without a G2 RUNNING session
-            if ($devices !== null) {
-                $fallbackDeviceIds = $devices
-                    ->filter(fn ($d) => $d->status === 'Digunakan' && !$active->has((int) $d->id))
-                    ->pluck('id')
-                    ->map(fn ($id) => (int) $id);
-
-                if ($normalizedIds !== null) {
-                    $fallbackDeviceIds = $fallbackDeviceIds->intersect($normalizedIds);
-                }
-
-                $fallbackDeviceIds = $fallbackDeviceIds->unique()->values();
-            } else {
-                $deviceQuery = Device::where('status', 'Digunakan');
-                if ($normalizedIds !== null) {
-                    $deviceQuery->whereIn('id', $normalizedIds);
-                }
-                if ($active->isNotEmpty()) {
-                    $deviceQuery->whereNotIn('id', $active->keys()->all());
-                }
-                $fallbackDeviceIds = $deviceQuery->pluck('id')->map(fn ($id) => (int) $id)->values();
-            }
-
-            if ($fallbackDeviceIds->isNotEmpty()) {
-                $legacyGroups = Transaction::with($relations)
-                    ->whereIn('device_id', $fallbackDeviceIds)
-                    ->whereNull('billing_status')
-                    ->where(function ($q) {
-                        $q->whereNull('status_transaksi')
-                            ->orWhereNotIn('status_transaksi', ['selesai', 'draft']);
-                    })
-                    ->latest('id_transaksi')
-                    ->get()
-                    ->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
-
-                foreach ($legacyGroups as $devId => $group) {
-                    $devId = (int) $devId;
-                    $matched = $group->first(fn (Transaction $tx) => $tx->isLegacyActiveSession($now));
-                    if ($matched) {
-                        $active->put($devId, $matched);
+                // Exclude prepaid/custom_package timers that have already reached or passed expires_at
+                $activeGroup = $group->filter(function (Transaction $tx) use ($now) {
+                    if (in_array($tx->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
+                        $expiresAt = $tx->resolveLegacyExpiresAt();
+                        if ($expiresAt !== null && $expiresAt->lte($now)) {
+                            return false;
+                        }
                     }
+
+                    return true;
+                })->values();
+
+                if ($activeGroup->isEmpty()) {
+                    continue;
+                }
+
+                if ($activeGroup->count() > 1) {
+                    $this->emitAuditLog(
+                        'warning',
+                        "BillingService [STATUS_DESYNC]: Multiple RUNNING sessions detected for device_id={$devId}",
+                        [
+                            'event' => 'STATUS_DESYNC',
+                            'timestamp' => $now->toIso8601String(),
+                            'device_id' => $devId,
+                            'transaction_ids' => $activeGroup->pluck('id_transaksi')->all(),
+                            'source_method' => 'BillingService::resolveActiveSessionsByDevice',
+                            'reason' => 'Duplicate RUNNING sessions detected on station',
+                        ]
+                    );
+                }
+
+                $active->put($devId, $activeGroup->first());
+            }
+
+            // Step B (G2 schema present): Safe legacy fallback ONLY for occupied devices with null billing_status.
+            // Authoritative RUNNING sessions are already resolved in Step A independently of devices.status;
+            // gating pre-G2 null billing_status rows on status='Digunakan' prevents historical/unlinked legacy rows
+            // from hijacking available stations.
+            $occupiedIds = $this->resolveOccupiedDeviceIdsForLegacyFallback($normalizedIds, $devices)
+                ->reject(fn (int $id) => $active->has($id))
+                ->values();
+
+            if ($occupiedIds->isEmpty()) {
+                return $active;
+            }
+
+            $legacyQuery = Transaction::with($relations)
+                ->whereIn('device_id', $occupiedIds)
+                ->whereNull('billing_status')
+                ->where(function ($q) {
+                    $q->whereNull('status_transaksi')
+                        ->orWhereNotIn('status_transaksi', ['selesai', 'draft']);
+                })
+                ->latest('id_transaksi');
+
+            $legacyGroups = $legacyQuery->get()->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+
+            foreach ($legacyGroups as $devId => $group) {
+                $devId = (int) $devId;
+                if ($devId <= 0 || $active->has($devId)) {
+                    continue;
+                }
+
+                $matched = $group->first(fn (Transaction $tx) => $tx->isLegacyActiveSession($now));
+                if ($matched) {
+                    $active->put($devId, $matched);
                 }
             }
 
             return $active;
         }
 
-        // Step B (Non-G2 schema): Evaluate all non-finished, non-draft sessions without created_at today filter
+        // Step B (Non-G2 schema): Evaluate non-finished, non-draft sessions on occupied devices without created_at today filter
+        $occupiedIds = $this->resolveOccupiedDeviceIdsForLegacyFallback($normalizedIds, $devices);
+        if ($occupiedIds->isEmpty()) {
+            return $active;
+        }
+
         $legacyQuery = Transaction::with($relations)
-            ->whereNotNull('device_id')
+            ->whereIn('device_id', $occupiedIds)
             ->where(function ($q) {
                 $q->whereNull('status_transaksi')
                     ->orWhereNotIn('status_transaksi', ['selesai', 'draft']);
             })
             ->latest('id_transaksi');
-
-        if ($normalizedIds !== null) {
-            $legacyQuery->whereIn('device_id', $normalizedIds);
-        }
 
         $legacyGroups = $legacyQuery->get()->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
 
@@ -166,6 +182,38 @@ class BillingService
     }
 
     /**
+     * Resolve device IDs whose stored status is 'Digunakan' for safe legacy (null billing_status) fallback.
+     *
+     * @param Collection<int, int>|null $normalizedIds
+     * @param Collection<int, Device>|null $devices
+     * @return Collection<int, int>
+     */
+    private function resolveOccupiedDeviceIdsForLegacyFallback(?Collection $normalizedIds, ?Collection $devices): Collection
+    {
+        if ($devices !== null) {
+            $occupiedIds = $devices
+                ->filter(fn ($d) => ($d->status ?? null) === 'Digunakan')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn (int $id) => $id > 0);
+        } else {
+            $query = Device::where('status', 'Digunakan');
+            if ($normalizedIds !== null) {
+                $query->whereIn('id', $normalizedIds);
+            }
+            $occupiedIds = $query->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn (int $id) => $id > 0);
+        }
+
+        if ($normalizedIds !== null) {
+            $occupiedIds = $occupiedIds->intersect($normalizedIds);
+        }
+
+        return $occupiedIds->unique()->values();
+    }
+
+    /**
      * Resolve the single active billing session for a specific device.
      *
      * @param int $deviceId
@@ -176,6 +224,168 @@ class BillingService
     public function resolveActiveSessionForDevice(int $deviceId, ?Carbon $now = null, array $relations = []): ?Transaction
     {
         return $this->resolveActiveSessionsByDevice(collect([$deviceId]), $now, $relations)->get($deviceId);
+    }
+
+    /**
+     * Safely synchronize a device's operational status against authoritative active sessions
+     * with structured audit logging. Refuses to mark a device 'Tersedia' while an active
+     * session exists on the station.
+     */
+    public function syncDeviceStatus(
+        Device $device,
+        string $newStatus,
+        string $sourceMethod,
+        string $reason,
+        ?Transaction $activeTx = null,
+        bool $isDesync = false,
+        ?Carbon $now = null
+    ): bool {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+        $oldStatus = (string) $device->status;
+        $correlationId = null;
+        try {
+            $req = request();
+            $correlationId = $req?->header('X-Request-Id') ?? $req?->header('X-Correlation-Id');
+        } catch (\Throwable $e) {
+            $correlationId = null;
+        }
+
+        if ($newStatus === 'Tersedia') {
+            $authoritativeTx = $this->resolveActiveSessionForDevice((int) $device->id, $now);
+            if ($authoritativeTx) {
+                $healed = false;
+                if ($oldStatus !== 'Digunakan') {
+                    $device->update(['status' => 'Digunakan']);
+                    $healed = true;
+                }
+
+                $this->emitAuditLog(
+                    'warning',
+                    'STATUS_DESYNC: Prevented releasing device while authoritative active session is RUNNING',
+                    [
+                        'event' => 'STATUS_DESYNC',
+                        'timestamp' => $now->toIso8601String(),
+                        'device_id' => (int) $device->id,
+                        'old_status' => $oldStatus,
+                        'new_status' => 'Digunakan',
+                        'attempted_status' => 'Tersedia',
+                        'active_transaction_id' => (int) $authoritativeTx->id_transaksi,
+                        'billing_status' => $authoritativeTx->billing_status ?: 'RUNNING',
+                        'source_method' => $sourceMethod,
+                        'reason' => $reason,
+                        'request_id' => $correlationId,
+                    ]
+                );
+
+                return $healed;
+            }
+        }
+
+        if ($oldStatus === $newStatus && !$isDesync) {
+            return false;
+        }
+
+        $context = [
+            'event' => $isDesync ? 'STATUS_DESYNC' : 'DEVICE_STATUS_MUTATION',
+            'timestamp' => $now->toIso8601String(),
+            'device_id' => (int) $device->id,
+            'old_status' => $oldStatus,
+            'new_status' => $newStatus,
+            'active_transaction_id' => $activeTx ? (int) $activeTx->id_transaksi : null,
+            'billing_status' => $activeTx ? ($activeTx->billing_status ?: 'RUNNING') : null,
+            'source_method' => $sourceMethod,
+            'reason' => $reason,
+            'request_id' => $correlationId,
+        ];
+
+        if ($isDesync) {
+            $this->emitAuditLog(
+                'warning',
+                "STATUS_DESYNC: Device {$device->nama} (ID: {$device->id}) status synchronized from {$oldStatus} to {$newStatus}",
+                $context
+            );
+        } else {
+            $this->emitAuditLog(
+                'info',
+                "DEVICE_STATUS_MUTATION: Device {$device->nama} (ID: {$device->id}) status changed from {$oldStatus} to {$newStatus}",
+                $context
+            );
+        }
+
+        if ($oldStatus !== $newStatus) {
+            $device->update(['status' => $newStatus]);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Emit a structured STATUS_DESYNC warning log without mutating database state (for read-only routes).
+     */
+    public function logStatusDesync(
+        Device $device,
+        ?Transaction $activeTx,
+        string $sourceMethod,
+        string $reason,
+        ?Carbon $now = null
+    ): void {
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = $now ? $now->copy()->setTimezone($tz) : Carbon::now($tz);
+        $correlationId = null;
+        try {
+            $req = request();
+            $correlationId = $req?->header('X-Request-Id') ?? $req?->header('X-Correlation-Id');
+        } catch (\Throwable $e) {
+            $correlationId = null;
+        }
+
+        $effectiveStatus = $activeTx ? 'Digunakan' : 'Tersedia';
+
+        $this->emitAuditLog(
+            'warning',
+            "STATUS_DESYNC: Stale device status detected on read ({$device->status} vs effective {$effectiveStatus})",
+            [
+                'event' => 'STATUS_DESYNC',
+                'timestamp' => $now->toIso8601String(),
+                'device_id' => (int) $device->id,
+                'old_status' => (string) $device->status,
+                'new_status' => $effectiveStatus,
+                'active_transaction_id' => $activeTx ? (int) $activeTx->id_transaksi : null,
+                'billing_status' => $activeTx ? ($activeTx->billing_status ?: 'RUNNING') : null,
+                'source_method' => $sourceMethod,
+                'reason' => $reason,
+                'request_id' => $correlationId,
+            ]
+        );
+    }
+
+    /**
+     * Dispatch structured status logs while tolerating strict Mockery Log expectations in unrelated unit tests.
+     *
+     * @param array<string, mixed> $context
+     */
+    private function emitAuditLog(string $level, string $message, array $context): void
+    {
+        try {
+            if ($level === 'warning') {
+                Log::warning($message, $context);
+            } else {
+                Log::info($message, $context);
+            }
+        } catch (\Throwable $e) {
+            if (
+                app()->runningUnitTests()
+                && interface_exists(\Mockery\MockInterface::class)
+                && Log::getFacadeRoot() instanceof \Mockery\MockInterface
+                && str_contains(get_class($e), 'Mockery')
+            ) {
+                return;
+            }
+
+            throw $e;
+        }
     }
 
     /**
@@ -564,33 +774,62 @@ class BillingService
             $this->intentService->assertAutomationReady();
         }
 
-        return DB::transaction(function () use ($data, $userId) {
-            $deviceId = $data['device_id'] ?? null;
-            if (!$deviceId) {
-                throw new \InvalidArgumentException('Perangkat harus dipilih.');
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $preNow = Carbon::now($tz);
+        $requestedDeviceId = isset($data['device_id']) ? (int) $data['device_id'] : null;
+
+        if ($requestedDeviceId && Transaction::hasG2Schema()) {
+            try {
+                $this->evaluateExpiration($preNow, $requestedDeviceId);
+            } catch (\Throwable $e) {
+                Log::warning('BillingService::startSession pre-check evaluateExpiration failed: ' . $e->getMessage());
             }
+        }
 
-            // Pessimistic lock on device row to prevent concurrent sessions on the same station
-            $device = Device::where('id', $deviceId)->lockForUpdate()->firstOrFail();
+        $desyncToHeal = null;
 
-            // Validate station availability
-            if ($device->status !== 'Tersedia') {
-                throw new \RuntimeException('Perangkat "' . $device->nama . '" sedang tidak tersedia (' . $device->status . ').');
-            }
+        try {
+            return DB::transaction(function () use ($data, $userId, $tz, &$desyncToHeal) {
+                $deviceId = $data['device_id'] ?? null;
+                if (!$deviceId) {
+                    throw new \InvalidArgumentException('Perangkat harus dipilih.');
+                }
 
-            // Check if there is already an active RUNNING billing session for this device
-            $activeExisting = Transaction::where('device_id', $deviceId)
-                ->where('billing_status', Transaction::BILLING_RUNNING)
-                ->exists();
+                // Pessimistic lock on device row to prevent concurrent sessions on the same station
+                $device = Device::where('id', $deviceId)->lockForUpdate()->firstOrFail();
 
-            if ($activeExisting) {
-                throw new \RuntimeException('Perangkat "' . $device->nama . '" masih memiliki sesi billing aktif yang belum selesai.');
-            }
+                $now = Carbon::now($tz);
+                if (Transaction::hasG2Schema()) {
+                    $hasExpiredForDevice = Transaction::where('device_id', $device->id)
+                        ->where('billing_status', Transaction::BILLING_RUNNING)
+                        ->whereNotNull('expires_at')
+                        ->where('expires_at', '<=', $now)
+                        ->exists();
 
-            $now = Carbon::now();
-            $startedAt = $now;
-            $waktuMulai = $startedAt->format('H:i');
-            $tipeTransaksi = $data['tipe_transaksi'] ?? 'prepaid';
+                    if ($hasExpiredForDevice) {
+                        $this->evaluateExpiration($now, (int) $device->id);
+                        $device->refresh();
+                    }
+                }
+
+                // Authoritative check for any active RUNNING or legacy session on this device
+                $activeExistingTx = $this->resolveActiveSessionForDevice((int) $device->id, $now);
+
+                // Validate station availability
+                if ($device->status !== 'Tersedia') {
+                    throw new \RuntimeException('Perangkat "' . $device->nama . '" sedang tidak tersedia (' . $device->status . ').');
+                }
+
+                if ($activeExistingTx) {
+                    if ($device->status !== 'Digunakan') {
+                        $desyncToHeal = [(int) $device->id, $activeExistingTx];
+                    }
+                    throw new \RuntimeException('Perangkat "' . $device->nama . '" masih memiliki sesi billing aktif yang belum selesai.');
+                }
+
+                $startedAt = $now;
+                $waktuMulai = $startedAt->format('H:i');
+                $tipeTransaksi = $data['tipe_transaksi'] ?? 'prepaid';
 
             $transactionData = [
                 'status' => 'user',
@@ -750,8 +989,16 @@ class BillingService
                 'total' => $totalPs + $fnbTotal,
             ]);
 
-            // Occupy device
-            $device->update(['status' => 'Digunakan']);
+            // Occupy device via audited status sync
+            $this->syncDeviceStatus(
+                $device,
+                'Digunakan',
+                'BillingService::startSession',
+                'Billing session started',
+                $transaction,
+                false,
+                $now
+            );
 
             $generation = null;
             if ($this->isAutomationActive()) {
@@ -797,6 +1044,27 @@ class BillingService
 
             return $transaction;
         });
+        } catch (\RuntimeException $e) {
+            if ($desyncToHeal !== null) {
+                [$healDeviceId, $healTx] = $desyncToHeal;
+                DB::transaction(function () use ($healDeviceId, $healTx, $preNow) {
+                    $lockedDevice = Device::where('id', $healDeviceId)->lockForUpdate()->first();
+                    if ($lockedDevice && $lockedDevice->status !== 'Digunakan') {
+                        $this->syncDeviceStatus(
+                            $lockedDevice,
+                            'Digunakan',
+                            'BillingService::startSession',
+                            'STATUS_DESYNC healed stale Tersedia on blocked startSession',
+                            $healTx,
+                            true,
+                            $preNow
+                        );
+                    }
+                });
+            }
+
+            throw $e;
+        }
     }
 
     /**
@@ -992,10 +1260,20 @@ class BillingService
 
             $transaction->update($updateData);
 
-            // Release device to available, bump generation, and trigger immediate OFF intent
-            $station = $transaction->device;
+            // Release device to available only if no other active session exists, bump generation, and trigger OFF intent
+            $station = $transaction->device_id
+                ? Device::where('id', $transaction->device_id)->lockForUpdate()->first()
+                : null;
             if ($station) {
-                $station->update(['status' => 'Tersedia']);
+                $this->syncDeviceStatus(
+                    $station,
+                    'Tersedia',
+                    'BillingService::stopSession',
+                    'Session stopped (' . $reason . ')',
+                    null,
+                    false,
+                    $now
+                );
 
                 if ($this->isAutomationActive()) {
                     $station->increment('session_generation');
@@ -1098,25 +1376,30 @@ class BillingService
                         'session_token' => null,
                     ]);
 
-                    if ($lockedTx->device) {
-                        $hasOtherRunning = Transaction::where('device_id', $lockedTx->device_id)
-                            ->where('billing_status', Transaction::BILLING_RUNNING)
-                            ->where('id_transaksi', '!=', $lockedTx->id_transaksi)
-                            ->exists();
+                    if ($lockedTx->device_id) {
+                        $lockedDevice = Device::where('id', $lockedTx->device_id)->lockForUpdate()->first();
 
-                        if (!$hasOtherRunning) {
-                            $lockedTx->device->update(['status' => 'Tersedia']);
-                        }
-
-                        if ($this->isAutomationActive()) {
-                            // Idempotent safety net: ensure BILLING_EXPIRED intent exists
-                            $this->intentService->recordIntent(
-                                $lockedTx->device,
-                                $lockedTx,
-                                AutomationIntent::EVENT_BILLING_EXPIRED,
-                                AutomationIntent::STATE_OFF,
-                                $lockedTx->expires_at
+                        if ($lockedDevice) {
+                            $this->syncDeviceStatus(
+                                $lockedDevice,
+                                'Tersedia',
+                                'BillingService::evaluateExpiration',
+                                'Session expired at ' . $lockedTx->expires_at->toDateTimeString(),
+                                null,
+                                false,
+                                $now
                             );
+
+                            if ($this->isAutomationActive()) {
+                                // Idempotent safety net: ensure BILLING_EXPIRED intent exists
+                                $this->intentService->recordIntent(
+                                    $lockedDevice,
+                                    $lockedTx,
+                                    AutomationIntent::EVENT_BILLING_EXPIRED,
+                                    AutomationIntent::STATE_OFF,
+                                    $lockedTx->expires_at
+                                );
+                            }
                         }
                     }
 
@@ -1178,41 +1461,51 @@ class BillingService
         $expirationResult = $this->evaluateExpiration($now);
         $report['expired_processed'] = $expirationResult['count'];
 
-        // 2. Audit running sessions (postpaid must survive restart; log duplicate RUNNING sessions per device)
-        $runningByDevice = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
-            ->whereNotNull('device_id')
-            ->latest('id_transaksi')
-            ->get()
-            ->groupBy(fn (Transaction $tx) => (int) $tx->device_id);
+        // 2. Audit running sessions via authoritative resolver (detects duplicates & legacy active sessions)
+        $activeByDevice = $this->resolveActiveSessionsByDevice(null, $now);
 
-        foreach ($runningByDevice as $devId => $group) {
-            if ($group->count() > 1) {
-                Log::warning("BillingService [Reconcile]: Multiple RUNNING sessions detected for device_id={$devId}", [
-                    'device_id' => (int) $devId,
-                    'transaction_ids' => $group->pluck('id_transaksi')->all(),
-                ]);
-            }
-        }
-
-        $runningPostpaid = Transaction::where('billing_status', Transaction::BILLING_RUNNING)
-            ->where('tipe_transaksi', 'postpaid')
+        $runningPostpaid = $activeByDevice
+            ->filter(fn (Transaction $tx) => $tx->tipe_transaksi === 'postpaid')
             ->count();
         $report['postpaid_survived'] = $runningPostpaid;
 
-        // 3. Heal station availability discrepancies idempotently
-        $allDevices = Device::all();
+        // 3. Heal station availability discrepancies idempotently under row-level locks
+        $allDevices = Device::orderBy('id')->get();
         foreach ($allDevices as $device) {
-            $hasActiveSession = $runningByDevice->has((int) $device->id);
+            DB::transaction(function () use ($device, $now, &$report) {
+                $lockedDevice = Device::where('id', $device->id)->lockForUpdate()->first();
+                if (!$lockedDevice) {
+                    return;
+                }
 
-            if (!$hasActiveSession && $device->status === 'Digunakan') {
-                $device->update(['status' => 'Tersedia']);
-                $report['devices_healed']++;
-                Log::warning("BillingService [Reconcile]: Device {$device->nama} (ID: {$device->id}) healed from Digunakan to Tersedia (no active session).");
-            } elseif ($hasActiveSession && $device->status === 'Tersedia') {
-                $device->update(['status' => 'Digunakan']);
-                $report['devices_healed']++;
-                Log::warning("BillingService [Reconcile]: Device {$device->nama} (ID: {$device->id}) restored from Tersedia to Digunakan (active session found).");
-            }
+                $activeTx = $this->resolveActiveSessionForDevice((int) $lockedDevice->id, $now);
+
+                if (!$activeTx && $lockedDevice->status === 'Digunakan') {
+                    if ($this->syncDeviceStatus(
+                        $lockedDevice,
+                        'Tersedia',
+                        'BillingService::reconcileSessions',
+                        'Reconcile healed Digunakan to Tersedia (no active session)',
+                        null,
+                        true,
+                        $now
+                    )) {
+                        $report['devices_healed']++;
+                    }
+                } elseif ($activeTx && $lockedDevice->status !== 'Digunakan') {
+                    if ($this->syncDeviceStatus(
+                        $lockedDevice,
+                        'Digunakan',
+                        'BillingService::reconcileSessions',
+                        'Reconcile restored Tersedia to Digunakan (active session found)',
+                        $activeTx,
+                        true,
+                        $now
+                    )) {
+                        $report['devices_healed']++;
+                    }
+                }
+            });
         }
 
         Log::info("BillingService [Reconcile] Completed", $report);

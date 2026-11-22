@@ -20,12 +20,14 @@ class AutomationStatusService
         $activeRelay = $station->activeLightRelay()->first();
         $activeTv = $station->activeDisplayTv()->first();
         $activeMapping = $activeRelay ?? $activeTv;
+        $activeTx = app(\App\Services\BillingService::class)->resolveActiveSessionForDevice((int) $station->id);
+        $effectiveStationStatus = $activeTx ? 'Digunakan' : $station->status;
 
         if (!$activeMapping) {
             return [
                 'station_id' => $station->id,
                 'station_name' => $station->nama,
-                'station_status' => $station->status,
+                'station_status' => $effectiveStationStatus,
                 'has_hardware' => false,
                 'hardware_state' => 'NO_HARDWARE',
                 'hardware_badge' => [
@@ -83,7 +85,7 @@ class AutomationStatusService
         return [
             'station_id' => $station->id,
             'station_name' => $station->nama,
-            'station_status' => $station->status,
+            'station_status' => $effectiveStationStatus,
             'has_hardware' => true,
             'hardware_state' => $currentState,
             'hardware_badge' => $badge,

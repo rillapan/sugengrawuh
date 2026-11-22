@@ -481,7 +481,7 @@
 
                 apiFetchJson(bootstrap.routes.timersSync, { method: 'GET' })
                     .then(function (res) {
-                        if (!res.ok || !res.data) {
+                        if (!res.ok || !res.data || !Array.isArray(res.data.devices)) {
                             return;
                         }
                         var data = res.data;
@@ -495,12 +495,15 @@
                             }
                         }
 
-                        var serverDevices = Array.isArray(data.devices) ? data.devices : [];
+                        var serverDevices = data.devices;
                         var statusChanged = false;
                         var mismatchParts = [];
 
                         for (var i = 0; i < serverDevices.length; i++) {
                             var dev = serverDevices[i];
+                            if (!dev || dev.id === undefined || dev.id === null) {
+                                continue;
+                            }
                             var card = document.getElementById('station-card-' + dev.id);
                             if (!card) {
                                 continue;
@@ -509,12 +512,33 @@
                             var serverTxId = (dev.transaction && dev.transaction.id_transaksi)
                                 ? Number(dev.transaction.id_transaksi)
                                 : null;
-                            var serverIsUsed = (dev.status === 'Digunakan') || (serverTxId !== null);
+                            var serverBillingStatus = (dev.transaction && dev.transaction.billing_status)
+                                ? String(dev.transaction.billing_status)
+                                : null;
+                            var serverIsUsed = (serverTxId !== null) || (dev.status === 'Digunakan');
 
                             var timerEl = card.querySelector('.js-pos-timer');
-                            var domTxId = (domIsUsed && timerEl && timerEl.dataset.txId)
-                                ? Number(timerEl.dataset.txId)
+                            var rawDomTxId = (timerEl && timerEl.dataset.txId)
+                                ? timerEl.dataset.txId
+                                : (card.dataset.activeTxId || '');
+                            var domTxId = (domIsUsed && rawDomTxId)
+                                ? Number(rawDomTxId)
                                 : null;
+
+                            // Authoritative RUNNING session guard: never hide/reload away an active session
+                            // due to transient or stale devices.status when transaction ID still matches.
+                            if (domTxId !== null && serverTxId === domTxId && serverBillingStatus === 'RUNNING') {
+                                serverIsUsed = true;
+                                if (timerEl && dev.transaction) {
+                                    if (dev.transaction.expires_at && timerEl.dataset.expiresAt !== dev.transaction.expires_at) {
+                                        timerEl.dataset.expiresAt = dev.transaction.expires_at;
+                                        delete expiredSyncTxIds[String(serverTxId)];
+                                    }
+                                    if (dev.transaction.started_at && !timerEl.dataset.startedAt) {
+                                        timerEl.dataset.startedAt = dev.transaction.started_at;
+                                    }
+                                }
+                            }
 
                             var hasServerUnpaid = Array.isArray(dev.unpaid_transaction_ids);
                             var domUnpaidIds = hasServerUnpaid
@@ -1648,7 +1672,7 @@
                 });
                 actionsEl.appendChild(berhentiBtn);
 
-                if (tx.tipe_transaksi === 'postpaid' && tx.status_transaksi === 'berjalan') {
+                if (tx.tipe_transaksi === 'postpaid' && (tx.status_transaksi === 'berjalan' || tx.billing_status === 'RUNNING')) {
                     var selesaiBtn = createEl('button', {
                         type: 'button',
                         className: 'pos-btn pos-btn-success pos-btn-sm'
@@ -1702,7 +1726,7 @@
                 var txTypeLabel = tx.tipe_transaksi === 'prepaid'
                     ? 'Timer'
                     : (tx.tipe_transaksi === 'custom_package' ? 'Custom Paket' : 'Lost Time');
-                var isRunningPostpaid = (tx.tipe_transaksi === 'postpaid' && tx.status_transaksi === 'berjalan');
+                var isRunningPostpaid = (tx.tipe_transaksi === 'postpaid' && (tx.status_transaksi === 'berjalan' || tx.billing_status === 'RUNNING'));
                 var fnbSubtotal = Number(tx.fnb_paid_total || 0) + Number(tx.fnb_unpaid_total || 0);
                 var rentalDisplay = isRunningPostpaid
                     ? 'Dihitung saat selesai'

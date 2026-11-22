@@ -843,7 +843,7 @@
                                     @if ($effectiveStatus === 'Digunakan' && isset($customers[$device->id]))
                                         @if (($customers[$device->id]['tipe_transaksi'] === 'prepaid' || $customers[$device->id]['tipe_transaksi'] === 'custom_package') && isset($timers[$device->id]))
                                             <span class="stitch-timer-badge" id="timer-{{ $device->id }}" data-type="{{ $customers[$device->id]['tipe_transaksi'] }}" data-tx-id="{{ $customers[$device->id]['id_transaksi'] ?? '' }}">Memuat...</span>
-                                        @elseif($customers[$device->id]['tipe_transaksi'] === 'postpaid' && $customers[$device->id]['status_transaksi'] === 'berjalan')
+                                        @elseif($customers[$device->id]['tipe_transaksi'] === 'postpaid' && ($customers[$device->id]['status_transaksi'] === 'berjalan' || ($customers[$device->id]['billing_status'] ?? '') === 'RUNNING'))
                                             @php
                                                 $rawLostStart = $postpaidTransactions[$device->id]['lost_time_start'] ?? null;
                                                 $lostStartIso = '';
@@ -1466,13 +1466,16 @@
                                 alertEl.addClass('d-none');
                             }
 
-                            // Sync station billing status badge (Tersedia / Digunakan) — independent of hardware state
+                            // Sync station billing status badge (Tersedia / Digunakan) — never downgrade an active session card to Tersedia
                             var stationStatus = res.data.station_status;
                             if (stationStatus) {
                                 var statusPill = document.getElementById('status-' + deviceId);
                                 if (statusPill) {
-                                    var dotClass = stationStatus === 'Tersedia' ? 'stitch-dot-available' : 'stitch-dot-used';
-                                    statusPill.innerHTML = '<span class="text-muted small font-weight-medium">Status:</span> <span class="stitch-status-dot ' + dotClass + '"></span><span class="font-weight-bold text-dark small">' + stationStatus + '</span>';
+                                    var hasActiveTx = !!(statusPill.dataset.txId && String(statusPill.dataset.txId).trim() !== '');
+                                    var effectiveBadgeStatus = (hasActiveTx && stationStatus === 'Tersedia') ? 'Digunakan' : stationStatus;
+                                    var dotClass = effectiveBadgeStatus === 'Tersedia' ? 'stitch-dot-available' : 'stitch-dot-used';
+                                    statusPill.dataset.status = effectiveBadgeStatus;
+                                    statusPill.innerHTML = '<span class="text-muted small font-weight-medium">Status:</span> <span class="stitch-status-dot ' + dotClass + '"></span><span class="font-weight-bold text-dark small">' + effectiveBadgeStatus + '</span>';
                                 }
                             }
 

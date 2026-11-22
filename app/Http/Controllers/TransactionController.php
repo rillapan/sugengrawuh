@@ -282,20 +282,41 @@ class TransactionController extends Controller
                 'subtotal' => $payableSubtotal,
             ]);
 
-            // Update device status to available ONLY IF the billing session has ended
-            if ($transaction->device) {
-                if (Transaction::hasG2Schema()) {
-                    $isSessionStillRunning = ($transaction->billing_status === Transaction::BILLING_RUNNING)
-                        && ($transaction->expires_at && $transaction->expires_at->isFuture());
+            // Update device status to available ONLY IF the billing session has ended and no other active session exists
+            if ($transaction->device_id) {
+                $lockedDevice = Device::where('id', $transaction->device_id)->lockForUpdate()->first();
+                if ($lockedDevice) {
+                    /** @var \App\Services\BillingService $billingService */
+                    $billingService = app(\App\Services\BillingService::class);
+                    if (Transaction::hasG2Schema()) {
+                        $isSessionStillRunning = ($transaction->billing_status === Transaction::BILLING_RUNNING)
+                            && ($transaction->expires_at && $transaction->expires_at->isFuture());
 
-                    if (!$isSessionStillRunning) {
-                        $transaction->device->update(['status' => 'Tersedia']);
-                        if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
-                            $transaction->update(['billing_status' => Transaction::BILLING_COMPLETED]);
+                        if (!$isSessionStillRunning) {
+                            if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
+                                $transaction->update(['billing_status' => Transaction::BILLING_COMPLETED]);
+                            }
+                            $billingService->syncDeviceStatus(
+                                $lockedDevice,
+                                'Tersedia',
+                                'TransactionController::processPayment',
+                                'Payment completed on ended session',
+                                null,
+                                false,
+                                $now
+                            );
                         }
+                    } else {
+                        $billingService->syncDeviceStatus(
+                            $lockedDevice,
+                            'Tersedia',
+                            'TransactionController::processPayment',
+                            'Legacy payment completed',
+                            null,
+                            false,
+                            $now
+                        );
                     }
-                } else {
-                    $transaction->device->update(['status' => 'Tersedia']);
                 }
             }
 
@@ -456,6 +477,22 @@ class TransactionController extends Controller
         $txSummaries = [];
         foreach ($activeTransactions as $devId => $activeTx) {
             $txSummaries[(int) $devId] = $billingService->summarizeTransactionBilling($activeTx, $now);
+        }
+
+        foreach ($devices as $device) {
+            $activeTxForDev = $activeTransactions->get((int) $device->id);
+            $effectiveStatus = $activeTxForDev ? 'Digunakan' : $device->status;
+            $device->setAttribute('effective_status', $effectiveStatus);
+
+            if ($activeTxForDev && $device->status !== 'Digunakan') {
+                $billingService->logStatusDesync(
+                    $device,
+                    $activeTxForDev,
+                    'TransactionController::index',
+                    'Stale device status detected while rendering transaction dashboard',
+                    $now
+                );
+            }
         }
 
         $outstandingSummaries = [];
@@ -969,33 +1006,41 @@ class TransactionController extends Controller
                 }
             }
 
+            $existingActiveSession = $billingService->resolveActiveSessionForDevice((int) $targetDevice->id, $txNow);
+            if ($existingActiveSession) {
+                \DB::rollBack();
+
+                if ($targetDevice->status !== 'Digunakan') {
+                    DB::transaction(function () use ($targetDevice, $existingActiveSession, $billingService, $txNow) {
+                        $lockedDev = Device::where('id', $targetDevice->id)->lockForUpdate()->first();
+                        if ($lockedDev && $lockedDev->status !== 'Digunakan') {
+                            $billingService->syncDeviceStatus(
+                                $lockedDev,
+                                'Digunakan',
+                                'TransactionController::store',
+                                'STATUS_DESYNC healed stale Tersedia on rejected double booking',
+                                $existingActiveSession,
+                                true,
+                                $txNow
+                            );
+                        }
+                    });
+                }
+
+                return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' sedang digunakan — masih memiliki sesi billing aktif.');
+            }
+
             if ($targetDevice->status !== 'Tersedia') {
                 \DB::rollBack();
                 return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' sedang tidak tersedia (' . $targetDevice->status . ').');
             }
 
-            if ($hasG2Schema) {
-                $activeExisting = Transaction::where('device_id', $targetDevice->id)
-                    ->where('billing_status', Transaction::BILLING_RUNNING)
-                    ->lockForUpdate()
-                    ->exists();
-                if ($activeExisting) {
-                    \DB::rollBack();
-                    return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.');
-                }
-
-                if (!$isPaket) {
-                    $validatedData['lost_time_start'] = $txNow;
-                    $validatedData['started_at'] = $txNow;
-                    $validatedData['waktu_mulai'] = $txNow->format('H:i');
-                    $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
-                    $validatedData['expires_at'] = null;
-                }
-            }
-
-            if ($billingService->resolveActiveSessionForDevice((int) $targetDevice->id, $txNow)) {
-                \DB::rollBack();
-                return $this->respondStoreError($request, 'Perangkat ' . $targetDevice->nama . ' masih memiliki sesi billing aktif.');
+            if ($hasG2Schema && !$isPaket) {
+                $validatedData['lost_time_start'] = $txNow;
+                $validatedData['started_at'] = $txNow;
+                $validatedData['waktu_mulai'] = $txNow->format('H:i');
+                $validatedData['billing_status'] = Transaction::BILLING_RUNNING;
+                $validatedData['expires_at'] = null;
             }
 
             $transaction = Transaction::create($validatedData);
@@ -1047,7 +1092,15 @@ class TransactionController extends Controller
             }
     
             if (!$isPaket || $activatePaketNow) {
-                $targetDevice->update(['status' => 'Digunakan']);
+                $billingService->syncDeviceStatus(
+                    $targetDevice,
+                    'Digunakan',
+                    'TransactionController::store',
+                    'New billing session started',
+                    $transaction,
+                    false,
+                    $txNow
+                );
 
                 /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
                 $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
@@ -1229,197 +1282,222 @@ class TransactionController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $transaction = Transaction::findOrFail($id);
-        
-        // Only allow editing unpaid transactions
-        if ($transaction->payment_status !== 'unpaid') {
-            return redirect()->route('transaction.index')->with('gagal', 'Hanya transaksi yang belum dibayar yang dapat diedit.');
-        }
-        
         $validatedData = $request->validate([
             'tipe_transaksi' => 'required|in:prepaid,postpaid,custom_package',
             'device_id' => 'required|exists:devices,id',
             'jam_main' => 'nullable|integer|min:1',
             'custom_package_id' => 'nullable|exists:custom_packages,id'
         ]);
-        
-        $oldDeviceId = $transaction->device_id;
-        $newDeviceId = $validatedData['device_id'];
-        $oldTipeTransaksi = $transaction->tipe_transaksi;
-        $newTipeTransaksi = $validatedData['tipe_transaksi'];
-        
-        // Get the new device
-        $newDevice = Device::with('playstation')->findOrFail($newDeviceId);
-        
-        // Check if new device is available (or if it's the same device)
-        if ($newDevice->status !== 'Tersedia' && $newDeviceId != $oldDeviceId) {
-            return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.');
-        }
-        
-        // Prepare update data
-        $updateData = [
-            'device_id' => $newDeviceId,
-            'tipe_transaksi' => $newTipeTransaksi,
-        ];
-        
-        // Handle transaction type changes
-        if ($newTipeTransaksi === 'postpaid') {
-            // Changed to Lost Time
-            $updateData['harga'] = $newDevice->playstation->harga ?? 0;
-            $updateData['jam_main'] = null;
-            $updateData['waktu_Selesai'] = null;
-            $updateData['status_transaksi'] = 'berjalan';
-            
-            // Keep the original lost_time_start if it exists, otherwise set it from authoritative start time
-            // This ensures timer continues from the original start time
-            if (!$transaction->lost_time_start) {
-                $updateData['lost_time_start'] = $transaction->getEffectiveStartTime();
-            }
-            // If lost_time_start already exists, don't change it - timer continues
-            
-            // For postpaid, total is FnB only initially (device cost calculated on end)
-            $fnbTotal = $transaction->getFnbTotalAttribute();
-            $updateData['total'] = $fnbTotal;
 
-        } elseif ($newTipeTransaksi === 'prepaid') {
-            // Changed to Paket OR updating existing Paket
-            $playstation = $newDevice->playstation;
-            $rawJamMain = $validatedData['jam_main'] ?? 1;
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
 
-            if (is_numeric($rawJamMain)) {
-                $durationSeconds = (int) round((float) $rawJamMain * 3600);
-            } elseif (is_string($rawJamMain) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $rawJamMain, $m)) {
-                $durationSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int)$m[3] : 0);
-            } else {
-                $durationSeconds = 3600;
+        return DB::transaction(function () use ($id, $validatedData, $billingService, $now) {
+            $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
+
+            // Only allow editing unpaid transactions
+            if ($transaction->payment_status !== 'unpaid') {
+                return redirect()->route('transaction.index')->with('gagal', 'Hanya transaksi yang belum dibayar yang dapat diedit.');
             }
 
-            $totalPs = $playstation ? $playstation->calculateCustomPrice($durationSeconds) : 0;
-            $fnbTotal = $transaction->getFnbTotalAttribute();
+            $oldDeviceId = $transaction->device_id;
+            $newDeviceId = $validatedData['device_id'];
+            $newTipeTransaksi = $validatedData['tipe_transaksi'];
 
-            $updateData['duration_seconds'] = $durationSeconds;
-            $updateData['jam_main'] = is_numeric($rawJamMain) ? $rawJamMain : \App\Models\HourlyPrice::formatSeconds($durationSeconds);
-            $updateData['harga'] = $playstation->harga ?? 0; // Store base hourly rate for reference
-            $updateData['total'] = $totalPs + $fnbTotal;
-            $updateData['status_transaksi'] = 'sukses';
+            $lockIds = collect([(int) $oldDeviceId, (int) $newDeviceId])->filter(fn ($v) => $v > 0)->unique()->sort()->values()->all();
+            $lockedDevices = Device::with('playstation')->whereIn('id', $lockIds)->lockForUpdate()->get()->keyBy('id');
+            $newDevice = $lockedDevices->get((int) $newDeviceId) ?: Device::with('playstation')->findOrFail($newDeviceId);
 
-            // Calculate elapsed time from authoritative effective start time
-            $waktuMulaiCarbon = $transaction->getEffectiveStartTime();
-            $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
-            $elapsedSeconds = max(0, (int) $waktuMulaiCarbon->diffInSeconds($now, false));
-            $remainingSeconds = $durationSeconds - $elapsedSeconds;
-
-            if ($remainingSeconds > 0) {
-                // There's still time remaining
-                $newExpiresAt = $now->copy()->addSeconds($remainingSeconds);
-                $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
-                if (Transaction::hasG2Schema()) {
-                    $updateData['expires_at'] = $newExpiresAt;
-                    $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+            // Check if new device is available (or if it's the same device)
+            if ((int) $newDeviceId !== (int) $oldDeviceId) {
+                $newDeviceActive = $billingService->resolveActiveSessionForDevice((int) $newDevice->id, $now);
+                if ($newDeviceActive) {
+                    if ($newDevice->status !== 'Digunakan') {
+                        $billingService->syncDeviceStatus(
+                            $newDevice,
+                            'Digunakan',
+                            'TransactionController::update',
+                            'STATUS_DESYNC healed stale Tersedia on target device',
+                            $newDeviceActive,
+                            true,
+                            $now
+                        );
+                    }
+                    return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.');
                 }
-            } else {
-                // Time already exceeded, set end time to now (will be marked as overtime)
-                $updateData['waktu_Selesai'] = $now->format('H:i');
-                if (Transaction::hasG2Schema()) {
-                    $updateData['expires_at'] = $now;
-                    $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                if ($newDevice->status !== 'Tersedia') {
+                    return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak tersedia.');
                 }
             }
-            
-        } elseif ($newTipeTransaksi === 'custom_package') {
-            // Changed to Custom Package
-            $customPackageId = $validatedData['custom_package_id'] ?? null;
-            
-            if (!$customPackageId) {
-                return redirect()->back()->with('gagal', 'Silakan pilih paket custom.');
-            }
-            
-            $customPackage = CustomPackage::with(['playstations', 'fnbs'])->findOrFail($customPackageId);
-            
-            // Validate device is compatible with package
-            $playstationIds = $customPackage->playstations->pluck('id');
-            if (!$playstationIds->contains($newDevice->playstation_id)) {
-                return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak sesuai dengan paket custom.');
-            }
-            
-            $totalJamMain = $customPackage->playstations->sum('pivot.lama_main');
-            
-            $updateData['custom_package_id'] = $customPackageId;
-            $updateData['playstation_id'] = $newDevice->playstation_id;
-            $updateData['harga'] = $customPackage->harga_total;
-            $updateData['total'] = $customPackage->harga_total + $transaction->uninvoiced_legacy_fnb_total;
-            $updateData['jam_main'] = $totalJamMain;
-            $updateData['duration_seconds'] = (int) ($totalJamMain * 60);
-            $updateData['status_transaksi'] = 'sukses';
-            
-            // Calculate elapsed time from authoritative effective start time
-            $waktuMulaiCarbon = $transaction->getEffectiveStartTime();
-            $now = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
-            $elapsedMinutes = max(0, (int) $waktuMulaiCarbon->diffInMinutes($now, false));
-            
-            // Calculate new end time: now + (package duration - elapsed time)
-            $remainingMinutes = $totalJamMain - $elapsedMinutes;
-            
-            if ($remainingMinutes > 0) {
-                $newExpiresAt = $now->copy()->addMinutes($remainingMinutes);
-                $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
-                if (Transaction::hasG2Schema()) {
-                    $updateData['expires_at'] = $newExpiresAt;
-                    $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+
+            // Prepare update data
+            $updateData = [
+                'device_id' => $newDeviceId,
+                'tipe_transaksi' => $newTipeTransaksi,
+            ];
+
+            // Handle transaction type changes
+            if ($newTipeTransaksi === 'postpaid') {
+                // Changed to Lost Time
+                $updateData['harga'] = $newDevice->playstation->harga ?? 0;
+                $updateData['jam_main'] = null;
+                $updateData['waktu_Selesai'] = null;
+                $updateData['status_transaksi'] = 'berjalan';
+
+                // Keep the original lost_time_start if it exists, otherwise set it from authoritative start time
+                if (!$transaction->lost_time_start) {
+                    $updateData['lost_time_start'] = $transaction->getEffectiveStartTime();
                 }
-            } else {
-                $updateData['waktu_Selesai'] = $now->format('H:i');
-                if (Transaction::hasG2Schema()) {
-                    $updateData['expires_at'] = $now;
-                    $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+
+                // For postpaid, total is FnB only initially (device cost calculated on end)
+                $fnbTotal = $transaction->getFnbTotalAttribute();
+                $updateData['total'] = $fnbTotal;
+            } elseif ($newTipeTransaksi === 'prepaid') {
+                // Changed to Paket OR updating existing Paket
+                $playstation = $newDevice->playstation;
+                $rawJamMain = $validatedData['jam_main'] ?? 1;
+
+                if (is_numeric($rawJamMain)) {
+                    $durationSeconds = (int) round((float) $rawJamMain * 3600);
+                } elseif (is_string($rawJamMain) && preg_match('/^(\d+):(\d{2})(?::(\d{2}))?$/', $rawJamMain, $m)) {
+                    $durationSeconds = ($m[1] * 3600) + ($m[2] * 60) + (isset($m[3]) ? (int) $m[3] : 0);
+                } else {
+                    $durationSeconds = 3600;
+                }
+
+                $totalPs = $playstation ? $playstation->calculateCustomPrice($durationSeconds) : 0;
+                $fnbTotal = $transaction->getFnbTotalAttribute();
+
+                $updateData['duration_seconds'] = $durationSeconds;
+                $updateData['jam_main'] = is_numeric($rawJamMain) ? $rawJamMain : \App\Models\HourlyPrice::formatSeconds($durationSeconds);
+                $updateData['harga'] = $playstation->harga ?? 0;
+                $updateData['total'] = $totalPs + $fnbTotal;
+                $updateData['status_transaksi'] = 'sukses';
+
+                $waktuMulaiCarbon = $transaction->getEffectiveStartTime();
+                $elapsedSeconds = max(0, (int) $waktuMulaiCarbon->diffInSeconds($now, false));
+                $remainingSeconds = $durationSeconds - $elapsedSeconds;
+
+                if ($remainingSeconds > 0) {
+                    $newExpiresAt = $now->copy()->addSeconds($remainingSeconds);
+                    $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $newExpiresAt;
+                        $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                    }
+                } else {
+                    $updateData['waktu_Selesai'] = $now->format('H:i');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $now;
+                        $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                    }
+                }
+            } elseif ($newTipeTransaksi === 'custom_package') {
+                $customPackageId = $validatedData['custom_package_id'] ?? null;
+
+                if (!$customPackageId) {
+                    return redirect()->back()->with('gagal', 'Silakan pilih paket custom.');
+                }
+
+                $customPackage = CustomPackage::with(['playstations', 'fnbs'])->findOrFail($customPackageId);
+
+                $playstationIds = $customPackage->playstations->pluck('id');
+                if (!$playstationIds->contains($newDevice->playstation_id)) {
+                    return redirect()->back()->with('gagal', 'Perangkat yang dipilih tidak sesuai dengan paket custom.');
+                }
+
+                $totalJamMain = $customPackage->playstations->sum('pivot.lama_main');
+
+                $updateData['custom_package_id'] = $customPackageId;
+                $updateData['playstation_id'] = $newDevice->playstation_id;
+                $updateData['harga'] = $customPackage->harga_total;
+                $updateData['total'] = $customPackage->harga_total + $transaction->uninvoiced_legacy_fnb_total;
+                $updateData['jam_main'] = $totalJamMain;
+                $updateData['duration_seconds'] = (int) ($totalJamMain * 60);
+                $updateData['status_transaksi'] = 'sukses';
+
+                $waktuMulaiCarbon = $transaction->getEffectiveStartTime();
+                $elapsedMinutes = max(0, (int) $waktuMulaiCarbon->diffInMinutes($now, false));
+                $remainingMinutes = $totalJamMain - $elapsedMinutes;
+
+                if ($remainingMinutes > 0) {
+                    $newExpiresAt = $now->copy()->addMinutes($remainingMinutes);
+                    $updateData['waktu_Selesai'] = $newExpiresAt->format('H:i');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $newExpiresAt;
+                        $updateData['billing_status'] = Transaction::BILLING_RUNNING;
+                    }
+                } else {
+                    $updateData['waktu_Selesai'] = $now->format('H:i');
+                    if (Transaction::hasG2Schema()) {
+                        $updateData['expires_at'] = $now;
+                        $updateData['billing_status'] = Transaction::BILLING_EXPIRED_PENDING_ACTION;
+                    }
                 }
             }
-        }
 
-        
-        // Update the transaction
-        $transaction->update($updateData);
-        
-        // Handle device status changes
-        if ($oldDeviceId != $newDeviceId) {
-            // Release old device
-            $oldDevice = Device::find($oldDeviceId);
-            if ($oldDevice) {
-                $oldDevice->update(['status' => 'Tersedia']);
+            // Update the transaction
+            $transaction->update($updateData);
+
+            // Handle device status changes safely based on authoritative active sessions
+            if ((int) $oldDeviceId !== (int) $newDeviceId) {
+                $oldDevice = $lockedDevices->get((int) $oldDeviceId);
+                if ($oldDevice) {
+                    $billingService->syncDeviceStatus(
+                        $oldDevice,
+                        'Tersedia',
+                        'TransactionController::update',
+                        'Transaction moved from old station to station #' . $newDeviceId,
+                        null,
+                        false,
+                        $now
+                    );
+                }
+
+                if ($billingService->resolveActiveSessionForDevice((int) $newDevice->id, $now)) {
+                    $billingService->syncDeviceStatus(
+                        $newDevice,
+                        'Digunakan',
+                        'TransactionController::update',
+                        'Active transaction moved to station #' . $newDevice->id,
+                        $transaction,
+                        false,
+                        $now
+                    );
+                }
             }
-            
-            // Mark new device as in use
-            $newDevice->update(['status' => 'Digunakan']);
-        }
 
-        /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
-        $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
-        if ($intentService->isAutomationEnabled() && isset($newExpiresAt) && $newDevice) {
-            $intentService->assertAutomationReady();
-            $newDevice->increment('session_generation');
-            $newDevice->refresh();
-            $newGen = (int) $newDevice->session_generation;
-            $transaction->update(['session_generation' => $newGen]);
+            /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
+            $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
+            if ($intentService->isAutomationEnabled() && isset($newExpiresAt) && $newDevice) {
+                $intentService->assertAutomationReady();
+                $newDevice->increment('session_generation');
+                $newDevice->refresh();
+                $newGen = (int) $newDevice->session_generation;
+                $transaction->update(['session_generation' => $newGen]);
 
-            $intentService->cancelPendingOffIntents($transaction);
-            $intentService->recordIntent(
-                $newDevice,
-                $transaction,
-                \App\Models\AutomationIntent::EVENT_BILLING_EXPIRED,
-                \App\Models\AutomationIntent::STATE_OFF,
-                $newExpiresAt
-            );
-        }
+                $intentService->cancelPendingOffIntents($transaction);
+                $intentService->recordIntent(
+                    $newDevice,
+                    $transaction,
+                    \App\Models\AutomationIntent::EVENT_BILLING_EXPIRED,
+                    \App\Models\AutomationIntent::STATE_OFF,
+                    $newExpiresAt
+                );
+            }
 
-        if (TvAlertService::hasTvControlSchema()) {
-            app(TvAlertService::class)->cancelPendingAlertsForTransaction(
-                $transaction,
-                TvAlertEvent::STATUS_CANCELLED,
-                'Session updated/extended'
-            );
-        }
-        
-        return redirect()->route('transaction.index')->with('success', 'Transaksi berhasil diupdate. Timer tetap berjalan.');
+            if (TvAlertService::hasTvControlSchema()) {
+                app(TvAlertService::class)->cancelPendingAlertsForTransaction(
+                    $transaction,
+                    TvAlertEvent::STATUS_CANCELLED,
+                    'Session updated/extended'
+                );
+            }
+
+            return redirect()->route('transaction.index')->with('success', 'Transaksi berhasil diupdate. Timer tetap berjalan.');
+        });
     }
 
     /**
@@ -1437,7 +1515,16 @@ class TransactionController extends Controller
             return redirect('transaction')->with('gagal', 'Transaksi yang sudah lunas tidak dapat dihapus demi integritas audit keuangan.');
         }
 
-        DB::transaction(function () use ($transaction) {
+        DB::transaction(function () use ($id) {
+            $transaction = Transaction::with(['transactionFnbs.fnb'])
+                ->where('id_transaksi', $id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $lockedDevice = $transaction->device_id
+                ? Device::where('id', $transaction->device_id)->lockForUpdate()->first()
+                : null;
+
             // 1. Kembalikan stok FnB dan catat mutasi stok masuk untuk transaksi unpaid yang dihapus
             if ($transaction->status_transaksi !== 'draft' && $transaction->transactionFnbs) {
                 foreach ($transaction->transactionFnbs as $tFnb) {
@@ -1458,11 +1545,6 @@ class TransactionController extends Controller
                 }
             }
 
-            // 2. Kembalikan status perangkat ke 'Tersedia' jika masih terikat transaksi ini
-            if ($transaction->device && $transaction->device->status === 'Digunakan') {
-                $transaction->device->update(['status' => 'Tersedia']);
-            }
-
             if (TvAlertService::hasTvControlSchema()) {
                 app(TvAlertService::class)->cancelPendingAlertsForTransaction(
                     $transaction,
@@ -1478,8 +1560,20 @@ class TransactionController extends Controller
                 'fnb_count' => $transaction->transactionFnbs ? $transaction->transactionFnbs->count() : 0
             ]);
 
-            // 3. Eksekusi penghapusan transaksi
+            $deletedTxId = $transaction->id_transaksi;
+
+            // 2. Eksekusi penghapusan transaksi terlebih dahulu sebelum memeriksa sisa sesi aktif pada perangkat
             $transaction->delete();
+
+            // 3. Kembalikan status perangkat ke 'Tersedia' HANYA jika tidak ada sesi aktif lain yang berjalan
+            if ($lockedDevice && $lockedDevice->status === 'Digunakan') {
+                app(\App\Services\BillingService::class)->syncDeviceStatus(
+                    $lockedDevice,
+                    'Tersedia',
+                    'TransactionController::destroy',
+                    'Unpaid/draft transaction #' . $deletedTxId . ' deleted'
+                );
+            }
         });
 
         return redirect('transaction')->with('success', 'Data transaksi berhasil dihapus.');
@@ -1623,103 +1717,158 @@ class TransactionController extends Controller
 
     public function updateStatus(Request $request, $id)
     {
-        $transaction = Transaction::findOrFail($id);
-        $transaction->update(['status_transaksi' => $request->status_transaksi]);
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $now = Carbon::now($tz);
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
 
-        $deviceStatus = $request->status;
-        if ($request->status_transaksi == 'selesai') {
-            $deviceStatus = 'Tersedia';
-        }
-        Device::where('id', $request->device_id)->update(['status' => $deviceStatus]);
+        DB::transaction(function () use ($request, $id, $billingService, $now) {
+            $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
+            $targetDeviceId = (int) ($request->device_id ?: $transaction->device_id);
+            $lockedDevice = $targetDeviceId > 0
+                ? Device::where('id', $targetDeviceId)->lockForUpdate()->first()
+                : null;
+
+            $txUpdate = ['status_transaksi' => $request->status_transaksi];
+            if ($request->status_transaksi === 'selesai' && Transaction::hasG2Schema()) {
+                if ($transaction->billing_status === Transaction::BILLING_RUNNING) {
+                    $txUpdate['billing_status'] = Transaction::BILLING_COMPLETED;
+                    $txUpdate['ended_at'] = $transaction->ended_at ?? $now;
+                    $txUpdate['session_token'] = null;
+                }
+            }
+            $transaction->update($txUpdate);
+
+            $deviceStatus = $request->status_transaksi === 'selesai'
+                ? 'Tersedia'
+                : ($request->status ?: ($lockedDevice ? $lockedDevice->status : 'Tersedia'));
+
+            if ($lockedDevice && in_array($deviceStatus, ['Tersedia', 'Digunakan'], true)) {
+                $billingService->syncDeviceStatus(
+                    $lockedDevice,
+                    $deviceStatus,
+                    'TransactionController::updateStatus',
+                    'Manual status update via PUT /transaction/{id}/update',
+                    $deviceStatus === 'Digunakan' ? $transaction : null,
+                    false,
+                    $now
+                );
+            }
+        });
 
         return redirect('transaction')->with('success', 'Status transaksi berhasil diupdate.');
     }
 
     public function endTransaction($id)
     {
-        $transaction = Transaction::findOrFail($id);
+        $tz = config('app.timezone', 'Asia/Jakarta');
+        $waktuSelesai = Carbon::now($tz);
+        /** @var \App\Services\BillingService $billingService */
+        $billingService = app(\App\Services\BillingService::class);
 
-        if (!in_array(auth()->user()->role, ['admin', 'kasir']) && $transaction->user_id !== auth()->id()) {
-            abort(403, 'Unauthorized');
-        }
+        $outcome = DB::transaction(function () use ($id, $waktuSelesai, $billingService) {
+            $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
 
-        $canEnd = $transaction->status_transaksi === 'berjalan'
-            || (Transaction::hasG2Schema() && $transaction->billing_status === Transaction::BILLING_RUNNING);
+            if (!in_array(auth()->user()->role, ['admin', 'kasir']) && $transaction->user_id !== auth()->id()) {
+                abort(403, 'Unauthorized');
+            }
 
-        if (!$canEnd) {
+            $canEnd = $transaction->status_transaksi === 'berjalan'
+                || (Transaction::hasG2Schema() && $transaction->billing_status === Transaction::BILLING_RUNNING);
+
+            if (!$canEnd) {
+                return ['can_end' => false, 'transaction' => $transaction];
+            }
+
+            $wasPaid = ($transaction->payment_status === 'paid');
+            $lockedDevice = $transaction->device_id
+                ? Device::where('id', $transaction->device_id)->lockForUpdate()->first()
+                : null;
+
+            if ($transaction->tipe_transaksi === 'postpaid') {
+                $totalFnb = $transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute();
+
+                $startedAt = $transaction->getEffectiveStartTime();
+                $durationMinutes = max(1, (int) $startedAt->diffInMinutes($waktuSelesai, false));
+
+                $playstation = $transaction->playstation ?: ($lockedDevice ? $lockedDevice->playstation : null);
+
+                $totalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+                $roundedTotalPs = $billingService->applyLostTimeRounding($totalPs);
+                $total = $roundedTotalPs + $totalFnb;
+
+                $hours = floor($durationMinutes / 60);
+                $minutes = $durationMinutes % 60;
+                $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
+
+                $updateData = [
+                    'waktu_Selesai' => $waktuSelesai->format('H:i:s'),
+                    'jam_main' => $formattedDuration,
+                    'total' => $total,
+                ];
+            } else {
+                $rentalCost = $transaction->resolvePaketRentalTotal();
+                $extraLegacyFnbTotal = $transaction->uninvoiced_legacy_fnb_total;
+                $unpaidFnbOrdersTotal = $transaction->unpaid_fnb_order_total;
+
+                $updateData = [
+                    'waktu_Selesai' => $waktuSelesai->format('H:i'),
+                ];
+                if (!$wasPaid) {
+                    $updateData['total'] = $rentalCost + $extraLegacyFnbTotal + $unpaidFnbOrdersTotal;
+                }
+            }
+
+            $commonUpdates = [
+                'status_transaksi' => 'selesai',
+                'session_token' => null,
+            ];
+            if (!$wasPaid) {
+                $commonUpdates['payment_status'] = 'unpaid';
+            }
+            if (Transaction::hasG2Schema()) {
+                $commonUpdates['ended_at'] = $waktuSelesai;
+                $commonUpdates['billing_status'] = Transaction::BILLING_COMPLETED;
+            }
+            $updateData = array_merge($updateData, $commonUpdates);
+
+            $transaction->update($updateData);
+
+            // Release device safely only if no other active session exists on this station
+            if ($lockedDevice) {
+                $billingService->syncDeviceStatus(
+                    $lockedDevice,
+                    'Tersedia',
+                    'TransactionController::endTransaction',
+                    'Session ended manually by cashier',
+                    null,
+                    false,
+                    $waktuSelesai
+                );
+            }
+
+            return [
+                'can_end' => true,
+                'was_paid' => $wasPaid,
+                'transaction' => $transaction,
+                'device' => $lockedDevice,
+            ];
+        });
+
+        if (!$outcome['can_end']) {
             return redirect('transaction')->with('gagal', 'Transaksi tidak dapat diakhiri.');
         }
 
-        $waktuSelesai = Carbon::now(config('app.timezone', 'Asia/Jakarta'));
-        $wasPaid = ($transaction->payment_status === 'paid');
-
-        if ($transaction->tipe_transaksi === 'postpaid') {
-            $totalFnb = $transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute();
-
-            // Calculate duration and cost for postpaid (Lost Time) transactions using authoritative timestamps
-            $startedAt = $transaction->getEffectiveStartTime();
-            $durationMinutes = max(1, (int) $startedAt->diffInMinutes($waktuSelesai, false));
-
-            // Get the device and playstation for hourly pricing
-            $device = $transaction->device;
-            $playstation = $transaction->playstation ?: ($device ? $device->playstation : null);
-            
-            // Calculate pricing via BillingService single source of truth
-            /** @var \App\Services\BillingService $billingService */
-            $billingService = app(\App\Services\BillingService::class);
-            $totalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
-            $roundedTotalPs = $billingService->applyLostTimeRounding($totalPs);
-            $total = $roundedTotalPs + $totalFnb;
-
-            $hours = floor($durationMinutes / 60);
-            $minutes = $durationMinutes % 60;
-            $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
-
-            $updateData = [
-                'waktu_Selesai' => $waktuSelesai->format('H:i:s'),
-                'jam_main' => $formattedDuration,
-                'total' => $total,
-            ];
-        } else {
-            $rentalCost = $transaction->resolvePaketRentalTotal();
-            $extraLegacyFnbTotal = $transaction->uninvoiced_legacy_fnb_total;
-            $unpaidFnbOrdersTotal = $transaction->unpaid_fnb_order_total;
-
-            $updateData = [
-                'waktu_Selesai' => $waktuSelesai->format('H:i'),
-            ];
-            if (!$wasPaid) {
-                $updateData['total'] = $rentalCost + $extraLegacyFnbTotal + $unpaidFnbOrdersTotal;
-            }
-        }
-
-        // Common updates for both transaction types
-        $commonUpdates = [
-            'status_transaksi' => 'selesai',
-            'session_token' => null,
-        ];
-        if (!$wasPaid) {
-            $commonUpdates['payment_status'] = 'unpaid';
-        }
-        if (Transaction::hasG2Schema()) {
-            $commonUpdates['ended_at'] = $waktuSelesai;
-            $commonUpdates['billing_status'] = Transaction::BILLING_COMPLETED;
-        }
-        $updateData = array_merge($updateData, $commonUpdates);
-
-        $transaction->update($updateData);
-
-        // Update device status to available
-        if ($transaction->device) {
-            $transaction->device->update(['status' => 'Tersedia']);
-        }
+        /** @var Transaction $transaction */
+        $transaction = $outcome['transaction'];
+        $wasPaid = (bool) $outcome['was_paid'];
+        $station = $outcome['device'];
 
         // Wire automation OFF intent for manual session stop
         try {
             /** @var \App\Services\Hardware\Automation\AutomationIntentService $intentService */
             $intentService = app(\App\Services\Hardware\Automation\AutomationIntentService::class);
-            if ($intentService->isAutomationEnabled() && $transaction->device) {
-                $station = $transaction->device;
+            if ($intentService->isAutomationEnabled() && $station) {
                 $newGen = $intentService->bumpSessionGeneration($station);
                 $transaction->update(['session_generation' => $newGen]);
                 $intentService->cancelPendingOffIntents($transaction);
