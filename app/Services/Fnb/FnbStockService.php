@@ -151,6 +151,13 @@ class FnbStockService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            $hasInvoice = \App\Models\InvoiceItem::whereIn('fnb_order_item_id', $order->items->pluck('id'))->exists()
+                || ($order->transaction_id && \App\Models\Invoice::where('transaction_id', $order->transaction_id)->exists());
+
+            if ($order->payment_status === 'paid' && ($hasInvoice || $order->source !== FnbOrder::SOURCE_QR)) {
+                throw new InvalidArgumentException('Pesanan yang sudah dibayar tidak dapat dibatalkan.');
+            }
+
             if (in_array($order->status, [
                 FnbOrder::STATUS_CANCELLED,
                 FnbOrder::STATUS_EXPIRED,

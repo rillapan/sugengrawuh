@@ -17,15 +17,36 @@ class TransactionsExport implements FromView, ShouldAutoSize, WithHeadings, With
     protected $total;
     protected $dailyTotals;
     protected $standaloneInvoices;
+    protected $invoices;
+    protected $consolidatedSummary;
+    protected $categorySummary;
+    protected $cashierRevenueSummary;
+    protected $selectedCashier;
 
-    public function __construct($transactions, $startDate, $endDate, $total, $dailyTotals, $standaloneInvoices = null)
-    {
+    public function __construct(
+        $transactions,
+        $startDate,
+        $endDate,
+        $total,
+        $dailyTotals,
+        $standaloneInvoices = null,
+        $invoices = null,
+        $consolidatedSummary = null,
+        $categorySummary = null,
+        $cashierRevenueSummary = null,
+        $selectedCashier = null
+    ) {
         $this->transactions = $transactions;
         $this->startDate = $startDate;
         $this->endDate = $endDate;
         $this->total = $total;
         $this->dailyTotals = $dailyTotals;
         $this->standaloneInvoices = $standaloneInvoices ?? collect();
+        $this->invoices = $invoices ?? collect();
+        $this->consolidatedSummary = $consolidatedSummary;
+        $this->categorySummary = $categorySummary;
+        $this->cashierRevenueSummary = $cashierRevenueSummary;
+        $this->selectedCashier = $selectedCashier;
     }
 
     public function view(): View
@@ -37,6 +58,11 @@ class TransactionsExport implements FromView, ShouldAutoSize, WithHeadings, With
             'endDate' => $this->endDate,
             'total' => $this->total,
             'dailyTotals' => $this->dailyTotals,
+            'invoices' => $this->invoices,
+            'consolidatedSummary' => $this->consolidatedSummary,
+            'categorySummary' => $this->categorySummary,
+            'cashierRevenueSummary' => $this->cashierRevenueSummary,
+            'selectedCashier' => $this->selectedCashier,
         ]);
     }
 

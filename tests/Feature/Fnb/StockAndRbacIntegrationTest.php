@@ -453,10 +453,11 @@ class StockAndRbacIntegrationTest extends TestCase
     /** @test */
     public function open_05_fnb_staff_rbac_and_admin_user_management_toggle()
     {
-        // Home redirects F&B staff away from dashboard revenue
+        // Home renders F&B cashier dashboard (SR-FINANCE-001 AC-13)
         $this->actingAs($this->fnbStaff)
             ->get('/home')
-            ->assertRedirect(route('fnb.queue.index'));
+            ->assertStatus(200)
+            ->assertSee('Penerimaan Kasir F&amp;B', false);
 
         // F&B staff can access queue and sidebar hides non-F&B links
         $queuePage = $this->actingAs($this->fnbStaff)->get(route('fnb.queue.index'));
@@ -506,10 +507,10 @@ class StockAndRbacIntegrationTest extends TestCase
         $payRes->assertRedirect(route('fnb.invoice.show', $invoiceCreated->id));
         $this->actingAs($this->fnbStaff)->get(route('fnb.invoice.show', $invoiceCreated->id))->assertStatus(200);
 
-        // F&B staff gets 403 on billing transaction, reports, revenue charts, and hardware routes
+        // F&B staff gets 403 on billing transaction, reports, game charts, and hardware routes
         $this->actingAs($this->fnbStaff)->get('/chart-pie-data')->assertStatus(403);
         $this->actingAs($this->fnbStaff)->get('/chart-area-data')->assertStatus(403);
-        $this->actingAs($this->fnbStaff)->get('/hourly-revenue-data')->assertStatus(403);
+        $this->actingAs($this->fnbStaff)->get('/hourly-revenue-data')->assertStatus(200); // SR-FINANCE-001 AC-13: F&B cashier has scoped hourly chart
         $this->actingAs($this->fnbStaff)->get('/transaction/create')->assertStatus(403);
         $this->actingAs($this->fnbStaff)->get('/transaction')->assertStatus(403);
         $this->actingAs($this->fnbStaff)->get('/report')->assertStatus(403);

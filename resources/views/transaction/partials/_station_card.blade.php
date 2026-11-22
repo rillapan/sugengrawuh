@@ -214,6 +214,17 @@
         <div class="pos-card-body">
             <div class="pos-timer-box">
                 <div class="pos-timer-label">Durasi Berjalan</div>
+                @php
+                    $activePs = $activeTx->playstation ?: ($device->playstation ?: ($device->playstations ? $device->playstations->first() : null));
+                    $hourlyPackagesJson = $activePs ? json_encode($activePs->getAvailableHoursWithPrices()) : '{}';
+                    $initEst = 0;
+                    if ($activeTx->tipe_transaksi === 'postpaid') {
+                        $initStart = $activeTx->getEffectiveStartTime();
+                        $initElapsedMinutes = max(0, (int) $initStart->diffInMinutes(now(), false));
+                        $initRaw = app(\App\Services\BillingService::class)->calculateLostTimePrice($activePs, $initElapsedMinutes);
+                        $initEst = app(\App\Services\BillingService::class)->applyLostTimeRounding($initRaw);
+                    }
+                @endphp
                 <div
                     id="pos-timer-{{ $device->id }}"
                     class="pos-timer-value js-pos-timer"
@@ -223,7 +234,8 @@
                     data-started-at="{{ $startedAtIso }}"
                     data-lost-time-start="{{ $lostTimeStartIso }}"
                     data-expires-at="{{ $expiresAtIso }}"
-                    data-hourly-rate="{{ (int) ($activeTx->harga ?? 0) }}"
+                    data-hourly-rate="{{ (int) ($activeTx->harga ?? ($activePs->harga ?? 0)) }}"
+                    data-hourly-packages="{{ $hourlyPackagesJson }}"
                     data-fnb-unpaid="{{ (int) $unpaidFnbTotal }}"
                 >--:--:--</div>
                 <div class="pos-timer-sub">
@@ -235,7 +247,7 @@
                 @if ($activeTx->tipe_transaksi === 'postpaid')
                     <div class="pos-cost-row">
                         <span>Estimasi Main:</span>
-                        <strong id="pos-est-rental-{{ $device->id }}">Rp 0</strong>
+                        <strong id="pos-est-rental-{{ $device->id }}">Rp {{ number_format($initEst, 0, ',', '.') }}</strong>
                     </div>
                     @if ($totalFnbDisplay > 0)
                         <div class="pos-cost-row">

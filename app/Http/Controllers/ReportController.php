@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Invoice;
 use App\Models\Playstation;
 use App\Models\Transaction;
+use App\Models\User;
+use App\Services\Finance\CashierRevenueService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Barryvdh\DomPDF\Facade\Pdf as PDF;
@@ -14,6 +16,12 @@ use Carbon\Carbon;
 
 class ReportController extends Controller
 {
+    protected CashierRevenueService $cashierRevenueService;
+
+    public function __construct(CashierRevenueService $cashierRevenueService)
+    {
+        $this->cashierRevenueService = $cashierRevenueService;
+    }
     private function getDatesFromRequest(Request $request)
     {
         $period = $request->input('period');
@@ -251,6 +259,11 @@ class ReportController extends Controller
         // Get all PlayStation types for filtering
         $playstationTypes = Playstation::all();
 
+        // Cashier user list for filter dropdown
+        $cashierList = User::whereIn('role', ['kasir', 'admin', 'owner'])
+            ->orderBy('name')
+            ->get();
+
         // Include paid Transaction totals PLUS paid standalone F&B invoices (no double-counting GAME_AND_FNB / GAME_ONLY)
         $dailyIncome = Transaction::where('payment_status', 'paid')
             ->whereDate('created_at', $now->toDateString())
@@ -281,18 +294,30 @@ class ReportController extends Controller
         // Resolve dates
         list($startDate, $endDate, $period) = $this->getDatesFromRequest($request);
 
-        // Get selected PlayStation types from request
+        // Get selected filters from request
         $selectedPlaystationIds = $request->input('playstation_types', []);
+        $selectedCashierUserId = $request->input('cashier_user_id') ? (int) $request->input('cashier_user_id') : null;
+        $paymentMethod = $request->input('payment_method') ?: null;
 
         $periodIncome = 0;
         $chartData = [];
         $chartLabels = [];
         $chartDatasets = [];
 
-        if ($startDate && $endDate) {
-            $start = Carbon::parse($startDate)->startOfDay();
-            $end = Carbon::parse($endDate)->endOfDay();
+        // Determine range for multi-cashier Single Source of Truth analysis
+        $start = ($startDate && $endDate)
+            ? Carbon::parse($startDate, CashierRevenueService::TIMEZONE)->startOfDay()
+            : $now->copy()->setTimezone(CashierRevenueService::TIMEZONE)->startOfDay();
+        $end = ($startDate && $endDate)
+            ? Carbon::parse($endDate, CashierRevenueService::TIMEZONE)->endOfDay()
+            : $now->copy()->setTimezone(CashierRevenueService::TIMEZONE)->endOfDay();
 
+        $consolidatedSummary = $this->cashierRevenueService->getChannelConsolidatedSummary($start, $end);
+        $categorySummary = $this->cashierRevenueService->getCategoryRevenueSummary($start, $end, $selectedCashierUserId);
+        $cashierRevenueSummary = $this->cashierRevenueService->getCashierRevenueSummary($start, $end, $selectedCashierUserId);
+        $invoices = $this->cashierRevenueService->getInvoiceHistoryQuery($start, $end, $selectedCashierUserId, $paymentMethod)->get();
+
+        if ($startDate && $endDate) {
             $periodTransactions = $this->getPaidTransactionsQuery($start, $end, $selectedPlaystationIds)->get();
             $periodStandaloneInvoices = $this->getStandaloneFnbInvoicesQuery($selectedPlaystationIds)
                 ->whereBetween('paid_at', [$start, $end])
@@ -324,6 +349,13 @@ class ReportController extends Controller
             'chartDatasets' => $chartDatasets,
             'playstationTypes' => $playstationTypes,
             'selectedPlaystationIds' => $selectedPlaystationIds,
+            'cashierList' => $cashierList,
+            'selectedCashierUserId' => $selectedCashierUserId,
+            'paymentMethod' => $paymentMethod,
+            'consolidatedSummary' => $consolidatedSummary,
+            'categorySummary' => $categorySummary,
+            'cashierRevenueSummary' => $cashierRevenueSummary,
+            'invoices' => $invoices,
         ]);
     }
 
@@ -331,6 +363,8 @@ class ReportController extends Controller
     {
         list($startDate, $endDate, $period) = $this->getDatesFromRequest($request);
         $selectedPlaystationIds = $request->input('playstation_types', []);
+        $selectedCashierUserId = $request->input('cashier_user_id') ? (int) $request->input('cashier_user_id') : null;
+        $paymentMethod = $request->input('payment_method') ?: null;
 
         $start = Carbon::parse($startDate)->startOfDay();
         $end = Carbon::parse($endDate)->endOfDay();
@@ -342,6 +376,12 @@ class ReportController extends Controller
 
         $total = $transactions->sum('total') + $standaloneInvoices->sum('final_total');
         $dailyTotals = $this->buildDailyTotals($transactions, $standaloneInvoices);
+
+        $consolidatedSummary = $this->cashierRevenueService->getChannelConsolidatedSummary($start, $end);
+        $categorySummary = $this->cashierRevenueService->getCategoryRevenueSummary($start, $end, $selectedCashierUserId);
+        $cashierRevenueSummary = $this->cashierRevenueService->getCashierRevenueSummary($start, $end, $selectedCashierUserId);
+        $invoices = $this->cashierRevenueService->getInvoiceHistoryQuery($start, $end, $selectedCashierUserId, $paymentMethod)->get();
+        $selectedCashier = $selectedCashierUserId ? User::find($selectedCashierUserId) : null;
 
         $pdf = PDF::loadView('laporan.cetak-pdf', [
             'title' => 'Laporan Transaksi',
@@ -353,6 +393,11 @@ class ReportController extends Controller
             'total' => $total,
             'dailyTotals' => $dailyTotals,
             'selectedPlaystationIds' => $selectedPlaystationIds,
+            'consolidatedSummary' => $consolidatedSummary,
+            'categorySummary' => $categorySummary,
+            'cashierRevenueSummary' => $cashierRevenueSummary,
+            'invoices' => $invoices,
+            'selectedCashier' => $selectedCashier,
         ]);
         return $pdf->download('laporan.pdf');
     }
@@ -361,6 +406,8 @@ class ReportController extends Controller
     {
         list($startDate, $endDate, $period) = $this->getDatesFromRequest($request);
         $selectedPlaystationIds = $request->input('playstation_types', []);
+        $selectedCashierUserId = $request->input('cashier_user_id') ? (int) $request->input('cashier_user_id') : null;
+        $paymentMethod = $request->input('payment_method') ?: null;
 
         $start = Carbon::parse($startDate)->startOfDay();
         $end = Carbon::parse($endDate)->endOfDay();
@@ -373,8 +420,26 @@ class ReportController extends Controller
         $total = $transactions->sum('total') + $standaloneInvoices->sum('final_total');
         $dailyTotals = $this->buildDailyTotals($transactions, $standaloneInvoices);
 
+        $consolidatedSummary = $this->cashierRevenueService->getChannelConsolidatedSummary($start, $end);
+        $categorySummary = $this->cashierRevenueService->getCategoryRevenueSummary($start, $end, $selectedCashierUserId);
+        $cashierRevenueSummary = $this->cashierRevenueService->getCashierRevenueSummary($start, $end, $selectedCashierUserId);
+        $invoices = $this->cashierRevenueService->getInvoiceHistoryQuery($start, $end, $selectedCashierUserId, $paymentMethod)->get();
+        $selectedCashier = $selectedCashierUserId ? User::find($selectedCashierUserId) : null;
+
         return Excel::download(
-            new TransactionsExport($transactions, $startDate, $endDate, $total, $dailyTotals, $standaloneInvoices),
+            new TransactionsExport(
+                $transactions,
+                $startDate,
+                $endDate,
+                $total,
+                $dailyTotals,
+                $standaloneInvoices,
+                $invoices,
+                $consolidatedSummary,
+                $categorySummary,
+                $cashierRevenueSummary,
+                $selectedCashier
+            ),
             'laporan.xlsx'
         );
     }

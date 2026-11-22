@@ -10,7 +10,50 @@
 
     <!-- Content Row -->
     <div class="row">
-        <!-- Earnings (Monthly) Card Example -->
+        @if(auth()->user()->isFnbStaff())
+        <!-- Quick Action: Antrean F&B -->
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Antrean Dapur F&amp;B
+                            </div>
+                            <a href="{{ route('fnb.queue.index') }}" class="btn btn-sm btn-primary mt-2">
+                                <i class="fas fa-concierge-bell"></i> Buka Antrean Order
+                            </a>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-concierge-bell fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Action: Transaksi F&B -->
+        <div class="col-xl-4 col-md-6 mb-4">
+            <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                Kasir Cafe / F&amp;B
+                            </div>
+                            <a href="{{ route('fnb.orders.create') }}" class="btn btn-sm btn-success mt-2">
+                                <i class="fas fa-cash-register"></i> Buat Pesanan Baru
+                            </a>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-utensils fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @else
+        <!-- Kategori Permainan -->
         <div class="col-xl-4 col-md-6 mb-4">
             <div class="card border-left-success shadow h-100 py-2">
                 <div class="card-body">
@@ -31,7 +74,7 @@
             </div>
         </div>
 
-        <!-- Earnings (Monthly) Card Example -->
+        <!-- Data Transaksi -->
         <div class="col-xl-4 col-md-6 mb-4">
             <div class="card border-left-info shadow h-100 py-2">
                 <div class="card-body">
@@ -46,7 +89,6 @@
                                         {{ $transaksi }}
                                     </div>
                                 </div>
-
                             </div>
                         </div>
                         <div class="col-auto">
@@ -56,26 +98,41 @@
                 </div>
             </div>
         </div>
+        @endif
 
-        <!-- Pending Requests Card Example -->
+        <!-- Revenue Summary Card -->
         <div class="col-xl-4 col-md-6 mb-4">
             <div class="card border-left-warning shadow h-100 py-2">
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
                             <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                                @if(auth()->user()->isKasir())
-                                    Total Pendapatan Sesuai Jam Kerja Shift
+                                @if(auth()->user()->isFnbStaff())
+                                    Penerimaan Kasir F&amp;B Hari Ini
+                                @elseif(auth()->user()->isKasir())
+                                    Penerimaan Kasir Billing Hari Ini
                                 @else
-                                    Total Pendapatan Hari Ini
+                                    Penerimaan Konsolidasi Usaha Hari Ini
                                 @endif
                             </div>
                             <div class="h5 mb-0 font-weight-bold text-gray-800">
                                 {{ 'Rp ' . number_format($today_pendapatan, 0, ',', '.') }}
                             </div>
+                            <small class="text-muted">{{ $invoiceCount ?? 0 }} invoice lunas</small>
+                            @if(isset($consolidatedSummary) && (auth()->user()->isAdmin() || auth()->user()->isOwner()))
+                                <div class="mt-1" style="font-size: 0.75rem;">
+                                    <span class="text-primary font-weight-bold">Billing:</span> Rp {{ number_format($consolidatedSummary['totals']['total_billing'] ?? 0, 0, ',', '.') }}
+                                    <span class="mx-1">|</span>
+                                    <span class="text-success font-weight-bold">F&amp;B:</span> Rp {{ number_format($consolidatedSummary['totals']['total_fnb'] ?? 0, 0, ',', '.') }}
+                                    @if(($consolidatedSummary['totals']['total_admin'] ?? 0) > 0)
+                                        <span class="mx-1">|</span>
+                                        <span class="text-secondary font-weight-bold">Admin:</span> Rp {{ number_format($consolidatedSummary['totals']['total_admin'] ?? 0, 0, ',', '.') }}
+                                    @endif
+                                </div>
+                            @endif
                         </div>
                         <div class="col-auto">
-                            <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#todayRevenueDetailModal" title="Lihat Detail Pembayaran Hari Ini">
+                            <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#todayRevenueDetailModal" title="Lihat Detail Pembayaran">
                                 <i class="fas fa-eye"></i>
                             </button>
                         </div>
@@ -84,6 +141,35 @@
             </div>
         </div>
     </div>
+
+    @if(isset($categorySummary) && (auth()->user()->isAdmin() || auth()->user()->isOwner()))
+    <div class="row mb-2">
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body py-2">
+                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Penjualan PlayStation (Neto)</div>
+                    <div class="h5 mb-0 font-weight-bold text-gray-800">Rp {{ number_format($categorySummary['categories']['PLAYSTATION']['net'] ?? 0, 0, ',', '.') }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body py-2">
+                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Penjualan Billiard (Neto)</div>
+                    <div class="h5 mb-0 font-weight-bold text-gray-800">Rp {{ number_format($categorySummary['categories']['BILLIARD']['net'] ?? 0, 0, ',', '.') }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-info shadow h-100 py-2">
+                <div class="card-body py-2">
+                    <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Penjualan Cafe / F&amp;B (Neto)</div>
+                    <div class="h5 mb-0 font-weight-bold text-gray-800">Rp {{ number_format($categorySummary['categories']['CAFE']['net'] ?? 0, 0, ',', '.') }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
 
     <!-- Content Row -->
     <div class="row">
@@ -380,40 +466,60 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="todayRevenueDetailModalLabel">
-                    @if(auth()->user()->isKasir())
-                        Detail Pendapatan Shift
+                    @if(auth()->user()->isFnbStaff())
+                        Detail Penerimaan Kasir F&amp;B
+                    @elseif(auth()->user()->isKasir())
+                        Detail Penerimaan Kasir Billing
                     @else
-                        Detail Pembayaran Hari Ini
+                        Detail Penerimaan &amp; Rekonsiliasi Usaha
                     @endif
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                @if(auth()->user()->isKasir() && $todayRevenuePerUser->count() > 0)
-                    @foreach($todayRevenuePerUser as $userRevenue)
-                        @php
-                            $workShift = \App\Models\WorkShift::find($userRevenue->work_shift_id);
-                        @endphp
-                        <div class="text-center mb-4">
-                            <h4 class="text-warning">Total Pendapatan Shift</h4>
-                            <h5 class="text-info">{{ $workShift ? $workShift->nama_shift : 'Shift' }} - {{ $userRevenue->name }}</h5>
-                            <p class="text-muted mb-2">
-                                <i class="fas fa-clock"></i> 
-                                Jam Kerja: {{ $workShift ? $workShift->jam_mulai . ' - ' . $workShift->jam_selesai : '-' }}
-                            </p>
-                            <h2 class="font-weight-bold">Rp {{ number_format($userRevenue->revenue, 0, ',', '.') }}</h2>
-                        </div>
-                    @endforeach
-                @else
-                    <div class="text-center mb-3">
-                        @if(auth()->user()->isKasir())
-                            <h4 class="text-warning">Total Pendapatan Shift</h4>
-                            <p class="text-muted">Belum ada pendapatan untuk shift Anda hari ini</p>
+                <div class="text-center mb-3">
+                    <h4 class="text-warning">
+                        @if(auth()->user()->isFnbStaff())
+                            Penerimaan Kasir F&amp;B
+                        @elseif(auth()->user()->isKasir())
+                            Penerimaan Kasir Billing
                         @else
-                            <h4 class="text-warning">Total Pendapatan Hari Ini</h4>
-                            <h2 class="font-weight-bold">Rp {{ number_format($today_pendapatan, 0, ',', '.') }}</h2>
+                            Total Penerimaan Konsolidasi
                         @endif
+                    </h4>
+                    <h2 class="font-weight-bold">Rp {{ number_format($today_pendapatan, 0, ',', '.') }}</h2>
+                    <small class="text-muted">{{ $invoiceCount ?? 0 }} invoice lunas</small>
+                </div>
+
+                @if(isset($consolidatedSummary) && (auth()->user()->isAdmin() || auth()->user()->isOwner()))
+                <hr>
+                <div class="channel-breakdown mb-3">
+                    <h6 class="text-muted mb-2 font-weight-bold">Rekapitulasi Per Kanal Kasir:</h6>
+                    <div class="list-group">
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>Kasir Billing Utama</span>
+                            <span class="font-weight-bold text-primary">Rp {{ number_format($consolidatedSummary['totals']['total_billing'], 0, ',', '.') }}</span>
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>Kasir F&amp;B</span>
+                            <span class="font-weight-bold text-success">Rp {{ number_format($consolidatedSummary['totals']['total_fnb'], 0, ',', '.') }}</span>
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>Penerimaan Admin</span>
+                            <span class="font-weight-bold text-info">Rp {{ number_format($consolidatedSummary['totals']['total_admin'], 0, ',', '.') }}</span>
+                        </div>
+                        @if($consolidatedSummary['totals']['total_legacy_unattributed'] > 0)
+                        <div class="list-group-item d-flex justify-content-between align-items-center bg-light">
+                            <span>Belum Teratribusi (Transaksi Legacy)</span>
+                            <span class="font-weight-bold text-secondary">Rp {{ number_format($consolidatedSummary['totals']['total_legacy_unattributed'], 0, ',', '.') }}</span>
+                        </div>
+                        @endif
+                        <div class="list-group-item d-flex justify-content-between align-items-center bg-light">
+                            <span class="font-weight-bold">Grand Total Usaha</span>
+                            <span class="font-weight-bold text-dark">Rp {{ number_format($consolidatedSummary['totals']['grand_total'], 0, ',', '.') }}</span>
+                        </div>
                     </div>
+                </div>
                 @endif
                 
                 <hr>

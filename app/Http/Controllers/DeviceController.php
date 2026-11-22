@@ -807,17 +807,19 @@ class DeviceController extends Controller
                     $totalFnb = $activeTransaction->getFnbTotalAttribute();
 
                     if ($activeTransaction->tipe_transaksi === 'postpaid') {
-                        // Calculate duration and cost for postpaid transactions
-                        $waktuMulai = Carbon::parse($activeTransaction->created_at->toDateString() . ' ' . $activeTransaction->waktu_mulai);
-                        $durationMinutes = $waktuMulai->diffInMinutes($waktuSelesai, false);
+                        // Calculate duration and cost for postpaid transactions using authoritative timestamps
+                        $startedAt = $activeTransaction->getEffectiveStartTime();
+                        $durationMinutes = max(1, (int) $startedAt->diffInMinutes($waktuSelesai, false));
 
                         if ($durationMinutes < 0) {
                             $durationMinutes = 24 * 60 + $durationMinutes;
                         }
 
-                        $playstation = $activeTransaction->device->playstation;
-                        $totalPs = $this->calculateLostTimePrice($playstation, $durationMinutes);
-                        $roundedTotalPs = $this->applyLostTimeRounding($totalPs);
+                        $playstation = $activeTransaction->playstation ?: ($activeTransaction->device ? $activeTransaction->device->playstation : null);
+                        /** @var \App\Services\BillingService $billingService */
+                        $billingService = app(\App\Services\BillingService::class);
+                        $totalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+                        $roundedTotalPs = $billingService->applyLostTimeRounding($totalPs);
                         $total = $roundedTotalPs + $totalFnb;
 
                         $hours = floor($durationMinutes / 60);
@@ -825,7 +827,7 @@ class DeviceController extends Controller
                         $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
 
                         $payload = [
-                            'waktu_Selesai' => $waktuSelesai->format('H:i'),
+                            'waktu_Selesai' => $waktuSelesai->format('H:i:s'),
                             'jam_main' => $formattedDuration,
                             'total' => $total,
                             'status_transaksi' => 'selesai',
@@ -859,68 +861,19 @@ class DeviceController extends Controller
     }
 
     /**
-     * Calculate the price for lost time based on PlayStation hourly prices
-     *
-     * @param Playstation $playstation
-     * @param int $durationMinutes
-     * @return float
+     * Calculate lost time price based on hourly pricing rules (delegated to BillingService)
      */
     private function calculateLostTimePrice($playstation, $durationMinutes)
     {
-        // Get all available hourly prices (packages) for this PlayStation
-        $hourlyPrices = $playstation->getAvailableHoursWithPrices();
-        $basePrice = (float) ($playstation->harga ?? 0);
-        $costPerMinute = $basePrice / 60;
-        
-        // Split duration into full hours and remaining minutes
-        $fullHours = (int) floor($durationMinutes / 60);
-        $remainingMinutes = (int) ($durationMinutes % 60);
-        
-        $totalPrice = 0;
-        
-        // 1. Calculate price for the full hours part
-        if ($fullHours > 0) {
-            if (isset($hourlyPrices[$fullHours])) {
-                // If there's an hourly package for this exact number of hours, use it
-                $totalPrice += $hourlyPrices[$fullHours];
-            } else {
-                // Otherwise, multiply full hours by the base hourly price
-                $totalPrice += $basePrice * $fullHours;
-            }
-        }
-        
-        // 2. Add per-minute cost for the remaining minutes
-        if ($remainingMinutes > 0) {
-            $totalPrice += $remainingMinutes * $costPerMinute;
-        }
-        
-        return $totalPrice;
+        return app(\App\Services\BillingService::class)->calculateLostTimePrice($playstation, (int) $durationMinutes);
     }
 
     /**
-     * Apply specific rounding rules for lost time pricing
-     * If difference <= 500, round to 500
-     * If difference > 500, round to 1000
+     * Apply specific rounding rules for lost time pricing (delegated to BillingService)
      */
     private function applyLostTimeRounding($total)
     {
-        // Find the nearest lower thousand
-        $lowerThousand = floor($total / 1000) * 1000;
-        
-        // Calculate difference from the lower thousand
-        $difference = $total - $lowerThousand;
-        
-        // Apply rounding rules
-        if ($difference == 0) {
-            // Already a perfect thousand
-            return $total;
-        } elseif ($difference <= 500) {
-            // Round up to 500 (including exactly 500)
-            return $lowerThousand + 500;
-        } else {
-            // Round up to next thousand
-            return $lowerThousand + 1000;
-        }
+        return app(\App\Services\BillingService::class)->applyLostTimeRounding((float) $total);
     }
 
     /**

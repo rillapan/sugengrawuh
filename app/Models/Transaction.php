@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -60,12 +61,49 @@ class Transaction extends Model
     ];
 
     /**
+     * Get authoritative start timestamp with second precision.
+     */
+    public function getEffectiveStartTime(): Carbon
+    {
+        if ($this->started_at) {
+            return Carbon::parse($this->started_at);
+        }
+        if ($this->lost_time_start) {
+            return Carbon::parse($this->lost_time_start);
+        }
+        $dateStr = $this->created_at ? $this->created_at->toDateString() : Carbon::today()->toDateString();
+        $timeStr = $this->waktu_mulai ?: '00:00:00';
+        return Carbon::parse($dateStr . ' ' . $timeStr);
+    }
+
+    /**
+     * Get authoritative end timestamp with second precision.
+     */
+    public function getEffectiveEndTime(): Carbon
+    {
+        if ($this->ended_at) {
+            return Carbon::parse($this->ended_at);
+        }
+        if ($this->waktu_Selesai) {
+            $dateStr = $this->created_at ? $this->created_at->toDateString() : Carbon::today()->toDateString();
+            return Carbon::parse($dateStr . ' ' . $this->waktu_Selesai);
+        }
+        return Carbon::now();
+    }
+
+    /**
      * Get human-readable duration description across prepaid, postpaid, and custom package.
      */
     public function getDisplayDurationAttribute(): string
     {
         if ($this->tipe_transaksi === 'postpaid') {
-            return (string) ($this->jam_main ?: '-');
+            if (!empty($this->jam_main)) {
+                return (string) $this->jam_main;
+            }
+            $start = $this->getEffectiveStartTime();
+            $end = $this->status_transaksi === 'selesai' ? $this->getEffectiveEndTime() : \Carbon\Carbon::now();
+            $diffMins = max(1, (int) $start->diffInMinutes($end, false));
+            return sprintf('%d jam %d menit', floor($diffMins / 60), $diffMins % 60);
         }
 
         if ($this->tipe_transaksi === 'custom_package') {

@@ -120,12 +120,12 @@
                             <td><strong>Waktu Selesai:</strong></td>
                             <td>{{ $transaction->waktu_Selesai ?: '-' }}</td>
                         </tr>
-                        @if($transaction->tipe_transaksi === 'postpaid' && $transaction->status_transaksi === 'selesai')
+                        @if($transaction->tipe_transaksi === 'postpaid')
                             @php
-                                $startTime = \Carbon\Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
-                                $endTime = \Carbon\Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_Selesai);
+                                $startTime = $transaction->getEffectiveStartTime();
+                                $endTime = $transaction->status_transaksi === 'selesai' ? $transaction->getEffectiveEndTime() : \Carbon\Carbon::now();
                                 $duration = $startTime->diff($endTime);
-                                $hours = $duration->h;
+                                $hours = $duration->h + ($duration->days * 24);
                                 $minutes = $duration->i;
                                 $seconds = $duration->s;
                             @endphp

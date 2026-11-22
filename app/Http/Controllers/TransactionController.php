@@ -10,6 +10,9 @@ use App\Models\TransactionFnb;
 use App\Models\StockMutation;
 use App\Models\CustomPackage;
 use App\Models\Location;
+use App\Models\User;
+use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\TvAlertEvent;
 use App\Services\Hardware\TvAlertService;
 use Carbon\Carbon;
@@ -54,6 +57,26 @@ class TransactionController extends Controller
         if ($isPaket && $transaction->payment_status === 'unpaid') {
             $psCostDisplay = $transaction->resolvePaketRentalTotal();
             $payableSubtotal = $psCostDisplay + $totalFnbToPay;
+        } elseif ($transaction->tipe_transaksi === 'postpaid') {
+            // SR-BILLING-LOSTTIME-001: Hitung biaya Lost Time dengan sumber waktu & kalkulasi terpadu
+            $startedAt = $transaction->getEffectiveStartTime();
+            $endedAt = $transaction->status_transaksi === 'selesai' ? $transaction->getEffectiveEndTime() : Carbon::now();
+            $durationMinutes = max(1, (int) $startedAt->diffInMinutes($endedAt, false));
+            $playstation = $transaction->playstation ?: ($transaction->device ? $transaction->device->playstation : null);
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $rawPsCost = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+            $psCostDisplay = $billingService->applyLostTimeRounding($rawPsCost);
+            $payableSubtotal = $psCostDisplay + $totalFnbToPay;
+
+            // Jika transaksi belum lunas, sinkronkan total dan durasi agar konsisten di semua tampilan
+            $formattedJamMain = sprintf('%d jam %d menit', floor($durationMinutes / 60), $durationMinutes % 60);
+            if ($transaction->payment_status === 'unpaid' && ((float) $transaction->total !== $payableSubtotal || empty($transaction->jam_main))) {
+                $transaction->update([
+                    'total' => $payableSubtotal,
+                    'jam_main' => $formattedJamMain,
+                ]);
+            }
         } else {
             $payableSubtotal = (float) $transaction->total;
             $psCostDisplay = max(0, $payableSubtotal - $totalFnbToPay);
@@ -183,7 +206,7 @@ class TransactionController extends Controller
             }
         }
 
-        $result = DB::transaction(function () use ($id, $discount, $amountPaid, $paymentMethod, $finalTotal) {
+        $result = DB::transaction(function () use ($id, $discount, $amountPaid, $paymentMethod, $finalTotal, $payableSubtotal) {
             // Pessimistic write lock (SELECT ... FOR UPDATE) to prevent race conditions on concurrent payment requests
             $transaction = Transaction::where('id_transaksi', $id)->lockForUpdate()->firstOrFail();
 
@@ -194,13 +217,19 @@ class TransactionController extends Controller
                 ];
             }
 
+            $cashierUserId = auth()->id();
+            if (!$cashierUserId || !User::where('id', $cashierUserId)->exists()) {
+                throw new \InvalidArgumentException('Kasir penerima pembayaran wajib login dan valid.');
+            }
+
             $change = $amountPaid - $finalTotal;
+            $now = now();
 
             $updateData = [
                 'payment_status' => 'paid',
                 'payment_method' => $paymentMethod,
                 'status_transaksi' => 'selesai',
-                'paid_at' => now(),
+                'paid_at' => $now,
             ];
 
             if ($discount > 0) {
@@ -208,6 +237,35 @@ class TransactionController extends Controller
             }
 
             $transaction->update($updateData);
+
+            // SR-FINANCE-001: Ensure an Invoice and InvoiceItem are always generated for financial accounting
+            $discountAmount = ($payableSubtotal * $discount / 100);
+            $invoice = Invoice::create([
+                'invoice_number' => 'INV-' . $now->format('Ymd') . '-' . strtoupper(Str::random(6)),
+                'transaction_id' => $transaction->id_transaksi,
+                'invoice_type' => Invoice::TYPE_GAME_ONLY,
+                'subtotal' => $payableSubtotal,
+                'discount' => $discountAmount,
+                'final_total' => $finalTotal,
+                'amount_paid' => $amountPaid,
+                'change_amount' => $change,
+                'payment_method' => $paymentMethod,
+                'cashier_user_id' => $cashierUserId,
+                'paid_at' => $now,
+            ]);
+
+            InvoiceItem::create([
+                'invoice_id' => $invoice->id,
+                'item_type' => InvoiceItem::ITEM_TYPE_GAME_RENTAL,
+                'fnb_id' => null,
+                'fnb_order_item_id' => null,
+                'transaction_fnb_id' => null,
+                'name' => 'Rental ' . ($transaction->device->nama ?? 'Game'),
+                'qty' => 1,
+                'unit_price_beli' => 0,
+                'unit_price_jual' => $payableSubtotal,
+                'subtotal' => $payableSubtotal,
+            ]);
 
             // Update device status to available ONLY IF the billing session has ended
             if ($transaction->device) {
@@ -1582,9 +1640,9 @@ class TransactionController extends Controller
         if ($transaction->tipe_transaksi === 'postpaid') {
             $totalFnb = $transaction->getFnbTotalAttribute() + $transaction->getUnpaidFnbOrderTotalAttribute();
 
-            // Calculate duration and cost for postpaid (Lost Time) transactions
-            $waktuMulai = Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
-            $durationMinutes = $waktuMulai->diffInMinutes($waktuSelesai, false);
+            // Calculate duration and cost for postpaid (Lost Time) transactions using authoritative timestamps
+            $startedAt = $transaction->getEffectiveStartTime();
+            $durationMinutes = max(1, (int) $startedAt->diffInMinutes($waktuSelesai, false));
 
             if ($durationMinutes < 0) {
                 // If somehow negative, perhaps next day
@@ -1593,13 +1651,13 @@ class TransactionController extends Controller
 
             // Get the device and playstation for hourly pricing
             $device = $transaction->device;
-            $playstation = $device->playstation;
+            $playstation = $transaction->playstation ?: ($device ? $device->playstation : null);
             
-            // Calculate pricing based on hourly prices
-            $totalPs = $this->calculateLostTimePrice($playstation, $durationMinutes);
-            
-            // Apply specific rounding rules for lost time
-            $roundedTotalPs = $this->applyLostTimeRounding($totalPs);
+            // Calculate pricing via BillingService single source of truth
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $totalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+            $roundedTotalPs = $billingService->applyLostTimeRounding($totalPs);
             $total = $roundedTotalPs + $totalFnb;
 
             $hours = floor($durationMinutes / 60);
@@ -1607,7 +1665,7 @@ class TransactionController extends Controller
             $formattedDuration = sprintf('%d jam %d menit', $hours, $minutes);
 
             $updateData = [
-                'waktu_Selesai' => $waktuSelesai->format('H:i'),
+                'waktu_Selesai' => $waktuSelesai->format('H:i:s'),
                 'jam_main' => $formattedDuration,
                 'total' => $total,
             ];
@@ -1714,23 +1772,16 @@ class TransactionController extends Controller
             $totalPs = $transaction->resolvePaketRentalTotal();
         } elseif ($transaction->tipe_transaksi === 'postpaid') {
             // For running lost time, calculate current cost
-            $startTimestamp = $transaction->lost_time_start 
-                ? Carbon::parse($transaction->lost_time_start)
-                : Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
-            
+            $startTimestamp = $transaction->getEffectiveStartTime();
             $now = Carbon::now();
-            $durationMinutes = $startTimestamp->diffInMinutes($now, false);
+            $durationMinutes = max(1, (int) $startTimestamp->diffInMinutes($now, false));
             
-            if ($durationMinutes < 0) {
-                 // Fallback if start is future or wrong
-                 $durationMinutes = 0;
-            }
-            
-            // Use the new lost time pricing calculation
             $device = $transaction->device;
-            $playstation = $device->playstation;
-            $rawTotalPs = $this->calculateLostTimePrice($playstation, $durationMinutes);
-            $totalPs = $this->applyLostTimeRounding($rawTotalPs);
+            $playstation = $transaction->playstation ?: ($device ? $device->playstation : null);
+            /** @var \App\Services\BillingService $billingService */
+            $billingService = app(\App\Services\BillingService::class);
+            $rawTotalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+            $totalPs = $billingService->applyLostTimeRounding($rawTotalPs);
         }
 
         $existingTotal = $totalPs + $existingFnbTotal;
@@ -1819,20 +1870,17 @@ class TransactionController extends Controller
         if (in_array($transaction->tipe_transaksi, ['prepaid', 'custom_package'], true)) {
             $totalPs = $transaction->resolvePaketRentalTotal();
         } elseif ($transaction->tipe_transaksi === 'postpaid') {
-            if ($transaction->status_transaksi === 'selesai' && $transaction->waktu_Selesai) {
-                $waktuMulai = Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_mulai);
-                $waktuSelesai = Carbon::parse($transaction->created_at->toDateString() . ' ' . $transaction->waktu_Selesai);
+            if ($transaction->status_transaksi === 'selesai') {
+                $startedAt = $transaction->getEffectiveStartTime();
+                $endedAt = $transaction->getEffectiveEndTime();
+                $durationMinutes = max(1, (int) $startedAt->diffInMinutes($endedAt, false));
                 
-                $durationMinutes = $waktuMulai->diffInMinutes($waktuSelesai, false);
-                if ($durationMinutes < 0) {
-                    $durationMinutes += 24 * 60;
-                }
-                
-                // Use the new lost time pricing calculation
                 $device = $transaction->device;
-                $playstation = $device->playstation;
-                $rawTotalPs = $this->calculateLostTimePrice($playstation, $durationMinutes);
-                $totalPs = $this->applyLostTimeRounding($rawTotalPs);
+                $playstation = $transaction->playstation ?: ($device ? $device->playstation : null);
+                /** @var \App\Services\BillingService $billingService */
+                $billingService = app(\App\Services\BillingService::class);
+                $rawTotalPs = $billingService->calculateLostTimePrice($playstation, $durationMinutes);
+                $totalPs = $billingService->applyLostTimeRounding($rawTotalPs);
             } else {
                 $totalPs = 0;
             }
@@ -2110,69 +2158,18 @@ class TransactionController extends Controller
     }
 
     /**
-     * Calculate lost time price based on hourly pricing rules
-     * If duration matches hourly package duration, use package price
-     * Otherwise, use per-minute pricing from base price
-     *
-     * @param Playstation $playstation
-     * @param int $durationMinutes
-     * @return float
+     * Calculate lost time price based on hourly pricing rules (delegated to BillingService)
      */
     private function calculateLostTimePrice($playstation, $durationMinutes)
     {
-        // Get all available hourly prices (packages) for this PlayStation
-        $hourlyPrices = $playstation->getAvailableHoursWithPrices();
-        $basePrice = (float) ($playstation->harga ?? 0);
-        $costPerMinute = $basePrice / 60;
-        
-        // Split duration into full hours and remaining minutes
-        $fullHours = (int) floor($durationMinutes / 60);
-        $remainingMinutes = (int) ($durationMinutes % 60);
-        
-        $totalPrice = 0;
-        
-        // 1. Calculate price for the full hours part
-        if ($fullHours > 0) {
-            if (isset($hourlyPrices[$fullHours])) {
-                // If there's an hourly package for this exact number of hours, use it
-                $totalPrice += $hourlyPrices[$fullHours];
-            } else {
-                // Otherwise, multiply full hours by the base hourly price
-                $totalPrice += $basePrice * $fullHours;
-            }
-        }
-        
-        // 2. Add per-minute cost for the remaining minutes
-        if ($remainingMinutes > 0) {
-            $totalPrice += $remainingMinutes * $costPerMinute;
-        }
-        
-        return $totalPrice;
+        return app(\App\Services\BillingService::class)->calculateLostTimePrice($playstation, (int) $durationMinutes);
     }
 
     /**
-     * Apply specific rounding rules for lost time pricing
-     * If difference <= 500, round to 500
-     * If difference > 500, round to 1000
+     * Apply specific rounding rules for lost time pricing (delegated to BillingService)
      */
     private function applyLostTimeRounding($total)
     {
-        // Find the nearest lower thousand
-        $lowerThousand = floor($total / 1000) * 1000;
-        
-        // Calculate difference from the lower thousand
-        $difference = $total - $lowerThousand;
-        
-        // Apply rounding rules
-        if ($difference == 0) {
-            // Already a perfect thousand
-            return $total;
-        } elseif ($difference <= 500) {
-            // Round up to 500 (including exactly 500)
-            return $lowerThousand + 500;
-        } else {
-            // Round up to next thousand
-            return $lowerThousand + 1000;
-        }
+        return app(\App\Services\BillingService::class)->applyLostTimeRounding((float) $total);
     }
 }

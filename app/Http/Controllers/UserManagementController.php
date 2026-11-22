@@ -96,6 +96,32 @@ class UserManagementController extends Controller
     {
         $user = User::findOrFail($id);
 
+        // SR-FINANCE-001: Immutable Cashier Channel Lock (AC-16, AC-17, AC-18, AC-21)
+        if ($user->role === 'kasir') {
+            $targetRole = $request->input('role', $user->role);
+            if ($targetRole === 'kasir') {
+                $requestedIsFnb = $request->boolean('is_fnb_staff');
+                $currentIsFnb = (bool) $user->is_fnb_staff;
+                if ($requestedIsFnb !== $currentIsFnb) {
+                    $fromChannel = $currentIsFnb ? 'Kasir F&B' : 'Kasir Billing Utama';
+                    $toChannel = $requestedIsFnb ? 'Kasir F&B' : 'Kasir Billing Utama';
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'is_fnb_staff' => ["Kanal akun kasir bersifat permanen dan tidak dapat dipindahkan dari {$fromChannel} ke {$toChannel}. Buat akun baru untuk staf terkait."],
+                    ]);
+                }
+            } elseif ($user->invoices()->exists() || $user->transaction()->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'role' => ['Role akun kasir yang memiliki riwayat transaksi/invoice tidak dapat diubah demi menjaga integritas data keuangan.'],
+                ]);
+            }
+        } elseif ($request->input('role') === 'kasir') {
+            if ($user->invoices()->exists() || $user->transaction()->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'role' => ['Akun non-kasir yang memiliki riwayat transaksi/invoice tidak dapat diubah menjadi akun kasir demi menjaga integritas data keuangan.'],
+                ]);
+            }
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
@@ -112,7 +138,9 @@ class UserManagementController extends Controller
             'role' => $validated['role'],
             'shift' => $validated['role'] === 'kasir' ? $validated['shift'] : null,
             'work_shift_id' => $validated['role'] === 'kasir' ? $validated['work_shift_id'] : null,
-            'is_fnb_staff' => $validated['role'] === 'kasir' && $request->boolean('is_fnb_staff'),
+            'is_fnb_staff' => $validated['role'] === 'kasir'
+                ? ($user->role === 'kasir' ? (bool) $user->is_fnb_staff : $request->boolean('is_fnb_staff'))
+                : false,
         ];
 
         if ($request->filled('password')) {

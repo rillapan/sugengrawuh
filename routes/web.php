@@ -47,12 +47,15 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/device/timers', [App\Http\Controllers\DeviceController::class, 'getTimerSyncData'])->name('device.timers');
 });
 
+// Hourly Revenue Chart API (Admin + Kasir + Owner + Staf F&B)
+Route::middleware(['auth', 'check_role:admin,kasir,owner,fnb_staff'])->group(function () {
+    Route::get('/hourly-revenue-data', 'App\Http\Controllers\HomeController@hourlyRevenueData');
+});
+
 // Read-Only Monitoring Routes (Admin + Kasir + Owner)
 Route::middleware(['auth', 'check_role:admin,kasir,owner'])->group(function () {
     Route::get('/chart-pie-data', [App\Http\Controllers\HomeController::class, 'pieCartData2']);
     Route::get('/chart-area-data', 'App\Http\Controllers\HomeController@areaCartData');
-    Route::get('/hourly-revenue-data', 'App\Http\Controllers\HomeController@hourlyRevenueData');
-
     // Transaction Read-Only
     Route::get('/transaction', [App\Http\Controllers\TransactionController::class, 'index'])->name('transaction.index');
     Route::get('/transaction/{transaction}', [App\Http\Controllers\TransactionController::class, 'show'])->name('transaction.show')->whereNumber('transaction');

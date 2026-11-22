@@ -22,9 +22,12 @@
 
 <body style="font-size: 15px">
     <h3 class="text-center mb-3">
-        Laporan Transaksi Rental Playstation
+        Laporan Keuangan & Transaksi (Multi-Kasir)
     </h3>
     <p class="mb-2">Dari Tanggal: {{ $startDate }} Sampai: {{ $endDate }}</p>
+    @if(isset($selectedCashier) && $selectedCashier)
+        <p class="mb-2"><strong>Filter Kasir:</strong> {{ $selectedCashier->name }} ({{ $selectedCashier->role === 'kasir' ? ($selectedCashier->is_fnb_staff ? 'Kasir F&B' : 'Kasir Billing') : ucfirst($selectedCashier->role) }})</p>
+    @endif
     @if(isset($selectedPlaystationIds) && !empty($selectedPlaystationIds))
         <p class="mb-2">
             <strong>Jenis PlayStation:</strong> 
@@ -36,6 +39,123 @@
         </p>
     @else
         <p class="mb-2"><strong>Jenis PlayStation:</strong> Semua Jenis</p>
+    @endif
+
+    @if(isset($consolidatedSummary) && isset($consolidatedSummary['totals']))
+    <h4 class="mt-4 mb-2">1. Ringkasan Konsolidasi Penerimaan Kasir</h4>
+    <table class="table" style="font-size: 11px; margin-bottom: 20px;">
+        <thead>
+            <tr>
+                <th>Kanal Penerimaan</th>
+                <th>Total Neto</th>
+                <th>Keterangan</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Kasir Billing Utama</strong></td>
+                <td>Rp {{ number_format($consolidatedSummary['totals']['total_billing'], 0, ',', '.') }}</td>
+                <td>Rental PS, Billiard, &amp; F&B via Billing</td>
+            </tr>
+            <tr>
+                <td><strong>Kasir F&B (Cafe)</strong></td>
+                <td>Rp {{ number_format($consolidatedSummary['totals']['total_fnb'], 0, ',', '.') }}</td>
+                <td>Pembayaran langsung kasir F&B</td>
+            </tr>
+            <tr>
+                <td><strong>Admin / Owner</strong></td>
+                <td>Rp {{ number_format($consolidatedSummary['totals']['total_admin'], 0, ',', '.') }}</td>
+                <td>Pembayaran langsung via Admin</td>
+            </tr>
+            @if(($consolidatedSummary['totals']['total_legacy_unattributed'] ?? 0) > 0)
+            <tr>
+                <td><strong>Belum Teratribusi (Legacy)</strong></td>
+                <td>Rp {{ number_format($consolidatedSummary['totals']['total_legacy_unattributed'], 0, ',', '.') }}</td>
+                <td>Transaksi lama tanpa invoice ({{ $consolidatedSummary['totals']['legacy_unattributed_count'] }} transaksi)</td>
+            </tr>
+            @endif
+        </tbody>
+        <tfoot>
+            <tr style="font-weight: bold; background-color: #f2f2f2;">
+                <td>Grand Total Penerimaan Konsolidasi</td>
+                <td colspan="2">Rp {{ number_format($consolidatedSummary['totals']['grand_total'], 0, ',', '.') }}</td>
+            </tr>
+        </tfoot>
+    </table>
+    @endif
+
+    @if(isset($categorySummary) && isset($categorySummary['categories']))
+    <h4 class="mt-3 mb-2">2. Ringkasan Penjualan Berdasarkan Kategori</h4>
+    <table class="table" style="font-size: 11px; margin-bottom: 20px;">
+        <thead>
+            <tr>
+                <th>Kategori Usaha</th>
+                <th>Penjualan Bruto</th>
+                <th>Alokasi Diskon</th>
+                <th>Penjualan Neto</th>
+                <th>Qty Item / Sesi</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($categorySummary['categories'] as $catKey => $catData)
+            <tr>
+                <td>{{ $catData['label'] }}</td>
+                <td>Rp {{ number_format($catData['gross'], 0, ',', '.') }}</td>
+                <td>Rp {{ number_format($catData['discount'], 0, ',', '.') }}</td>
+                <td><strong>Rp {{ number_format($catData['net'], 0, ',', '.') }}</strong></td>
+                <td>{{ $catData['qty'] }}</td>
+            </tr>
+            @endforeach
+        </tbody>
+        <tfoot>
+            <tr style="font-weight: bold; background-color: #f2f2f2;">
+                <td>Total Penjualan Kategori (Neto)</td>
+                <td>Rp {{ number_format($categorySummary['total_gross'], 0, ',', '.') }}</td>
+                <td>Rp {{ number_format($categorySummary['total_discount'], 0, ',', '.') }}</td>
+                <td colspan="2">Rp {{ number_format($categorySummary['total_net'], 0, ',', '.') }}</td>
+            </tr>
+        </tfoot>
+    </table>
+    @endif
+
+    @if(isset($invoices) && $invoices->isNotEmpty())
+    <h4 class="mt-3 mb-2">3. Rekapitulasi Invoice Pembayaran</h4>
+    <table class="table" style="font-size: 10px; margin-bottom: 25px;">
+        <thead>
+            <tr>
+                <th>No. Invoice</th>
+                <th>Kasir Penerima</th>
+                <th>Kanal</th>
+                <th>Tipe Invoice</th>
+                <th>Subtotal</th>
+                <th>Diskon</th>
+                <th>Total Neto</th>
+                <th>Metode</th>
+                <th>Waktu Bayar</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($invoices as $inv)
+            <tr>
+                <td>{{ $inv->invoice_number }}</td>
+                <td>{{ $inv->cashierUser ? $inv->cashierUser->name : '-' }}</td>
+                <td>
+                    @if($inv->cashierUser)
+                        {{ $inv->cashierUser->role === 'kasir' ? ($inv->cashierUser->is_fnb_staff ? 'F&B' : 'Billing') : ucfirst($inv->cashierUser->role) }}
+                    @else
+                        -
+                    @endif
+                </td>
+                <td>{{ str_replace('_', ' ', $inv->invoice_type) }}</td>
+                <td>Rp {{ number_format($inv->subtotal, 0, ',', '.') }}</td>
+                <td>{{ $inv->discount > 0 ? 'Rp ' . number_format($inv->discount, 0, ',', '.') : '-' }}</td>
+                <td><strong>Rp {{ number_format($inv->final_total, 0, ',', '.') }}</strong></td>
+                <td>{{ ucfirst(str_replace('_', ' ', $inv->payment_method ?: '-')) }}</td>
+                <td>{{ $inv->paid_at ? $inv->paid_at->format('Y-m-d H:i') : '-' }}</td>
+            </tr>
+            @endforeach
+        </tbody>
+    </table>
     @endif
     
     @if(isset($dailyTotals) && $dailyTotals->count() > 0)

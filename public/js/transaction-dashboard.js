@@ -398,7 +398,7 @@
         // ------------------------------------------------------------------
         // Server-Synced Live Timers & Polling
         // ------------------------------------------------------------------
-        function computeLostTimeEstimate(hourlyRate, elapsedSeconds) {
+        function computeLostTimeEstimate(hourlyRate, elapsedSeconds, hourlyPackages) {
             var rate = Number(hourlyRate || 0);
             if (rate <= 0) {
                 return 0;
@@ -407,7 +407,22 @@
             if (elapsedMinutes <= 0) {
                 return 0;
             }
-            var raw = Math.round((elapsedMinutes * rate) / 60);
+            var fullHours = Math.floor(elapsedMinutes / 60);
+            var remainingMinutes = elapsedMinutes % 60;
+            var raw = 0;
+
+            if (fullHours > 0) {
+                if (hourlyPackages && hourlyPackages[fullHours] !== undefined) {
+                    raw += Number(hourlyPackages[fullHours]);
+                } else {
+                    raw += fullHours * rate;
+                }
+            }
+
+            if (remainingMinutes > 0) {
+                raw += (remainingMinutes * rate) / 60;
+            }
+
             var lowerThousand = Math.floor(raw / 1000) * 1000;
             var diff = raw - lowerThousand;
             if (diff === 0) {
@@ -511,7 +526,13 @@
 
                         var estEl = document.getElementById('pos-est-rental-' + deviceId);
                         if (estEl) {
-                            var est = computeLostTimeEstimate(timerEl.dataset.hourlyRate, elapsedSec);
+                            var hourlyPackages = null;
+                            if (timerEl.dataset.hourlyPackages) {
+                                try {
+                                    hourlyPackages = JSON.parse(timerEl.dataset.hourlyPackages);
+                                } catch (e) {}
+                            }
+                            var est = computeLostTimeEstimate(timerEl.dataset.hourlyRate, elapsedSec, hourlyPackages);
                             estEl.textContent = formatRupiah(est);
                         }
                     } else {

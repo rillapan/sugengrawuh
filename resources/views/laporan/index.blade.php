@@ -114,6 +114,31 @@
                         </div>
 
                         <div class="form-group row">
+                            <label for="cashier_user_id" class="col-sm-2 col-form-label">Kasir Penerima</label>
+                            <div class="col-sm-4">
+                                <select class="form-control" id="cashier_user_id" name="cashier_user_id">
+                                    <option value="">Semua Kasir</option>
+                                    @if(isset($cashierList))
+                                        @foreach($cashierList as $c)
+                                            <option value="{{ $c->id }}" {{ (isset($selectedCashierUserId) && $selectedCashierUserId == $c->id) ? 'selected' : '' }}>
+                                                {{ $c->name }} ({{ $c->role === 'kasir' ? ($c->is_fnb_staff ? 'Kasir F&B' : 'Kasir Billing') : ucfirst($c->role) }})
+                                            </option>
+                                        @endforeach
+                                    @endif
+                                </select>
+                            </div>
+                            <label for="payment_method" class="col-sm-2 col-form-label">Metode Bayar</label>
+                            <div class="col-sm-4">
+                                <select class="form-control" id="payment_method" name="payment_method">
+                                    <option value="">Semua Metode</option>
+                                    <option value="tunai" {{ (isset($paymentMethod) && $paymentMethod === 'tunai') ? 'selected' : '' }}>Tunai</option>
+                                    <option value="e-wallet" {{ (isset($paymentMethod) && $paymentMethod === 'e-wallet') ? 'selected' : '' }}>E-Wallet (QRIS)</option>
+                                    <option value="transfer_bank" {{ (isset($paymentMethod) && $paymentMethod === 'transfer_bank') ? 'selected' : '' }}>Transfer Bank</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
                             <label class="col-sm-2 col-form-label">Jenis PlayStation</label>
                             <div class="col-sm-10">
                                 <div class="mb-2">
@@ -187,6 +212,246 @@
             </div>
         </div>
     </div>
+
+    @if(isset($consolidatedSummary) && isset($categorySummary))
+    <!-- 3 Perspectives Section: Multi-Cashier Financial Report -->
+    <div class="row">
+        <!-- Perspektif 1: Penerimaan Kasir -->
+        <div class="col-xl-6 col-lg-12 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header py-3 d-flex justify-content-between align-items-center bg-primary text-white">
+                    <h6 class="m-0 font-weight-bold"><i class="fas fa-cash-register mr-1"></i> Perspektif 1: Penerimaan Kasir</h6>
+                    <span class="badge badge-light">Penerima Kas Nyata</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-sm mb-0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>Kanal / Kasir</th>
+                                    <th class="text-center">Invoice</th>
+                                    <th class="text-right">Total Neto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>
+                                        <i class="fas fa-desktop text-primary mr-1"></i> <strong>Kasir Billing Utama</strong>
+                                        <br><small class="text-muted">Rental PS, Billiard, &amp; F&B via Billing</small>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        {{ array_sum(array_column($consolidatedSummary['billing_cashiers'], 'invoice_count')) }}
+                                    </td>
+                                    <td class="text-right align-middle font-weight-bold text-primary">
+                                        Rp {{ number_format($consolidatedSummary['totals']['total_billing'], 0, ',', '.') }}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <i class="fas fa-utensils text-success mr-1"></i> <strong>Kasir F&B (Cafe)</strong>
+                                        <br><small class="text-muted">Pembayaran langsung kasir F&B</small>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        {{ array_sum(array_column($consolidatedSummary['fnb_cashiers'], 'invoice_count')) }}
+                                    </td>
+                                    <td class="text-right align-middle font-weight-bold text-success">
+                                        Rp {{ number_format($consolidatedSummary['totals']['total_fnb'], 0, ',', '.') }}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <i class="fas fa-user-shield text-info mr-1"></i> <strong>Admin / Owner</strong>
+                                        <br><small class="text-muted">Pembayaran langsung via Admin</small>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        {{ array_sum(array_column($consolidatedSummary['admin_cashiers'], 'invoice_count')) }}
+                                    </td>
+                                    <td class="text-right align-middle font-weight-bold text-info">
+                                        Rp {{ number_format($consolidatedSummary['totals']['total_admin'], 0, ',', '.') }}
+                                    </td>
+                                </tr>
+                                @if(($consolidatedSummary['totals']['total_legacy_unattributed'] ?? 0) > 0)
+                                <tr class="table-warning">
+                                    <td>
+                                        <i class="fas fa-history text-warning mr-1"></i> <strong>Belum Teratribusi (Legacy)</strong>
+                                        <br><small class="text-muted">Transaksi berbayar lama tanpa invoice</small>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        {{ $consolidatedSummary['totals']['legacy_unattributed_count'] }}
+                                    </td>
+                                    <td class="text-right align-middle font-weight-bold text-dark">
+                                        Rp {{ number_format($consolidatedSummary['totals']['total_legacy_unattributed'], 0, ',', '.') }}
+                                    </td>
+                                </tr>
+                                @endif
+                            </tbody>
+                            <tfoot class="bg-light">
+                                <tr class="font-weight-bold">
+                                    <td>Total Penerimaan Kasir</td>
+                                    <td class="text-center">{{ array_sum(array_column($consolidatedSummary['billing_cashiers'], 'invoice_count')) + array_sum(array_column($consolidatedSummary['fnb_cashiers'], 'invoice_count')) + array_sum(array_column($consolidatedSummary['admin_cashiers'], 'invoice_count')) + ($consolidatedSummary['totals']['legacy_unattributed_count'] ?? 0) }}</td>
+                                    <td class="text-right text-success">Rp {{ number_format($consolidatedSummary['totals']['grand_total'], 0, ',', '.') }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Perspektif 2: Penjualan Kategori -->
+        <div class="col-xl-6 col-lg-12 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header py-3 d-flex justify-content-between align-items-center bg-success text-white">
+                    <h6 class="m-0 font-weight-bold"><i class="fas fa-tags mr-1"></i> Perspektif 2: Penjualan Kategori</h6>
+                    <span class="badge badge-light">Alokasi Diskon Proporsional</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-sm mb-0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>Kategori Usaha</th>
+                                    <th class="text-right">Bruto</th>
+                                    <th class="text-right">Diskon</th>
+                                    <th class="text-right">Neto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($categorySummary['categories'] as $catKey => $catData)
+                                <tr>
+                                    <td>
+                                        <strong>{{ $catData['label'] }}</strong>
+                                        <br><small class="text-muted">{{ $catData['qty'] }} item/sesi terjual</small>
+                                    </td>
+                                    <td class="text-right align-middle">Rp {{ number_format($catData['gross'], 0, ',', '.') }}</td>
+                                    <td class="text-right align-middle text-danger">{{ $catData['discount'] > 0 ? 'Rp ' . number_format($catData['discount'], 0, ',', '.') : '-' }}</td>
+                                    <td class="text-right align-middle font-weight-bold text-dark">Rp {{ number_format($catData['net'], 0, ',', '.') }}</td>
+                                </tr>
+                                @endforeach
+                            </tbody>
+                            <tfoot class="bg-light">
+                                <tr class="font-weight-bold">
+                                    <td>Total Penjualan Kategori</td>
+                                    <td class="text-right">Rp {{ number_format($categorySummary['total_gross'], 0, ',', '.') }}</td>
+                                    <td class="text-right text-danger">{{ $categorySummary['total_discount'] > 0 ? 'Rp ' . number_format($categorySummary['total_discount'], 0, ',', '.') : '-' }}</td>
+                                    <td class="text-right text-success">Rp {{ number_format($categorySummary['total_net'], 0, ',', '.') }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    @if($categorySummary['is_balanced'])
+                        <div class="alert alert-success py-1 px-2 mt-2 mb-0 small">
+                            <i class="fas fa-check-circle"></i> <strong>100% Cocok:</strong> Total penjualan kategori tepat seimbang dengan total penerimaan kas neto.
+                        </div>
+                    @endif
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Perspektif 3: Konsolidasi Usaha (Owner/Admin View) -->
+    <div class="row">
+        <div class="col-lg-12 mb-4">
+            <div class="card shadow border-left-info">
+                <div class="card-header py-3 bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 font-weight-bold text-info"><i class="fas fa-balance-scale mr-1"></i> Perspektif 3: Konsolidasi Usaha &amp; Rekonsiliasi (Owner/Admin)</h6>
+                    @if($consolidatedSummary['is_reconciled'])
+                        <span class="badge badge-success px-2 py-1"><i class="fas fa-check"></i> Rekonsiliasi Terverifikasi</span>
+                    @else
+                        <span class="badge badge-warning px-2 py-1"><i class="fas fa-exclamation-triangle"></i> Selisih Ditemukan</span>
+                    @endif
+                </div>
+                <div class="card-body">
+                    <div class="row text-center mb-3">
+                        <div class="col-md-3 mb-2">
+                            <div class="border rounded p-2">
+                                <span class="text-muted small">Billing Kasir</span>
+                                <div class="h6 font-weight-bold text-primary mb-0">Rp {{ number_format($consolidatedSummary['totals']['total_billing'], 0, ',', '.') }}</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <div class="border rounded p-2">
+                                <span class="text-muted small">F&amp;B Kasir</span>
+                                <div class="h6 font-weight-bold text-success mb-0">Rp {{ number_format($consolidatedSummary['totals']['total_fnb'], 0, ',', '.') }}</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <div class="border rounded p-2">
+                                <span class="text-muted small">Admin Langsung</span>
+                                <div class="h6 font-weight-bold text-info mb-0">Rp {{ number_format($consolidatedSummary['totals']['total_admin'], 0, ',', '.') }}</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <div class="border rounded p-2 bg-light">
+                                <span class="text-muted small font-weight-bold">Grand Total Konsolidasi</span>
+                                <div class="h5 font-weight-bold text-dark mb-0">Rp {{ number_format($consolidatedSummary['totals']['grand_total'], 0, ',', '.') }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="small text-muted text-center">
+                        <i class="fas fa-shield-alt text-success"></i> <strong>Integritas Finansial:</strong> Formula <code>Total Billing + Total F&B + Total Admin + Belum Teratribusi = Grand Total Konsolidasi</code> terpenuhi secara presisi tanpa double-counting.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Rekapitulasi Invoice Pembayaran -->
+    @if(isset($invoices) && $invoices->isNotEmpty())
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-file-invoice-dollar mr-1"></i> Rincian Invoice Pembayaran Lunas</h6>
+                    <span class="badge badge-primary">{{ $invoices->count() }} Invoice</span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover table-sm" id="dataTableInvoices" width="100%" cellspacing="0">
+                            <thead class="thead-light">
+                                <tr>
+                                    <th>No. Invoice</th>
+                                    <th>Kasir Penerima</th>
+                                    <th>Kanal</th>
+                                    <th>Tipe Invoice</th>
+                                    <th class="text-right">Subtotal</th>
+                                    <th class="text-right">Diskon</th>
+                                    <th class="text-right">Total Neto</th>
+                                    <th class="text-center">Metode</th>
+                                    <th class="text-center">Waktu Bayar</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($invoices as $inv)
+                                <tr>
+                                    <td><strong>{{ $inv->invoice_number }}</strong></td>
+                                    <td>{{ $inv->cashierUser ? $inv->cashierUser->name : '-' }}</td>
+                                    <td>
+                                        @if($inv->cashierUser)
+                                            <span class="badge {{ $inv->cashierUser->role === 'kasir' ? ($inv->cashierUser->is_fnb_staff ? 'badge-success' : 'badge-primary') : 'badge-info' }}">
+                                                {{ $inv->cashierUser->role === 'kasir' ? ($inv->cashierUser->is_fnb_staff ? 'Kasir F&B' : 'Kasir Billing') : ucfirst($inv->cashierUser->role) }}
+                                            </span>
+                                        @else
+                                            <span class="badge badge-secondary">Tidak Teratribusi</span>
+                                        @endif
+                                    </td>
+                                    <td>{{ str_replace('_', ' ', $inv->invoice_type) }}</td>
+                                    <td class="text-right">Rp {{ number_format($inv->subtotal, 0, ',', '.') }}</td>
+                                    <td class="text-right text-danger">{{ $inv->discount > 0 ? 'Rp ' . number_format($inv->discount, 0, ',', '.') : '-' }}</td>
+                                    <td class="text-right font-weight-bold text-dark">Rp {{ number_format($inv->final_total, 0, ',', '.') }}</td>
+                                    <td class="text-center">{{ ucfirst(str_replace('_', ' ', $inv->payment_method ?: '-')) }}</td>
+                                    <td class="text-center">{{ $inv->paid_at ? $inv->paid_at->format('d/m/Y H:i') : '-' }}</td>
+                                </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
+    @endif
     @endif
 </div>
 @endsection

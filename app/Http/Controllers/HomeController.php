@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Device;
+use App\Models\Invoice;
 use App\Models\Playstation;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\Finance\CashierRevenueService;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -30,9 +32,7 @@ class HomeController extends Controller
      */
     public function index(Request $request)
     {
-        if (auth()->user()->isFnbStaff()) {
-            return redirect()->route('fnb.queue.index');
-        }
+        $user = auth()->user();
 
         // Get period filter from request
         $period = $request->input('period', 'today'); // today, week, month, custom
@@ -46,109 +46,66 @@ class HomeController extends Controller
         $play = Playstation::count();
         $transaction = Transaction::count();
         
-        // Calculate total revenue from paid transactions within date range
-        $revenue = Transaction::where('payment_status', 'paid')
-            ->whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-            ->sum('total');
-        
-        // Calculate revenue based on user role and shift within date range
-        $todayRevenue = $this->calculateShiftRevenue($dateRange['start'], $dateRange['end']);
-            
-        // Calculate payment method breakdown for paid transactions within date range
-        $user = auth()->user();
-        
+        $revenueService = app(CashierRevenueService::class);
+
         if ($user->isKasir()) {
-            // For cashiers, only show their own payment methods
+            // Scoped strictly to the logged-in cashier
+            $cashierSummary = $revenueService->getCashierRevenueSummary($dateRange['start'], $dateRange['end'], $user->id);
+            $todayRevenue = $cashierSummary['total_net'];
+            $invoiceCount = $cashierSummary['invoice_count'];
+            $todayPaymentMethodTotals = $cashierSummary['payment_methods'];
+
             $todayPaymentMethodCounts = [
-                'tunai' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'tunai')
-                    ->where('user_id', $user->id)
-                    ->count(),
-                'e-wallet' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'e-wallet')
-                    ->where('user_id', $user->id)
-                    ->count(),
-                'transfer_bank' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'transfer_bank')
-                    ->where('user_id', $user->id)
-                    ->count(),
+                'tunai' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'tunai')->count(),
+                'e-wallet' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'e-wallet')->count(),
+                'transfer_bank' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('cashier_user_id', $user->id)->where('payment_method', 'transfer_bank')->count(),
             ];
 
-            $todayPaymentMethodTotals = [
-                'tunai' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'tunai')
-                    ->where('user_id', $user->id)
-                    ->sum('total'),
-                'e-wallet' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'e-wallet')
-                    ->where('user_id', $user->id)
-                    ->sum('total'),
-                'transfer_bank' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'transfer_bank')
-                    ->where('user_id', $user->id)
-                    ->sum('total'),
-            ];
+            $todayRevenuePerUser = collect([[
+                'name' => $user->name,
+                'role' => $user->role,
+                'work_shift_id' => $user->work_shift_id,
+                'revenue' => $todayRevenue,
+            ]]);
+
+            $consolidatedSummary = null;
+            $categorySummary = null;
         } else {
-            // For admin/owner, show all payment methods
+            // Admin and owner: consolidated across all cashiers and channels
+            $consolidatedSummary = $revenueService->getChannelConsolidatedSummary($dateRange['start'], $dateRange['end']);
+            $categorySummary = $revenueService->getCategoryRevenueSummary($dateRange['start'], $dateRange['end']);
+            $overallSummary = $revenueService->getCashierRevenueSummary($dateRange['start'], $dateRange['end']);
+
+            $todayRevenue = $consolidatedSummary['totals']['grand_total'];
+            $invoiceCount = $overallSummary['invoice_count'];
+            $todayPaymentMethodTotals = $overallSummary['payment_methods'];
+
             $todayPaymentMethodCounts = [
-                'tunai' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'tunai')
-                    ->count(),
-                'e-wallet' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'e-wallet')
-                    ->count(),
-                'transfer_bank' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'transfer_bank')
-                    ->count(),
+                'tunai' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'tunai')->count(),
+                'e-wallet' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'e-wallet')->count(),
+                'transfer_bank' => Invoice::whereNotNull('paid_at')->whereBetween('paid_at', [$dateRange['start'], $dateRange['end']])->where('payment_method', 'transfer_bank')->count(),
             ];
 
-            $todayPaymentMethodTotals = [
-                'tunai' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'tunai')
-                    ->sum('total'),
-                'e-wallet' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'e-wallet')
-                    ->sum('total'),
-                'transfer_bank' => Transaction::whereBetween('created_at', [$dateRange['start'], $dateRange['end']])
-                    ->where('payment_status', 'paid')
-                    ->where('payment_method', 'transfer_bank')
-                    ->sum('total'),
-            ];
+            $allCashiers = array_merge(
+                $consolidatedSummary['billing_cashiers'],
+                $consolidatedSummary['fnb_cashiers'],
+                $consolidatedSummary['admin_cashiers']
+            );
+
+            $todayRevenuePerUser = collect($allCashiers)->map(function ($c) {
+                return (object)[
+                    'name' => $c['name'],
+                    'role' => $c['channel'],
+                    'work_shift_id' => null,
+                    'revenue' => $c['total_net'],
+                ];
+            });
         }
-        
-        // Calculate revenue per user (kasir/shift) for the selected period
-        $user = auth()->user();
-        
-        if ($user->isKasir()) {
-            // For cashiers, only show their own revenue
-            $todayRevenuePerUser = Transaction::selectRaw('users.name, users.role, users.work_shift_id, SUM(total) as revenue')
-                ->join('users', 'users.id', '=', 'transactions.user_id')
-                ->whereBetween('transactions.created_at', [$dateRange['start'], $dateRange['end']])
-                ->where('transactions.payment_status', 'paid')
-                ->where('users.id', $user->id)
-                ->groupBy('users.id', 'users.name', 'users.role', 'users.work_shift_id')
-                ->get();
-        } else {
-            // For admin/owner, show all users' revenue
-            $todayRevenuePerUser = Transaction::selectRaw('users.name, users.role, users.work_shift_id, SUM(total) as revenue')
-                ->join('users', 'users.id', '=', 'transactions.user_id')
-                ->whereBetween('transactions.created_at', [$dateRange['start'], $dateRange['end']])
-                ->where('transactions.payment_status', 'paid')
-                ->groupBy('users.id', 'users.name', 'users.role', 'users.work_shift_id')
-                ->get();
-        }
-            
+
+        $revenue = $todayRevenue;
+        $unpaidReceivables = $revenueService->getUnpaidReceivablesSummary();
+        $recentInvoices = $revenueService->getInvoiceHistoryQuery($dateRange['start'], $dateRange['end'], $user->isKasir() ? $user->id : null)->limit(10)->get();
+
         return view('home', [
             'title' => 'Dashboard',
             'active' => 'dashboard',
@@ -158,9 +115,14 @@ class HomeController extends Controller
             'pendapatan' => $revenue,
             'todayRevenue' => $todayRevenue,
             'today_pendapatan' => $todayRevenue, // Add this variable for backward compatibility
+            'invoiceCount' => $invoiceCount,
             'todayPaymentMethodCounts' => $todayPaymentMethodCounts,
             'todayPaymentMethodTotals' => $todayPaymentMethodTotals,
             'todayRevenuePerUser' => $todayRevenuePerUser,
+            'consolidatedSummary' => $consolidatedSummary,
+            'categorySummary' => $categorySummary,
+            'unpaidReceivables' => $unpaidReceivables,
+            'recentInvoices' => $recentInvoices,
             'period' => $period,
             'start_date' => $start_date,
             'end_date' => $end_date,
@@ -402,27 +364,28 @@ class HomeController extends Controller
 
     public function hourlyRevenueData()
     {
-        $totals = [];
-        $labels = [];
-        
-        // Generate hourly data for today (00:00 to 23:00)
-        for ($hour = 0; $hour <= 23; $hour++) {
-            $hourFormatted = str_pad($hour, 2, '0', STR_PAD_LEFT) . ':00';
-            $labels[] = $hourFormatted;
-            
-            // Only include paid transactions for accurate revenue data
-            $total = Transaction::whereDate('created_at', today())
-                ->whereRaw('HOUR(created_at) = ?', [$hour])
-                ->where('payment_status', 'paid')
-                ->sum('total');
-            $totals[] = $total;
+        $user = auth()->user();
+        $cashierId = $user->isKasir() ? $user->id : null;
+        $revenueService = app(CashierRevenueService::class);
+        $seriesData = $revenueService->getHourlyRevenueSeries(now(), $cashierId);
+
+        $labels = array_column($seriesData['series'], 'label');
+        $totals = array_column($seriesData['series'], 'total');
+
+        $chartLabel = 'Pendapatan Per Jam (Transaksi Paid)';
+        if ($user->isFnbStaff()) {
+            $chartLabel = 'Penerimaan Kasir F&B Per Jam';
+        } elseif ($user->isKasir()) {
+            $chartLabel = 'Penerimaan Kasir Billing Per Jam';
+        } else {
+            $chartLabel = 'Penerimaan Konsolidasi Per Jam';
         }
 
         $chartData = [
             'labels' => $labels,
             'datasets' => [
                 [
-                    "label" => "Pendapatan Per Jam (Transaksi Paid)",
+                    "label" => $chartLabel,
                     "lineTension" => 0.3,
                     "backgroundColor" => "rgba(78, 115, 223, 0.05)",
                     "borderColor" => "rgba(78, 115, 223, 1)",
